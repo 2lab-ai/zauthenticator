@@ -8,7 +8,7 @@
     "description": "Extension name. Do not translate."
   },
   "extDescription": {
-    "message": "Open-source two-factor (TOTP) authenticator. Codes are generated offline and secrets stay encrypted on this device.",
+    "message": "Open-source two-factor (TOTP) authenticator. Codes are made on your device, secrets stay encrypted, auto-fill is opt-in per site.",
     "description": "Store/extension description."
   },
   "actionTitle": {
