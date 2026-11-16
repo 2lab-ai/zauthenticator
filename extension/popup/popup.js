@@ -256,7 +256,8 @@ function wireUnlock() {
 
 // Idle auto-lock. Activity in any extension page refreshes the shared lastActiveAt (at most
 // once per TOUCH_INTERVAL_MS from this page); an open page checks it every IDLE_CHECK_MS and
-// whenever it becomes visible, and locks every page once the limit has passed.
+// whenever it becomes visible, and locks every page once the limit has passed. Every check is
+// decided by session.lockIfIdle() under the vault lock.
 function wireIdleLock() {
   let lastTouch = 0;
   const activity = () => {
@@ -272,7 +273,7 @@ function wireIdleLock() {
     document.addEventListener(type, activity, { capture: true, passive: true });
   }
   const check = () => {
-    session.idleExpired().then((expired) => (expired ? idleLock() : undefined)).catch(() => {});
+    idleLock().catch(() => {});
   };
   setInterval(check, IDLE_CHECK_MS);
   document.addEventListener('visibilitychange', () => {
@@ -280,8 +281,22 @@ function wireIdleLock() {
   });
 }
 
-async function idleLock() {
-  if (session.isUnlocked()) await lock();
+// Locks when the session is still idle once session.lockIfIdle() re-checks it under the vault
+// lock. The view is wiped only when that call dropped this page's key: activity another page
+// recorded meanwhile leaves everything being typed here as it is.
+function idleLock() {
+  if (!session.isUnlocked()) return Promise.resolve();
+  return local(async () => {
+    let locked;
+    try {
+      locked = await session.lockIfIdle();
+    } catch (error) {
+      // Removing the stored key failed after this page had dropped its own.
+      if (session.isUnlocked()) throw error;
+      locked = true;
+    }
+    if (locked) await showLocked();
+  });
 }
 
 // Runs this page's own startup, create, unlock or lock with storage notifications held back,

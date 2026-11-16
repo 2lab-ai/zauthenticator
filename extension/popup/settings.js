@@ -4,9 +4,11 @@ import * as session from './session.js';
 import { t } from './i18n.js';
 import { $, setText, withBusy, reason } from './ui.js';
 import { backupFileName, looksLikeRecord } from './format.js';
+import { openOwnView } from '../lib/nav.js';
 
-// A backup is one vault record; anything larger is refused before it is read.
-const MAX_BACKUP_BYTES = 1024 * 1024;
+// A backup is one vault record; anything larger is refused before it is read. A vault at its
+// 1 MiB ciphertext cap (lib/vault.js) exports about 1.37 MiB (base64 plus the record fields).
+const MAX_BACKUP_BYTES = 2 * 1024 * 1024;
 
 export function createSettingsView({ isTab, done }) {
   const exportBtn = $('#export-btn');
@@ -27,7 +29,7 @@ export function createSettingsView({ isTab, done }) {
   });
 
   $('#open-tab-btn').addEventListener('click', async () => {
-    await chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html#settings') });
+    await openOwnView('settings');
     window.close();
   });
 
@@ -86,7 +88,7 @@ export function createSettingsView({ isTab, done }) {
       try {
         incoming = await session.readBackup(record, passphrase);
       } catch (error) {
-        if (!live()) return;
+        if (!live() || error.code === 'locked') return;
         if (error.code === 'not-backup') setText(importError, t('errImportFile'));
         else setText(importError, session.isBadPassphrase(error) ? t('errImportPass') : t('errImportFailed', reason(error)));
         importPass.select();
