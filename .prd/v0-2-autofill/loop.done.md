@@ -40,3 +40,23 @@ Review log (external, per unit):
 - R3: trinity unanimous APPROVE (gpt-6, grok, fable); GATE release-ready. Post-approval narrowing per fable's
   SHOULDs: fix/v2-group 2387795 (group labels for another number skip a box run; a shown non-code input ends a
   run) → main b76be5d.
+
+## Round 2 (2026-11-16) — user hand test
+
+- Manual checks done by the user on cachy-z13 Edge with v0.2.0 (main e474db8): "잘 작동되는데" — context
+  menu fill, bind window + native permission prompt and auto-fill on revisit observed working.
+- Open: first attempt submitted an expired code → fresh-code + retry contract in 03-autofill.md
+  ("Fresh code and retry after a failed attempt"). Tag v0.2.0 after this lands.
+- Fix 1 (fresh code + retry): fix/v2-retry 1fbee92 + 11b3f20 → main b9a249c. R4 (d8636a4): grok APPROVE,
+  gpt-6 REJECT (replaced node got the rejected code; user deletion refilled; afterWait skipped the late check),
+  fable REJECT (in-page caps reset on reload → worker budget; replaced-node same code).
+- Fix 2: fix/v2-retry-bounds 586e271 (worker budget per tab+origin in session `autofillServed`, same counter
+  never served twice, trusted input ends the watch, late check on every reply, caps 2 fills, path change ends
+  the follow) → main 12a6cbb. R5: trinity unanimous APPROVE. Post-approval: fix/v2-refresh-once 6ec0de2
+  (keep-fresh ≤ 1 so the retry fits in the 3-code budget) → fable APPROVE.
+- Same round, owner requests "아이콘 좀더 모던하게 해주고 ui도 좀 .. 안이쁨 / 리드미도 업데이트해주고 /
+  구글 크롬 스토어랑 엣지 스토어에 모두 올릴꺼니까 그거까지 모두 준비해줘": design/icons 101e04a, design/popup
+  5ff1e3f (gpt-6 reviewer APPROVE), docs/store 699a167 + docs/store-fixes f7fdcf5 (gpt-6 reviewer REJECT →
+  fixed → APPROVE), store/shots 8fa2684.
+- Gates on main 161f0b4 (snapshot ×2 + CI 43909203862): unit 306/306, policy 21/21, self-test 542/542,
+  e2e 119/119 (CI headed).
