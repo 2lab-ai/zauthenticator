@@ -1,152 +1,206 @@
 # zauthenticator
 
-An open-source TOTP (2FA code) authenticator for Chromium browsers such as Chrome and Edge
-(Manifest V3). Extension pages and its service worker cannot open network connections or load
-remote resources (CSP); the static gate additionally bans URL strings and navigation sinks; the
-only pages the extension opens are its own. It runs no remote or dynamic code and keeps your
-secrets encrypted at rest. It can fill codes into web pages: on a site only after you choose an
-account from the right-click menu there, and automatically only on the exact sites you allowed,
-where the page receives the code and nothing else. Each of those properties can be checked from
-this repository.
+An open-source authenticator for Chrome and Edge: it shows your two-factor (TOTP) login codes in
+the browser and keeps the secrets behind them on your device.
 
-You load it unpacked from a release zip or from a clone, so the code you run is the code you
-read. It does not update itself.
+- **Open source, readable.** MIT license. Plain JavaScript with no bundler, no minifier and no
+  npm dependencies at run time (one vendored QR decoder, pinned by hash), so you can read what
+  runs.
+- **Codes are made on your device**, from the secret key and your computer's clock.
+- **No account, no sync, no telemetry.** The extension's own pages and its background worker
+  cannot connect to any server.
+- **Encrypted with your passphrase.** Secrets are stored only inside an encrypted vault, and the
+  passphrase itself is never stored.
+- **Optional auto-fill, one site at a time.** You choose the sites. A site gets the 6–8 digit
+  code and nothing else.
 
-## Trust properties and how to verify them
+![The zauthenticator popup listing accounts and their current codes](docs/images/popup-list.png)
 
-| Property | What it means | Verify it yourself |
-|---|---|---|
-| No network connections | Extension pages and the service worker cannot open network connections or load remote resources: their CSP is exactly `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Host access to a site (granted only when you allow auto-fill there) is used to run the content script on that site, not to make requests: the CSP blocks requests from extension pages and the worker to any host. The content script runs inside web pages, where the extension's CSP does not apply; it is held to the static gate's source rules and, on top of them, to a default-deny list of what it may touch: it reads the page's fields, fills the code field, dispatches `input` and `change`, watches for changes, sets timers and asks the worker for a code; it creates no element, writes no `src`, `href`, style or markup, and uses no `postMessage`, `window.name`, worker, dynamic `import()` or `chrome` API other than `chrome.runtime.sendMessage` and `chrome.runtime.id`. The function the worker injects into the page when you pick an account from the right-click menu (`fillFocused`) is held to the same list. That menu fill checks the frame's origin at injection time, so the code is written only if the document is still on the origin the menu was opened on, and the gate pins both the `chrome.scripting` methods the worker may use (running that function and registering the content script, so no CSS injection) and the injected function itself (one top-level declaration that nothing in the worker may reassign, redeclare, destructure into or shadow, named elsewhere only as the `func` of the `executeScript` call). These are text tripwires; the end-to-end egress check is what observes it. The worker's `executeScript`, `registerContentScripts` and `updateContentScripts` calls must spell out their options as literals in the worker (or, for a registration, a `const` used for nothing else), with only the keys the gate pins, so options built elsewhere, imported or assembled with computed keys cannot slip past these checks, and no computed key or member access in the worker may be spelled with a string or template literal. Reaching an API by a computed name through the global object is refused at the source level: in every file `globalThis`, `self`, `window`, `top`, `parent`, `frames` and `opener` may appear only as `<name>.<member>` (no computed access, no alias, not passed or destructured as a value) and `Reflect` not at all. Two known limits: in the worker and the other files outside the content script a `/` that could be division or a regular expression is guessed rather than refused, so a contrived one could hide a `js:`, `func:`, `files` or `css`, an alias of `chrome.scripting`, a call's options, a rebinding of `fillFocused` or a global-object access from the scan; and an expression that yields the global object without naming it (such as `document.defaultView`, `globalThis.valueOf()`, `event.view`, or `this` in an event listener) can still be indexed by a computed name, which the checks that read `chrome.` by its spelling do not see. The end-to-end test, which observes the requests made and the pages opened during its run, remains the backstop. The source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or WebRTC (`RTCPeerConnection`), and the stylesheet no `@import` or remote `url(`. | Read `content_security_policy` in `extension/manifest.json`. Run `npm run check`: it fails unless the CSP equals that policy exactly, on those APIs in any file, the content script included, on anything the content script uses outside its allowed list, on a script registration that names any file other than `lib/fieldfind.js` and `content/autofill.js`, and on an injection of anything but `fillFocused` (no other `func:`, no `files` or `css`, no `chrome.scripting` method beyond the five it needs, no rebinding of `fillFocused`, no injection or registration options other than literals with the pinned keys: `target` of one tab's frames by id, `func`, `args`; `id`, `matches`, `js`, `allFrames`, `runAt`, `persistAcrossSessions`). `npm run e2e` calls `fetch('https://example.com/')` from an extension page and `fetch()` from the service worker, expects both blocked by the CSP, and fails on any http(s) request made during the run other than the test's own loads of its locally answered test pages. |
-| Opens only its own pages | CSP does not govern top-level navigation, so the static gate additionally bans URL strings and navigation sinks: `window.open`, assigning `location` or calling `location.assign`/`replace`, links with a `target` or an `href` outside the extension, forms with an `action` or `target`, frames and `<meta http-equiv="refresh">`. Tab and window opening is centralized in `extension/lib/nav.js`: `openOwnView` opens only this extension's own popup views in a tab (`popup/popup.html#add-file` and `#settings`), `openOwnWindow` only its `#bind` and `#unlock` views in a small window, and the gate pins that file by sha256. Everywhere else the gate rejects `chrome.windows` and every `chrome.tabs` method except `getCurrent` and `captureVisibleTab` (which open nothing), aliases of `chrome` and the global object reached by a computed name (`globalThis[name]`, `Reflect`) included. These rules read source text: they are a tripwire, not a proof, and they cover the project's own files only — the vendored decoder in `extension/vendor/` is exempt from the source rules and is checked by hash against its upstream release instead (hash consistency, not a behavioural review of that code). | `npm run check`. `npm run e2e` is the browser-observed check: it records every page opened during the run in a real Chromium and fails if any of them shows a URL other than the extension's own pages (its popup and the `#bind`/`#unlock` windows) or `about:blank`, except the locally answered test pages the auto-fill part opens itself. |
-| No remote or dynamic code | `script-src 'self'`, with no `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`. The source contains no `eval(`, `new Function`, `importScripts`, string timers, `javascript:` URLs, inline `<script>` or `on*=` handlers. The content script is shipped in `extension/` like every other file and held to the same rules. | `npm run check` |
-| Encrypted at rest | Secrets are stored only inside an AES-GCM-256 vault. Its key is derived from your passphrase with PBKDF2-SHA-256 (600,000 iterations). `chrome.storage.local` holds only `{ v, kdf, iv, ct }`. Which site fills which account (the auto-fill bindings) is stored inside the vault too. The browser itself records, outside the vault, which sites the extension may access and the match list of its registered content script, so those site names are readable from the browser profile. | `npm run e2e` reads `chrome.storage` and the exported backup. It fails if a test secret appears as base32 (either case), hex, base64, base64url, a byte list or a raw byte string, or if storage holds any key besides `local.vault` and `session.vaultKey`/`session.lastActiveAt`/`session.pendingBind` (the last only between an auto-fill offer and your answer), or if any lock leaves anything in session storage. You can also inspect storage in DevTools on the popup page. |
-| Minimal permissions | `storage`, `activeTab`, `contextMenus` and `scripting`, plus optional host access for `https://*/*` that is granted one exact site at a time, only when you allow auto-fill for that site and accept the browser's own prompt. Nothing is granted for any site at install. `activeTab` lets the extension capture the current tab for a QR scan after you click the toolbar icon, and fill the field you right-clicked after you choose an account in the menu. `contextMenus` adds the right-click menu; `scripting` fills that field and registers the content script. There is a background service worker (the menu, and codes for bound sites) and one content script (`content/autofill.js`, with its field finder `lib/fieldfind.js`), registered at run time for the bound sites only: there are no content scripts in the manifest and no web-accessible resources. | Read `extension/manifest.json`, or open the extension's Details page in the browser (site access lists the sites you allowed). `npm run check` fails on any other permission, on `optional_host_permissions` other than exactly `["https://*/*"]`, on a `background` other than exactly the `background.js` module worker, and on manifest keys such as `host_permissions`, `content_scripts` or `web_accessible_resources`. It also fails on `chrome.scripting` anywhere but `lib/autofill-worker.js`, and on asking for or giving up site access (`chrome.permissions`) anywhere but that worker and the popup's bind view (`popup/popup.js`). |
-| Auto-fill only where you allowed it | A site is bound by its exact origin (`https:`, host and port): a look-alike domain or a subdomain gets nothing. The content script is registered for the bound origins only. It asks the service worker for a code, and the worker answers only a request from this extension's own content script whose frame origin is bound, while the vault is unlocked and not idle. Only the 6–8 digit code reaches the page: never the secret, the account name or the key. Auto-fill fills an empty code field once per page load, never submits a form, and does not count as activity for the 15-minute lock. Finding the field is a heuristic (see [Auto-fill](#auto-fill)). | `npm run e2e` (part 3, on a test copy, see [Development](#development)): a menu fill types the reference code into the field and offers the site; Allow stores the binding in the vault and registers the script for exactly that origin; a later visit is filled, the same page on another origin is not and gets no script, a bound site framed by another site is filled only inside the frame; nothing is filled while locked or idle, after the binding is removed, or after its account is deleted; no form is submitted. |
-| Pinned third-party code | The only third-party code is the QR decoder (jsQR 1.4.0), vendored unmodified and pinned by sha256. Its license ships next to it. See [Third-party code](#third-party-code) for where it comes from. | `cd extension/vendor && sha256sum -c SHA256SUMS` (on macOS: `shasum -a 256 -c SHA256SUMS`). `npm run check` verifies the same hashes, one entry per file, and that every vendored `.js` has a `.LICENSE` beside it. |
-| Readable source | Plain ES modules. No bundler, minifier or runtime npm dependencies. | Browse `extension/`. |
-
-`npm run check` is the static trust gate (`scripts/check-policy.mjs`). It reads the source text
-and prints one `PASS`/`FAIL` line per rule; it is a tripwire for this repository's own code, not a
-sandbox. `node scripts/check-policy.mjs --self-test` checks the gate itself: it builds a clean
-extension and a set of broken ones, confirms that each broken one fails the rule it breaks, and
-compares the gate's policy (permissions, optional host permissions, the background worker,
-forbidden manifest keys, homepage URL, CSP, the sha256 of `extension/lib/nav.js`, the
-`chrome.tabs` methods allowed outside it, the files allowed to use `chrome.scripting` and
-`chrome.permissions`, the `chrome.scripting` methods allowed there, the keys their injection and
-registration options may have, and the injected function with the one read it may make beyond
-the content script's list, `location.origin`) with a second copy written out separately, so the policy cannot be widened
-by editing one place. CI
-runs the unit tests, the gate, its self-test and the end-to-end test on every branch push and
-pull request, and the release workflow runs the same CI job before it publishes.
+[한국어 안내](#한국어) · [Privacy policy](PRIVACY.md) · [Security policy](SECURITY.md)
 
 ## Install
 
-**From a release (recommended)**
+**From a store** (the easiest way; the browser keeps it updated):
 
-1. Download `zauthenticator-<version>.zip` from the
-   [Releases](https://github.com/2lab-ai/zauthenticator/releases) page. Check its sha256
-   against the one in the release notes: `sha256sum zauthenticator-<version>.zip`.
+- Chrome Web Store: coming soon (the link will be added here once the listing is live)
+- Microsoft Edge Add-ons: coming soon (the link will be added here once the listing is live)
+
+**Manually, from a release** (you run exactly the files you downloaded; nothing updates them):
+
+1. Download `zauthenticator-<version>.zip` from
+   [Releases](https://github.com/2lab-ai/zauthenticator/releases). The release notes give its
+   sha256 if you want to check the download.
 2. Unzip it into a folder you will keep. The browser loads the extension from that folder.
-3. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
-4. Click **Load unpacked** and select the unzipped folder, the one that contains `manifest.json`.
+3. Open `chrome://extensions` or `edge://extensions` and turn on **Developer mode**.
+4. Click **Load unpacked** and pick the unzipped folder (the one that contains `manifest.json`).
 
-**From source**
+To update a manual install, replace the folder's contents with the new release and click the
+reload icon on the extensions page. Keep the same folder: the browser derives the extension's id
+from the folder's path, so a different folder loads as a different extension with an empty vault.
 
-```sh
-git clone https://github.com/2lab-ai/zauthenticator.git
-```
+Things to know before you move or remove it:
 
-Then click **Load unpacked** and select the `extension/` folder.
+- **A store install and a manual install are separate extensions** with separate vaults. To move
+  your accounts, export a backup from one and import it into the other (see
+  [Back up and restore](#back-up-and-restore)).
+- **Uninstalling deletes the vault.** Export a backup first if you may want your accounts back.
 
-To update, replace the folder's contents with a newer release and click the reload icon on the
-extensions page. Your vault stays in the browser profile. Keep the same folder path: an unpacked
-extension's id is derived from its path, so a different folder loads as a different extension
-with an empty vault. Export a backup before you move the folder.
+## Use
 
-**Uninstalling the extension deletes its vault.** Removing it from the extensions page deletes
-its storage. Export a backup first if you may want your accounts back.
+### Set a passphrase
 
-## Usage
+The first time you open the popup, you choose a passphrase of 8 characters or more. It encrypts
+your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened.
 
-1. **Create a passphrase** the first time you open the popup. It encrypts the vault.
-2. **Add accounts** with one of these methods:
-   - **Scan QR from tab**: scans an `otpauth://` QR code shown on the current page.
-   - **Scan QR image**: decodes a QR code from an image file.
-   - **otpauth URI**: paste one or more `otpauth://totp/...` URIs, one per line.
-   - **Manual entry**: enter the issuer, label and base32 secret (SHA-1, 6 digits, 30 s by default).
-3. **Copy a code**: click it to copy it to the clipboard. A countdown shows when the code changes.
-4. **Lock** with the lock button. The vault stays unlocked until you press Lock, 15 minutes
-   without use, or the browser fully quits (on macOS: Cmd+Q; closing its windows is not enough).
-   After that the popup asks for the passphrase again.
-5. **Back up** from Settings. Export downloads the encrypted vault record. Import restores it with
-   that backup's passphrase.
-6. **Fill a code into a site**: right-click the code field on the site, choose **zauthenticator**
-   and then the account. The current code is typed into that field; nothing is submitted. While
-   the vault is locked the menu offers **Unlock zauthenticator…** instead. See [Auto-fill](#auto-fill).
+### Add an account
 
-## Auto-fill
+Click **Add account** and use whichever your service gives you:
 
-- **Once per site.** After a menu fill on an `https:` site that is not bound yet, a small window
-  asks whether to fill that account automatically on that exact site (for example
-  `https://login.example.com`). **Allow** opens the browser's own prompt for access to that one
-  site; only if you accept it is the binding stored, inside the encrypted vault. **Not now**, or
-  declining the prompt, stores nothing.
-- **Later visits.** On a bound site (the top page or any frame of that exact origin) the code
-  field is filled once per page load while the vault is unlocked. The extension looks for, in
-  order, a field marked `autocomplete="one-time-code"`, a field whose name, id, label or
-  placeholder looks like a code field (OTP, 2FA, verification code, …), or a row of 6–8
-  one-character boxes labelled as a code. A field that is only sized like a code (a PIN, a postal
-  code) is never filled on its own; use the right-click menu for it. That is a heuristic: on an
-  unusual page it may find nothing or the wrong field. It fills only an empty field, once per page
-  load, and never submits a form.
-- **What the site gets.** The code, typed into its page, exactly as if you had typed it. The
-  page's own scripts can read it, as they could if you typed it. The secret, the account name
-  and the vault key never reach the page.
-- **Remove a site.** Settings → **Auto-fill sites** → **Remove**. The binding leaves the vault, the
-  content script is no longer registered for that site, and the extension gives up its access
-  to it. Deleting an account removes its bindings too.
-- **Locked or idle.** Nothing is filled while the vault is locked or after 15 minutes without use.
-  If the service worker was asleep when those 15 minutes passed, account names can stay in the
-  right-click menu until its next event or a browser restart; choosing one then opens the unlock
-  window instead of filling.
+- **A QR code on the current page.** Open the page that shows the QR code, click the
+  zauthenticator icon in the toolbar, and choose to scan this page. Only the visible part of the
+  tab is read.
+- **A QR code image.** Choose, drop or paste a screenshot or saved picture of the QR code.
+- **An `otpauth://` link.** Paste one or more links, one per line.
+- **A setup key.** Type the service, the account name and the secret key. The defaults (SHA-1,
+  6 digits, 30 seconds) suit most services; **Advanced** changes them.
 
-## Security model and limits
+### Copy a code
 
-- **The passphrase cannot be recovered.** If you forget it, the vault and every backup made with
-  it are unreadable. Keep an exported backup and the passphrase somewhere safe.
-- **Uninstalling deletes the vault.** See [Install](#install); export a backup first.
-- **The system clock is the only time source.** Network time sync would need the network. If
-  codes are rejected, check that your computer's clock is correct.
-- **There is no sync, by design.** Each browser profile has its own vault. To move accounts,
-  export a backup and import it in the other profile.
-- **Where the unlocked key lives:** after you unlock, the raw vault key is kept in
-  `chrome.storage.session`. That storage is visible only to the extension's own pages and its
-  service worker (never to the content script) and is held in memory. It is cleared when you
-  press Lock or when the browser fully quits (on macOS: Cmd+Q; closing its windows is not
-  enough). After 15 minutes without use the vault counts as locked. No timer runs for that, so
-  the key stays in session storage until the next thing that reads it: opening the popup, a menu
-  choice or an auto-fill request. That read locks the vault and clears session storage before
-  any code is shown or filled.
-- **Offline guessing:** someone who can read your browser profile on disk, or one of your
-  exported backups, can try to guess the passphrase offline. PBKDF2-SHA-256 with 600,000
-  iterations makes each guess expensive, roughly thousands to tens of thousands of guesses per
-  second per GPU (an order-of-magnitude estimate, not a measurement). That only slows guessing
-  down: use a long passphrase, such as several random words.
-- **Passphrases are NFC-normalized** before key derivation, so the same passphrase typed with
-  composed or decomposed characters (accented letters, Hangul) opens the same vault.
-- **What it does not protect against:** malware running as your user, a compromised browser or
-  browser profile, or someone using your unlocked browser session. Copied codes sit in the system
-  clipboard, which other applications can read. A code filled into a site can be read by that
-  site's scripts, including injected ones on a compromised site. A weak passphrase weakens the
-  encryption of the stored vault and of exported backups.
+Click a code to copy it. A countdown shows when the next code starts.
 
-Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+### Fill a code into a site
 
-## Third-party code
+1. On the site, right-click the code field, choose **zauthenticator**, then the account. The
+   current code is typed into that field. Nothing is submitted.
+2. The first time you do this on an `https` site, a small window asks whether to fill this
+   account's code automatically on that exact site. Click **Allow**, then accept the browser's
+   own prompt for access to that one site. **Not now**, or declining the prompt, stores nothing.
+3. On later visits, while zauthenticator is unlocked, the code field is filled for you. If the
+   site rejects an expired code, it fills a fresh one. It never submits a form and never changes a
+   field you typed into.
 
-The QR decoder `extension/vendor/jsQR.js` is jsQR 1.4.0 (Apache-2.0), the file
-`dist/jsQR.js` of the npm package `jsqr@1.4.0`, unmodified. Its license is the package's
-`LICENSE`, shipped as `extension/vendor/jsQR.LICENSE`.
+![The window that asks whether to fill codes automatically on a site](docs/images/popup-autofill-bind.png)
+
+Auto-fill works only on the exact site you allowed: the same scheme, host and port, on the page
+itself or in a frame of that site inside another page. A subdomain or a look-alike domain gets
+nothing. It fills only fields marked as a code field: a field the site
+marks as a one-time code, a field whose name or label says OTP, 2FA, verification code and the
+like, or a row of 6–8 one-character boxes labelled as a code. Fields that merely look like a code,
+such as a PIN or a postal code, are left alone; use the right-click menu for those. Finding the
+field is a best guess, so on an unusual page it may find nothing, or the wrong field.
+
+To stop auto-fill on a site, open **Settings**, find the site under auto-fill sites and click
+**Remove**. The extension also gives up its access to that site. Deleting an account removes its
+sites too.
+
+### Back up and restore
+
+In **Settings**, **Export encrypted backup** saves a `.json` file. It is your vault as stored,
+still encrypted with your passphrase. To restore, choose the file under **Import a backup** and
+enter the passphrase that backup was made with. Import adds the backup's accounts (duplicates are
+skipped); auto-fill sites are not imported, so set them again from the right-click menu.
+
+### Lock
+
+Click **Lock** to lock right away. zauthenticator also locks after 15 minutes without use, and
+when the browser fully quits (on macOS, Cmd+Q; closing the windows is not enough). While it is
+locked nothing is filled, and the right-click menu offers **Unlock zauthenticator…** instead of
+your accounts.
+
+![The locked popup asking for the passphrase](docs/images/popup-locked.png)
+
+## Privacy and security
+
+**What stays on your device.** Your secret keys, account names and auto-fill sites are stored in
+the browser's storage for this extension, inside a vault encrypted with a key made from your
+passphrase. The passphrase is never stored. After you unlock, the key is held in the browser's
+session memory until you lock or the browser quits; after 15 minutes without use it is removed
+the next time anything asks for it (see the limits below). Nothing is sent to the developer or
+anyone else; there is no server.
+
+**What the browser itself records.** Outside the encrypted vault, the browser keeps the list of
+sites you gave the extension access to (shown on the extension's details page) and the list of
+sites its auto-fill script is registered for. Someone who can read your browser profile can see
+those site names. If you installed from a store, the browser checks that store for updates, as it
+does for every extension installed from there.
+
+**What a site receives.** Only the 6–8 digit code, typed into its page: on a site you allowed, or
+in the field you right-clicked. The site's scripts can read it, just as if you had typed it. The
+secret key, the account name and your passphrase never reach the page.
+
+**Permissions and why they are needed:**
+
+| Permission | What it lets the extension do | Why |
+|---|---|---|
+| `storage` | Keep data in the browser's storage for this extension | To save the encrypted vault, and the unlocked key for the browser session |
+| `activeTab` | Use the current tab, only right after you click the toolbar icon or choose an account in the right-click menu | To scan a QR code on the page you are looking at, and to type a code into the field you right-clicked |
+| `contextMenus` | Add an item to the right-click menu of text fields | To let you choose which account's code to fill |
+| `scripting` | Run the extension's own fill code in a page | To type the code into the field, and to register auto-fill for the sites you allowed |
+| Access to `https` sites (optional) | Run the auto-fill script on a site | Nothing is granted at install. The browser asks you for one exact site when you click **Allow**, and the access is removed when you remove that site |
+
+**Limits worth knowing:**
+
+- The passphrase cannot be recovered, and it cannot be changed yet (planned).
+- The computer's clock is the only time source. If codes are rejected, make sure the date and
+  time are set automatically.
+- There is no sync, by design. Each browser profile has its own vault; use export and import to
+  move accounts.
+- Someone who gets a copy of your browser profile or of a backup file can try to guess the
+  passphrase offline. The key derivation makes each guess slow, but a long passphrase (several
+  random words) is what keeps it out of reach.
+- It does not protect against malware running as your user, a compromised browser or profile, or
+  someone using your browser while it is unlocked. Copied codes sit in the system clipboard,
+  where other applications can read them.
+- No timer runs for the 15-minute lock. The unlocked key stays in the browser's session memory
+  until the next thing that reads it (opening the popup, a menu choice or an auto-fill request);
+  that read locks the vault and clears the key before any code is shown or filled. In the same
+  way, if the browser's background worker was asleep when the 15 minutes passed, account names
+  can stay in the right-click menu until it next wakes; choosing one then opens the unlock window
+  instead of filling.
+
+Full details: [Privacy policy](PRIVACY.md) · [Security policy and how to report a vulnerability](SECURITY.md) ·
+[Verifying the trust claims](#verifying-the-trust-claims).
+
+## Verifying the trust claims
+
+The claims above can be checked from this repository. `npm run check` is a static gate
+(`scripts/check-policy.mjs`) that reads the source and prints one `PASS`/`FAIL` line per rule;
+`npm run e2e` loads the extension into a real Chromium and observes what it does. CI runs the unit
+tests, the gate, the gate's self-test and the end-to-end test on every push and pull request, and
+the release workflow runs the same job on the tagged commit before it publishes the zip.
+
+| Claim | How it is enforced | How to check |
+|---|---|---|
+| No network from the extension | The CSP of extension pages and the worker is exactly `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. The source has no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `RTCPeerConnection`, and the stylesheet no `@import` or remote `url(`. The content script runs inside web pages, where that CSP does not apply; it is held to a default-deny list instead: it reads fields, fills the code field, dispatches `input`/`change`, watches for changes, sets timers and asks the worker for a code, and creates no element, writes no `src`/`href`/style/markup, and uses no `postMessage`, worker, dynamic `import()` or `chrome` API beyond `runtime.sendMessage` and `runtime.id`. The function injected for a menu fill (`fillFocused`) is held to the same list and writes only if the frame is still on the origin the menu was opened on. | Read `content_security_policy` in `extension/manifest.json`. `npm run check` fails unless the CSP equals that policy, and on any of those APIs in any file, the content script included. `npm run e2e` calls `fetch()` from an extension page and from the worker, expects both blocked, and fails on any http(s) request during the run other than its own locally answered test pages. |
+| Opens only its own pages | CSP does not govern navigation, so the gate also bans URL strings and navigation sinks (`window.open`, assigning `location`, links or forms pointing outside, frames, meta refresh). Opening a tab or window is done only in `extension/lib/nav.js` (the extension's own views), which the gate pins by sha256; elsewhere `chrome.windows` and every `chrome.tabs` method but `getCurrent` and `captureVisibleTab` are refused. | `npm run check`. `npm run e2e` records every page opened during the run and fails on any URL other than the extension's own pages, `about:blank` and its own test pages. |
+| No remote or dynamic code | `script-src 'self'` without `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`; no `eval(`, `new Function`, `importScripts`, string timers, `javascript:` URLs, inline scripts or `on*=` handlers. | `npm run check` |
+| Encrypted at rest | AES-GCM-256 with a key from PBKDF2-SHA-256 (600,000 iterations) over the NFC-normalized passphrase. `chrome.storage.local` holds only `{ v, kdf, iv, ct }`; auto-fill sites are inside the vault. | `npm run e2e` reads storage and the exported backup, and fails if a test secret appears in base32, hex, base64(url), as a byte list or raw bytes, if storage holds any key besides `local.vault` and `session.vaultKey`/`lastActiveAt`/`pendingBind`, or if a lock leaves anything in session storage. |
+| Minimal permissions | `storage`, `activeTab`, `contextMenus`, `scripting`, and optional `https://*/*` granted one site at a time. No `host_permissions`, no content scripts in the manifest, no web-accessible resources; the one content script (`content/autofill.js` with `lib/fieldfind.js`) is registered at run time for the allowed sites only. | `npm run check` fails on any other permission or host pattern, on those manifest keys, on a background other than the `background.js` module worker, on `chrome.scripting` outside `lib/autofill-worker.js`, and on `chrome.permissions` outside that file and `popup/popup.js`. |
+| Auto-fill only where you allowed it | Sites are bound by exact origin. The worker answers only this extension's own content script, from a frame whose origin is bound, while the vault is unlocked and not idle, and answers with the digits only. Auto-fill never submits a form and does not count as activity for the 15-minute lock. | `npm run e2e` part 3: a menu fill types the reference code; **Allow** stores the binding and registers the script for that origin only; a later visit is filled; another origin with the same page, a locked or idle vault, a removed site and a deleted account get nothing; no form is submitted. |
+| Pinned third-party code | The only third-party code is the QR decoder jsQR 1.4.0, vendored unmodified, pinned by sha256, with its license beside it. | `cd extension/vendor && shasum -a 256 -c SHA256SUMS`; `npm run check` verifies the same. See [Third-party code](#third-party-code). |
+
+**Limits of these checks.** The gate reads source text: it is a tripwire for this repository's
+own files, not a proof, and the vendored decoder is checked by hash only (consistency with its
+upstream release, not a review of its behaviour). Two known gaps: outside the content script, a
+`/` that could be division or a regular expression is guessed rather than refused, so a contrived
+one could hide a `js:`, `func:`, `files` or `css`, an alias of `chrome.scripting`, a call's
+options, a rebinding of `fillFocused` or a global-object access from the scan; and an expression
+that yields the global object without naming it (such as `document.defaultView`,
+`globalThis.valueOf()`, `event.view`, or `this` in an event listener) can still be indexed by a
+computed name, which checks that read `chrome.` by its spelling do not see. The end-to-end test,
+which observes the requests made and the pages opened during its run, is the backstop.
+`node scripts/check-policy.mjs --self-test` checks the gate itself: each deliberately broken copy
+of the extension must fail the rule it breaks, and the gate's policy is compared with a second
+copy written out separately, so it cannot be widened by editing one place.
+
+Three things cannot be automated and are checked by hand: the browser's permission prompt after
+**Allow**, the right-click menu itself (including a fill on a site the extension has no access
+to), and a site's entry on the extension's details page before and after **Remove**.
+
+### Third-party code
+
+`extension/vendor/jsQR.js` is jsQR 1.4.0 (Apache-2.0): the file `dist/jsQR.js` of the npm package
+`jsqr@1.4.0`, unmodified. Its license ships as `extension/vendor/jsQR.LICENSE`.
 
 - npm registry integrity of `jsqr@1.4.0`:
   `sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==`
@@ -165,12 +219,11 @@ rm -r jsqr-1.4.0.tgz package
 
 ## Development
 
-Requires Node.js 20 or later. There are no runtime dependencies. The only dev dependency is
-`playwright`, pinned to an exact version.
+Requires Node.js 20 or later. The only dev dependency is `playwright`, pinned to an exact version.
 
 ```sh
 npm ci
-npm test                                  # unit tests (node --test): RFC 6238 vectors, base32, otpauth, vault
+npm test                                  # unit tests: RFC 6238 vectors, base32, otpauth, vault, auto-fill
 npm run check                             # static trust gate
 node scripts/check-policy.mjs --self-test # proves the gate catches each violation
 npx playwright install chromium           # once, for the e2e browser
@@ -178,83 +231,88 @@ npm run e2e                               # real Chromium + the unpacked extensi
 npm run zip                               # dist/zauthenticator-<version>.zip and its sha256
 ```
 
-`npm run e2e` drives the popup through its DOM contract. It compares the displayed and the
-copied codes with an independent TOTP implementation and checks that storage and the exported
-backup contain only ciphertext. It checks the lock and unlock flow and the blocked network, two
-pages adding accounts at the same time (both must be kept), a lock from one page reaching the
-other and clearing what was typed there, the 15-minute idle lock, that every lock leaves session
-storage empty, a copy made after the code's period changed, and that no page outside the
-extension was opened. Screenshots go to `test-results/`, or to the directory in `E2E_ARTIFACTS`.
-The copy checks put TOTP codes of test secrets on the clipboard.
+To try a change, load the `extension/` folder with **Load unpacked**. `npm run e2e` drives the
+popup through its DOM contract, compares the displayed and copied codes with an independent TOTP
+implementation, and covers locking, the 15-minute idle lock, concurrent pages and the blocked
+network; its copy checks put codes of test secrets on the clipboard. Screenshots go to
+`test-results/` (or `E2E_ARTIFACTS`). The auto-fill part (`e2e/autofill.e2e.mjs`) runs on a test
+copy of the extension whose manifest differs in two fields the gate refuses: a test service-worker
+entry that runs the shipped `background.js` and exposes the menu handler (a click in the browser's
+own menu cannot be automated), and the locally answered test sites as required host permissions,
+so no permission prompt appears.
 
-Part 3 (`e2e/autofill.e2e.mjs`, also runnable on its own) covers auto-fill on a test copy of the
-extension built in a temporary directory. The copy differs in two manifest fields, both refused
-by the gate: its service worker entry is `e2e/fixtures/background.test.js`, which runs the
-shipped `background.js` unchanged and exposes the menu handler, because a click in the
-browser's own context menu cannot be automated; and it holds the test sites (`otp.test`,
-`evil.test`, `host.test`, answered locally, nothing leaves the machine) as required host
-permissions, so the browser grants the bind request without its prompt. In the shipped
-extension that access is optional and granted per site, so giving it up on removal is observable
-only there. `node e2e/fixture-smoke.mjs` proves the harness mechanics the test relies on with
-throwaway fixture extensions.
-
-**Manual checks** (not automatable): the browser's permission prompt after **Allow**, the
-right-click menu itself (its items, and that choosing one fills through `activeTab` on a site
-the extension has no access to), and a site's access entry on the extension's Details page
-before and after **Remove**.
-
-Releases are cut by pushing a tag `v<version>` that matches `extension/manifest.json`. The
-release workflow checks the tag, runs the full CI job (unit tests, gate and self-test, Chromium
-end-to-end test) on the tagged commit, builds the zip, checks that it unpacks to exactly
-`extension/`, and publishes it with its sha256. Only the publishing job can write to the
-repository, and every action is pinned by commit SHA.
-
-## Roadmap
-
-- Change the passphrase (re-encrypt the vault under a new one).
+Releases are cut by pushing a tag `v<version>` that matches `extension/manifest.json`. The release
+workflow runs the full CI job on the tagged commit, builds the zip, checks that it unpacks to
+exactly `extension/`, and publishes it with its sha256. Only the publishing job can write to the
+repository, and every action is pinned by commit SHA. That zip is what is uploaded to the stores;
+the listing texts live in [`store/listing/`](store/listing/).
 
 ## License
 
-[MIT](LICENSE). The vendored QR decoder keeps its own license, shipped as
+[MIT](LICENSE). The vendored QR decoder keeps its own license (Apache-2.0), shipped as
 `extension/vendor/jsQR.LICENSE`.
 
-## 한국어 요약
+## 한국어
 
-zauthenticator는 Chrome, Edge 같은 Chromium 브라우저용 오픈소스 TOTP(2단계 인증 코드)
-확장 프로그램입니다(Manifest V3). 아래 신뢰 속성은 모두 이 저장소에서 직접 확인할 수 있습니다.
+zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 확장 프로그램이에요. 로그인할 때
+필요한 인증 코드를 브라우저에서 바로 보여 주고, 코드를 만드는 비밀 키는 이 기기 밖으로 내보내지 않아요.
 
-- **네트워크 연결 없음**: 확장 페이지와 서비스 워커는 CSP 때문에 네트워크에 연결하거나 원격 리소스를 불러올 수 없습니다. CSP는 위에 적은 승인 정책과 정확히 같아야 하고, 소스에 네트워크 API가 없습니다. 사이트 접근 권한(자동 입력을 허용한 사이트에만 부여)은 그 사이트에서 콘텐츠 스크립트를 실행하는 데만 쓰입니다. 콘텐츠 스크립트는 웹 페이지 안에서 돌기 때문에 확장의 CSP가 적용되지 않으며, 정적 검사의 소스 규칙(경보장치)과 e2e의 외부 요청 감시로만 확인합니다. 확인 방법: `npm run check`, `npm run e2e`.
-- **자기 페이지만 엶**: CSP는 최상위 탐색(navigation)을 막지 않으므로, 정적 검사가 URL 문자열과 탐색 지점(`window.open`, `location` 대입, 확장 밖을 가리키는 링크·폼·프레임)을 추가로 금지합니다. 탭과 창 열기는 `extension/lib/nav.js` 한 곳에 모여 있고(이 확장의 팝업 화면을 탭으로, `#bind`·`#unlock` 화면을 작은 창으로만 엶), 정적 검사가 이 파일을 sha256으로 고정하며 다른 파일의 `chrome.windows` 사용과 `getCurrent`·`captureVisibleTab` 외의 `chrome.tabs` 사용을 거부합니다. 이 검사는 소스 문자열을 읽는 경보장치(tripwire)일 뿐 증명이 아닙니다. 확장 밖 페이지가 열리지 않았다는 것은 `npm run e2e`가 실제 브라우저에서 실행 중 열린 모든 페이지를 기록해 확인합니다(자동 입력 테스트가 직접 연, 로컬에서 응답하는 테스트 사이트는 제외).
-- **원격·동적 코드 없음**: `script-src 'self'`를 쓰고 `eval`, `new Function`, 인라인 스크립트가 없습니다. 콘텐츠 스크립트도 같은 규칙으로 검사합니다.
-- **저장 시 암호화**: 비밀값은 패스프레이즈에서 PBKDF2-SHA-256(600,000회)으로 만든 키를 쓰는 AES-GCM-256 금고 안에만 저장됩니다. 패스프레이즈는 NFC로 정규화한 뒤 키를 만듭니다. 어느 사이트에 어느 계정을 자동 입력할지(바인딩)도 금고 안에 저장됩니다. 다만 브라우저 자체가 확장이 접근할 수 있는 사이트 목록과 등록된 콘텐츠 스크립트의 대상 목록을 금고 밖에 기록합니다.
-- **최소 권한**: `storage`, `activeTab`, `contextMenus`, `scripting`과, 사이트 하나씩 부여되는 선택적 `https://*/*` 접근 권한만 씁니다. 설치 시에는 어떤 사이트 권한도 없고, 자동 입력을 허용한 그 사이트(정확한 출처)에 대해서만 브라우저의 권한 창에서 동의할 때 부여됩니다. 백그라운드 서비스 워커(오른쪽 클릭 메뉴, 바인딩된 사이트용 코드)와 콘텐츠 스크립트 하나(`content/autofill.js`와 입력란 찾기 `lib/fieldfind.js`)가 있으며, 콘텐츠 스크립트는 바인딩된 출처에만 실행 중에 등록됩니다. 매니페스트에는 콘텐츠 스크립트도, 웹 접근 리소스도 없습니다.
-- **허용한 사이트에만 자동 입력**: 사이트는 정확한 출처(`https:`, 호스트, 포트)로 묶이므로 비슷한 도메인이나 하위 도메인에는 아무것도 가지 않습니다. 서비스 워커는 금고가 열려 있고 15분 미사용 상태가 아니며 요청한 프레임의 출처가 바인딩되어 있을 때만 답합니다. 페이지로 가는 것은 6–8자리 코드뿐이고 비밀값·계정 이름·키는 가지 않습니다. 코드 입력란이라는 표시(one-time-code, OTP·2FA·인증 코드 같은 이름, 코드로 표시된 한 칸짜리 입력란 묶음)가 있는 입력란만, 비어 있을 때, 페이지당 한 번 채우고 폼을 제출하지 않습니다. 길이만 코드처럼 생긴 입력란(PIN, 우편번호)은 자동으로 채우지 않으니 오른쪽 클릭 메뉴로 넣으세요. 입력란 찾기는 추정(휴리스틱)입니다.
-- **외부 코드 고정**: QR 디코더는 npm 패키지 `jsqr@1.4.0`의 `dist/jsQR.js`를 수정 없이 함께 배포하며 sha256으로 고정합니다(`bc40c8a1...`). `extension/vendor`에서 `sha256sum -c SHA256SUMS`로 확인하고, 출처는 `npm pack jsqr@1.4.0`으로 받은 파일과 해시를 비교해 확인합니다(위 "Third-party code" 참고).
+- **오픈소스**: MIT 라이선스예요. 번들러나 코드 압축 없이 평범한 JavaScript라서 실행되는 코드를 그대로 읽을 수 있어요.
+- **코드는 이 기기에서 만들어요**: 비밀 키와 컴퓨터 시계만으로 계산해요.
+- **회원 가입·동기화·사용 통계 수집이 없어요**: 확장 프로그램 화면과 백그라운드 워커는 어떤 서버에도 연결할 수 없어요.
+- **마스터 비밀번호로 암호화해요**: 비밀 키는 암호화된 보관함 안에만 저장되고, 비밀번호 자체는 어디에도 저장하지 않아요.
+- **자동 입력은 사이트마다 직접 허용해요**: 사이트가 받는 건 6–8자리 코드뿐이에요.
 
-**설치**: 릴리스에서 zip을 받아 sha256을 확인한 뒤 압축을 풉니다. `chrome://extensions`(또는
-`edge://extensions`)에서 개발자 모드를 켜고, "압축해제된 확장 프로그램을 로드합니다"로 그
-폴더를 선택합니다. 저장소를 클론했다면 `extension/` 폴더를 선택합니다. 확장 프로그램을 제거하면
-금고도 함께 삭제되니, 먼저 백업을 내보내세요.
+### 설치
 
-**사용**: 처음 열 때 패스프레이즈를 만듭니다. 계정은 탭의 QR, QR 이미지, `otpauth://` URI,
-수동 입력으로 추가합니다. 코드를 클릭하면 복사됩니다. 설정에서 암호화된 백업을 내보내고
-가져옵니다. 잠금 해제 상태는 잠금 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 완전히
-종료할 때까지 유지됩니다(macOS에서는 Cmd+Q, 창만 닫으면 종료되지 않습니다).
+- **스토어에서 설치**: Chrome 웹 스토어와 Microsoft Edge 추가 기능에 곧 올라가요(공개되면 여기에 링크를
+  넣을게요). 스토어로 설치하면 브라우저가 알아서 업데이트해요.
+- **직접 설치**: [Releases](https://github.com/2lab-ai/zauthenticator/releases)에서
+  `zauthenticator-<버전>.zip`을 받아 계속 둘 폴더에 압축을 풀어요. `chrome://extensions`나
+  `edge://extensions`에서 **개발자 모드**를 켜고 **압축해제된 확장 프로그램을 로드합니다**를 눌러 그 폴더(`manifest.json`이 있는 폴더)를
+  고르면 돼요. 업데이트할 때는 같은 폴더의 내용을 새 버전으로 바꾸고 새로고침 아이콘을 눌러요. 확장
+  프로그램 ID가 폴더 경로로 정해지기 때문에, 폴더가 바뀌면 빈 보관함을 가진 다른 확장 프로그램이 돼요.
+- 스토어 설치와 직접 설치는 서로 다른 확장 프로그램이라 보관함도 따로예요. 계정을 옮기려면 한쪽에서
+  백업을 내보내고 다른 쪽에서 가져오세요.
+- 확장 프로그램을 삭제하면 보관함도 함께 지워져요. 삭제하기 전에 백업을 내보내세요.
 
-**자동 입력**: 사이트의 코드 입력란을 오른쪽 클릭해 **zauthenticator**에서 계정을 고르면 현재
-코드가 그 입력란에 입력됩니다(제출하지 않음). 아직 바인딩되지 않은 `https:` 사이트라면 작은 창이
-그 사이트에서 앞으로 자동 입력할지 묻고, **Allow**를 누른 뒤 브라우저 권한 창에서 동의해야만
-바인딩이 저장됩니다. 이후 그 사이트를 열면 금고가 열려 있는 동안 입력란이 한 번 채워집니다.
-사이트를 빼려면 설정 → **Auto-fill sites** → **Remove**를 누릅니다(바인딩 삭제, 스크립트 등록 해제,
-그 사이트 접근 권한 반납). 계정을 지우면 그 계정의 바인딩도 함께 지워집니다. 브라우저 권한 창과
-오른쪽 클릭 메뉴 자체는 자동화할 수 없어 직접 확인해야 합니다.
+### 사용법
 
-**한계**: 패스프레이즈는 복구할 수 없습니다. 시간은 시스템 시계만 기준으로 합니다. 동기화는
-의도적으로 없습니다. 브라우저 프로필을 디스크에서 읽을 수 있는 사람이나 백업 파일을 가진 사람은
-패스프레이즈를 오프라인으로 추측해 볼 수 있습니다. PBKDF2-SHA-256 600,000회는 추측을 GPU 한
-대당 초당 수천~수만 번 정도(대략적인 규모의 추정)로 늦출 뿐이니 긴 패스프레이즈를 쓰세요.
-사이트에 입력된 코드는 그 사이트의 스크립트가 읽을 수 있습니다(직접 입력했을 때와 같음).
+- **처음 열 때** 마스터 비밀번호(8자 이상)를 만들어요. 비밀번호는 복구할 수 없으니 잊지 않도록 해 주세요.
+- **계정 추가**: 지금 보고 있는 페이지의 QR 코드(툴바 아이콘을 눌러 스캔), QR 이미지, `otpauth://` 링크,
+  설정 키 직접 입력 중 편한 방법을 쓰면 돼요.
+- **코드 복사**: 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
+- **사이트에 입력**: 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 **zauthenticator**에서 계정을
+  고르면 현재 코드가 입력돼요(제출은 하지 않아요). `https` 사이트에서 처음 이렇게 하면 앞으로 이 사이트에서
+  자동으로 입력할지 묻는 작은 창이 떠요. **허용**을 누르고 브라우저가 그 사이트 하나에 접근해도 되는지 물을 때
+  동의하면, 다음부터는 잠금이 풀려 있는 동안 코드가 자동으로 입력돼요. 사이트가 시간이 지난 코드를
+  거부하면 새 코드로 다시 입력해요. **나중에**를 누르거나 브라우저 권한을 거절하면 아무것도 저장하지 않아요.
+- 자동 입력은 허용한 바로 그 사이트(같은 주소·포트)에서만 해요. 하위 도메인이나 비슷한 도메인에는
+  입력하지 않아요. 코드 입력란이라는 표시가 있는 칸만 채우고, PIN이나 우편번호처럼 모양만 비슷한 칸은
+  건드리지 않으니 그런 칸에는 오른쪽 클릭 메뉴로 넣어 주세요.
+- 자동 입력을 그만하려면 **설정**의 **자동 입력 사이트**에서 **삭제**를 눌러요. 그 사이트에 대한 접근 권한도
+  함께 반납해요.
+- **백업**: 설정에서 암호화된 백업을 `.json` 파일로 내보내고, 가져올 때는 그 백업을 만들 때 쓴 비밀번호를
+  입력해요. 계정만 가져오고 자동 입력 사이트는 다시 설정해야 해요.
+- **잠금**: 잠그기 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 완전히 종료하면(macOS는 Cmd+Q) 잠겨요.
+  잠겨 있는 동안에는 아무것도 입력하지 않아요.
 
-**개발**: `npm test`, `npm run check`, `node scripts/check-policy.mjs --self-test`, `npm run e2e`, `npm run zip`.
-**로드맵**: 패스프레이즈 변경.
-**라이선스**: MIT.
+### 개인정보와 보안
+
+- 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기의 브라우저 저장소에 암호화된 채로만 있어요. 개발자에게도,
+  다른 누구에게도 보내지 않아요.
+- 브라우저는 확장 프로그램이 접근할 수 있는 사이트 목록과 자동 입력 스크립트가 등록된 사이트
+  목록을 보관함 밖에 따로 기록해요. 브라우저 프로필을 읽을 수 있는 사람은 이 사이트 이름을 볼 수 있어요.
+- 사이트가 받는 건 입력된 6–8자리 코드뿐이에요. 그 사이트의 스크립트는 직접 입력했을 때처럼 이 코드를 읽을 수 있어요.
+- 권한: `storage`(암호화된 보관함 저장), `activeTab`(툴바 아이콘이나 오른쪽 클릭 메뉴를 쓴 그 탭에서만 QR
+  스캔·코드 입력), `contextMenus`(오른쪽 클릭 메뉴), `scripting`(코드 입력과 자동 입력 등록), 그리고 허용한
+  사이트 하나씩만 받는 선택적 `https` 사이트 접근이에요. 설치할 때는 어떤 사이트 권한도 받지 않아요.
+- 컴퓨터 시계가 틀리면 코드도 틀려요. 기기 간 동기화는 일부러 넣지 않았어요. 백업 파일이나 브라우저 프로필을 가진
+  사람은 비밀번호를 오프라인에서 추측해 볼 수 있으니 긴 비밀번호를 쓰세요.
+- 자세한 내용은 [개인정보처리방침](PRIVACY.md)(영문), [보안 정책](SECURITY.md)(영문),
+  [Verifying the trust claims](#verifying-the-trust-claims)에 있어요.
+
+### 개발
+
+`npm ci` 후 `npm test`, `npm run check`, `node scripts/check-policy.mjs --self-test`, `npm run e2e`,
+`npm run zip`을 실행해요. 라이선스는 MIT예요.

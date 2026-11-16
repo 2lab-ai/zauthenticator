@@ -6,7 +6,7 @@
     "message": "zauthenticator"
   },
   "extDescription": {
-    "message": "오픈소스 2단계 인증(TOTP) 앱. 코드는 오프라인에서 만들어지고 비밀 키는 이 기기에 암호화되어 저장돼요."
+    "message": "오픈소스 2단계 인증(TOTP) 앱이에요. 코드는 이 기기에서 만들고 비밀 키는 암호화해 보관해요. 자동 입력은 허용한 사이트에서만 해요."
   },
   "actionTitle": {
     "message": "zauthenticator: 2단계 인증 코드"
