@@ -5,7 +5,18 @@
 // It runs the shipped entry unchanged, so the listeners are exactly the ones background.js
 // registers, and exposes the worker module's menu handler, because a click in the browser's own
 // context menu cannot be automated. The shipped worker has no test hooks.
+//
+// frameIdFor() is test-only too: the frameId the browser's context menu would report for a frame
+// (what handleMenuClick() receives as info.frameId). It reads location.href in every frame of the
+// tab through chrome.scripting, which the test copy may use on its routed test origins.
 import './background.js';
 import { handleMenuClick } from './lib/autofill-worker.js';
 
-globalThis.__zauthTest = { handleMenuClick };
+// The frameId of the frame in tab `tabId` whose document is at `url` now. → number, or null
+async function frameIdFor(tabId, url) {
+  const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => location.href });
+  const hit = results.find((r) => r && r.result === url);
+  return hit ? hit.frameId : null;
+}
+
+globalThis.__zauthTest = { handleMenuClick, frameIdFor };

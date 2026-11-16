@@ -8,7 +8,9 @@
 // and key-host-permissions-test-origins):
 //   background.service_worker  background.test.js (e2e/fixtures/background.test.js): the shipped
 //                              background.js unchanged plus globalThis.__zauthTest.handleMenuClick,
-//                              because a click in the browser's context menu cannot be automated.
+//                              because a click in the browser's context menu cannot be automated,
+//                              and __zauthTest.frameIdFor, the frameId such a click reports for a
+//                              frame.
 //   host_permissions           the routed test origins, so the browser grants the bind request at
 //                              once instead of showing its native prompt (a manual check). In the
 //                              shipped manifest that access is optional and granted per site.
@@ -84,6 +86,11 @@ const HEAD = '<meta charset="utf-8"><link rel="icon" href="data:,">';
 const LOGIN_HTML = `<!doctype html><html><head>${HEAD}<title>Sign in</title></head><body><form method="post" action="/submitted"><label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label><button>Sign in</button></form></body></html>`;
 // host.test frames otp.test and has an OTP field of its own, which must stay empty.
 const HOST_HTML = `<!doctype html><html><head>${HEAD}<title>Host</title></head><body><input id="otp" autocomplete="one-time-code"><iframe src="${OTP}/frame"></iframe></body></html>`;
+// Two more numeric fields sized for a code ahead of the OTP field: a zip code (named for another
+// number) and one with no name at all. One fill per page load: only #otp may be filled.
+const MULTI_PATH = '/multi';
+const MULTI_HTML = `<!doctype html><html><head>${HEAD}<title>Sign in</title></head><body><form method="post" action="/submitted"><label>Zip <input id="zip" name="zip" inputmode="numeric" maxlength="6"></label><label>Number <input inputmode="numeric" maxlength="6"></label><label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label><button>Sign in</button></form></body></html>`;
+const UNNAMED = 'input[inputmode="numeric"]:not([name]):not([id])';
 
 async function routeTestOrigins(context) {
   const served = [];
@@ -91,7 +98,8 @@ async function routeTestOrigins(context) {
     await context.route(`${origin}/**`, (route) => {
       const url = new URL(route.request().url());
       served.push(url.href);
-      return route.fulfill({ status: 200, contentType: 'text/html', body: url.origin === HOST ? HOST_HTML : LOGIN_HTML });
+      const body = url.origin === HOST ? HOST_HTML : url.pathname === MULTI_PATH ? MULTI_HTML : LOGIN_HTML;
+      return route.fulfill({ status: 200, contentType: 'text/html', body });
     });
   }
   return served;
@@ -285,6 +293,74 @@ export async function runAutofill({ rep, extensionDir }) {
     return { rec, value, expected, at, win };
   }
 
+  // ---- menu clicks inside a frame --------------------------------------------------------------
+
+  // A fresh tab on https://host.test/, which frames https://otp.test/frame; both documents have an
+  // #otp field. → { rec, tabId, frame, frameId } once the frame's field is there. frameId is what the
+  // browser reports for the frame (__zauthTest.frameIdFor); anything but a subframe id throws, since
+  // a click aimed at the top frame would make every "nothing filled" check pass for nothing.
+  async function openFramedPage() {
+    const url = `${HOST}/`;
+    const rec = await openTestPage(url, [OTP, EVIL]);
+    await rec.page.bringToFront();
+    const frame = await (await rec.page.waitForSelector('iframe', { timeout: 10000 })).contentFrame();
+    await frame.waitForSelector('#otp', { timeout: 10000 });
+    const tabId = await tabIdOf(url);
+    const frameId = await frameIdOf(tabId, `${OTP}/frame`);
+    if (!Number.isInteger(frameId) || frameId <= 0) throw new Error(`no subframe id for ${OTP}/frame in tab ${tabId} (got ${frameId})`);
+    return { rec, tabId, frame, frameId };
+  }
+  const frameIdOf = (tabId, url) => inWorker(({ tab, u }) => globalThis.__zauthTest.frameIdFor(tab, u), { tab: tabId, u: url });
+  // Focuses #otp in `frame` and makes sure it is the frame document's active element.
+  async function focusIn(frame) {
+    await frame.focus('#otp');
+    const active = await frame.evaluate(() => document.activeElement?.id ?? null);
+    if (active !== 'otp') throw new Error(`focus did not land on #otp in ${frame.url()} (active element #${active})`);
+  }
+  // What a context-menu click on an account item inside a frame delivers to the worker. A null
+  // frameUrl leaves the key out, as the browser does when it has no URL for the frame.
+  const frameMenuClick = (accountId, tabId, { frameId, frameUrl, pageUrl }) =>
+    inWorker(
+      ({ id, tab, frame, fu, pu }) => {
+        const info = { menuItemId: `acct:${id}`, editable: true, frameId: frame, pageUrl: pu };
+        if (fu !== null) info.frameUrl = fu;
+        return globalThis.__zauthTest.handleMenuClick(info, { id: tab, url: pu });
+      },
+      { id: accountId, tab: tabId, frame: frameId, fu: frameUrl ?? null, pu: pageUrl },
+    );
+  // The state of a #bind window: its view and the origin and account it shows.
+  async function bindShown(win) {
+    await waitState(win, 'bind', 10000).catch(() => {});
+    return win.evaluate(() => ({
+      state: document.body.dataset.state,
+      origin: document.querySelector('#bind-origin')?.textContent?.trim() ?? null,
+      account: document.querySelector('#bind-account')?.textContent?.trim() ?? null,
+    }));
+  }
+  // What a menu click in `frame` of the framed page left behind: both fields, a #bind window opened
+  // since page count `before` (with what it shows), and the session's pending offer.
+  async function afterFrameClick(rec, frame, before) {
+    const frameValue = await frame.evaluate(() => document.querySelector('#otp')?.value ?? null).catch((err) => `unreadable (${err.message.split('\n')[0]})`);
+    const hostValue = await rec.page.evaluate(() => document.querySelector('#otp').value);
+    const win = await st.pages.waitForUrl((u) => u === ownUrl('bind'), { after: before, timeout: 0 });
+    if (win) st.consoles.push(watchConsole(win));
+    const shown = win ? await bindShown(win).catch(() => null) : null;
+    const pending = (await storage()).session.pendingBind ?? null;
+    const detail = `${frame.url()} field ${JSON.stringify(frameValue)}, ${HOST} field ${JSON.stringify(hostValue)}; #bind window ${win ? `showing origin ${JSON.stringify(shown?.origin)} (state ${shown?.state})` : 'none'}; session pendingBind ${JSON.stringify(pending)}`;
+    return { frameValue, hostValue, win, shown, pending, detail };
+  }
+  // The control popup page is open and the vault unlocked: unlocks it there when it is not.
+  async function ensureUnlocked() {
+    const opened = !st.popup || st.popup.isClosed();
+    if (opened) st.popup = await openPopup();
+    if ((await storage()).session.vaultKey) return;
+    if (!opened) await st.popup.reload();
+    await waitState(st.popup, 'locked', 15000);
+    await unlockIn(st.popup);
+    if (!(await poll(async () => (await storage()).session.vaultKey))) throw new Error('did not unlock');
+    await waitState(st.popup, 'list');
+  }
+
   // For a failure report: the frame's URL, its field, and the extension's isolated worlds in it
   // (an out-of-process iframe gets its own CDP session; Runtime.enable reports existing worlds).
   async function describeFrame(frame) {
@@ -390,6 +466,65 @@ export async function runAutofill({ rep, extensionDir }) {
       probe.result.startsWith('blocked') && probe.violations.some((v) => v.startsWith('connect-src')) && !st.served.includes(url),
       `fetch(${url}) in the extension's service worker -> ${probe.result}; violations ${JSON.stringify(probe.violations)}; route saw it: ${st.served.includes(url)}`,
     );
+  });
+
+  // S1, a click inside a frame: the origin checked and offered is the frame's own, read from the
+  // click's frameUrl, never the embedding page's. Without a frameUrl there is no origin to check:
+  // nothing is filled and nothing offered. Run while nothing is bound, so no content script fills
+  // the frame either (menu-iframe-bind, at the end, is the click that does fill).
+  step('menu-iframe-no-frame-url', ['autofill-setup'], async () => {
+    const f = await openFramedPage();
+    try {
+      await focusIn(f.frame);
+      await waitForFreshPeriod(ACCOUNT_A);
+      const before = st.pages.count();
+      await frameMenuClick(st.idA, f.tabId, { frameId: f.frameId, frameUrl: null, pageUrl: `${HOST}/` });
+      await sleep(NO_FILL_WAIT_MS);
+      const seen = await afterFrameClick(f.rec, f.frame, before);
+      rep.check(
+        'menu-iframe-no-frame-url',
+        seen.frameValue === '' && seen.hostValue === '' && !seen.win && seen.pending === null,
+        `click in frame ${f.frameId} (${OTP}/frame) with pageUrl ${HOST}/ and no frameUrl, after ${NO_FILL_WAIT_MS} ms: ${seen.detail} (must be: both fields empty, no window, no offer)`,
+      );
+      if (seen.win && !seen.win.isClosed()) await seen.win.close();
+    } finally {
+      await f.rec.page.close();
+    }
+  });
+
+  // S1, the frame navigated to another origin between the click and the fill: the click says
+  // otp.test, the frame now shows evil.test. Nothing is filled there and nothing is offered.
+  step('menu-origin-changed', ['autofill-setup'], async () => {
+    const f = await openFramedPage();
+    try {
+      const evilUrl = `${EVIL}/frame`;
+      await f.rec.page.evaluate((u) => {
+        document.querySelector('iframe').src = u;
+      }, evilUrl);
+      const frame = await poll(async () => {
+        const fr = await (await f.rec.page.$('iframe'))?.contentFrame();
+        return fr && fr.url() === evilUrl ? fr : null;
+      });
+      if (!frame) throw new Error(`the frame did not navigate to ${evilUrl}`);
+      await frame.waitForSelector('#otp', { timeout: 10000 });
+      // The same frame (the browser keeps a frame's id across navigations), now at evil.test.
+      const evilId = await frameIdOf(f.tabId, evilUrl);
+      if (evilId !== f.frameId) throw new Error(`frame id ${f.frameId} at ${OTP}/frame, ${evilId} at ${evilUrl}: not the same frame`);
+      await focusIn(frame);
+      await waitForFreshPeriod(ACCOUNT_A);
+      const before = st.pages.count();
+      await frameMenuClick(st.idA, f.tabId, { frameId: f.frameId, frameUrl: `${OTP}/frame`, pageUrl: `${HOST}/` });
+      await sleep(NO_FILL_WAIT_MS);
+      const seen = await afterFrameClick(f.rec, frame, before);
+      rep.check(
+        'menu-origin-changed',
+        seen.frameValue === '' && seen.hostValue === '' && !seen.win && seen.pending === null,
+        `click in frame ${f.frameId} with frameUrl ${OTP}/frame while the frame shows ${frame.url()}, after ${NO_FILL_WAIT_MS} ms: ${seen.detail} (must be: both fields empty, no window, no offer)`,
+      );
+      if (seen.win && !seen.win.isClosed()) await seen.win.close();
+    } finally {
+      await f.rec.page.close();
+    }
   });
 
   // S1: a menu fill types the current code into the focused field, submits nothing, records
@@ -511,21 +646,41 @@ export async function runAutofill({ rep, extensionDir }) {
     await rec.page.close();
   });
 
+  // One fill per page load, and only the OTP field: a zip code field and an unnamed numeric field,
+  // both sized for a code and ahead of it in the page, stay empty.
+  step('s3-one-fill-per-page', ['s2-bind-allow'], async () => {
+    await waitForFreshPeriod(ACCOUNT_A);
+    const url = `${OTP}${MULTI_PATH}`;
+    const rec = await openTestPage(url);
+    const value = await fieldValue(rec.page, '#otp', digitsPattern(ACCOUNT_A), 10000);
+    const expected = codeAt(ACCOUNT_A, Date.now());
+    await sleep(NO_FILL_WAIT_MS);
+    const now = await rec.page.evaluate((unnamed) => ({ otp: document.querySelector('#otp').value, zip: document.querySelector('#zip').value, unnamed: document.querySelector(unnamed).value }), UNNAMED);
+    rep.check(
+      's3-one-fill-per-page',
+      value === expected && now.otp === expected && now.zip === '' && now.unnamed === '',
+      `${url}: #otp ${JSON.stringify(value)} (reference ${expected}); ${NO_FILL_WAIT_MS} ms later #otp ${JSON.stringify(now.otp)}, #zip (inputmode numeric, maxlength 6) ${JSON.stringify(now.zip)}, unnamed numeric maxlength-6 field ${JSON.stringify(now.unnamed)} (both must stay empty)`,
+    );
+    await rec.page.close();
+  });
+
   step('s3-locked', ['s3-autofill-bound'], async () => {
     const seeded = await seedPendingBind();
     await lockFromPopup();
     await checkSessionEmpty('lock-session-empty:autofill-manual', 'Lock button while a site is bound', seeded);
+    // Locked: the content script is unregistered (the next unlock registers it again).
+    const none = await poll(async () => (await registered()).length === 0);
+    rep.check('s3-locked-unregistered', Boolean(none), `chrome.scripting.getRegisteredContentScripts() from an extension page while locked: ${JSON.stringify(await registered())} (must be [])`);
     await reload(st.s3);
-    // A fresh tab shows whether the script was injected (see watchContentScripts): it is, and the
-    // worker gives it nothing.
+    // A fresh tab shows whether the script was injected (see watchContentScripts): it is not.
     const fresh = await openTestPage(`${OTP}/login`);
     await sleep(NO_FILL_WAIT_MS);
     const value = await st.s3.page.evaluate(() => document.querySelector('#otp').value);
     const freshValue = await fresh.page.evaluate(() => document.querySelector('#otp').value);
     rep.check(
       's3-locked-no-fill',
-      value === '' && freshValue === '' && fresh.worlds.inMainFrame() >= 1,
-      `locked: reload ${OTP}/login -> field ${JSON.stringify(value)} after ${NO_FILL_WAIT_MS} ms; fresh tab -> field ${JSON.stringify(freshValue)}, the script was injected (${fresh.worlds.inMainFrame()} world) and got no code`,
+      value === '' && freshValue === '' && fresh.worlds.inMainFrame() === 0,
+      `locked: reload ${OTP}/login -> field ${JSON.stringify(value)} after ${NO_FILL_WAIT_MS} ms; fresh tab -> field ${JSON.stringify(freshValue)}, content-script worlds in the top frame ${fresh.worlds.inMainFrame()} (not injected while locked)`,
     );
     await fresh.page.close();
   });
@@ -533,11 +688,28 @@ export async function runAutofill({ rep, extensionDir }) {
   step('s3-unlocked-refill', ['s3-locked'], async () => {
     await unlockIn(st.popup);
     await waitState(st.popup, 'list');
+    // The unlock registers the script again, for this browser session only.
+    const script = await poll(async () => {
+      const s = await autofillScript();
+      return s && JSON.stringify(s.matches) === JSON.stringify([`${OTP}/*`]) ? s : null;
+    });
+    rep.check(
+      's3-unlocked-registered',
+      script?.persistAcrossSessions === false,
+      `after unlock, chrome.scripting.getRegisteredContentScripts() from an extension page: ${JSON.stringify(await registered())} (autofill for [${OTP}/*], persistAcrossSessions false)`,
+    );
     await waitForFreshPeriod(ACCOUNT_A);
+    const fresh = await openTestPage(`${OTP}/login`);
     await reload(st.s3);
+    const freshValue = await fieldValue(fresh.page, '#otp', digitsPattern(ACCOUNT_A), 10000);
     const value = await fieldValue(st.s3.page, '#otp', digitsPattern(ACCOUNT_A), 10000);
     const expected = codeAt(ACCOUNT_A, Date.now());
-    rep.check('s3-unlocked-refill', value === expected, `unlocked again, reload ${OTP}/login: field ${JSON.stringify(value)}, reference ${expected}`);
+    rep.check(
+      's3-unlocked-refill',
+      value === expected && freshValue === expected && fresh.worlds.inMainFrame() >= 1,
+      `unlocked again: fresh tab ${OTP}/login -> field ${JSON.stringify(freshValue)}, content-script worlds in the top frame ${fresh.worlds.inMainFrame()}; reload -> field ${JSON.stringify(value)}; reference ${expected}`,
+    );
+    await fresh.page.close();
   });
 
   // Idle: lastActiveAt older than 15 minutes. No extension page is open, so the worker is what
@@ -695,6 +867,58 @@ export async function runAutofill({ rep, extensionDir }) {
       `Allow after the lock: vault bindings ${JSON.stringify(bindings)}, registrations ${JSON.stringify(await registered())} (nothing for ${HOST})`,
     );
     await rec.page.close();
+  });
+
+  // S1 + S2 from a click inside a cross-origin frame: host.test frames otp.test; the code goes into
+  // the frame's field only, the #bind window offers the frame's origin and Allow binds exactly that.
+  // Needs an unlocked vault with nothing bound (as the steps above leave it), so that no content
+  // script fills the frame and the offer is the frame's first.
+  step('menu-iframe-bind', ['autofill-setup'], async () => {
+    await ensureUnlocked();
+    const already = bindingsIn(await vaultData());
+    if (already.length > 0 || (await autofillScript())) {
+      throw new Error(`precondition: nothing bound, but vault bindings ${JSON.stringify(already)}, registrations ${JSON.stringify(await registered())}`);
+    }
+    const f = await openFramedPage();
+    let win = null;
+    try {
+      await focusIn(f.frame);
+      await waitForFreshPeriod(ACCOUNT_A);
+      const before = st.pages.count();
+      const at = Date.now();
+      await frameMenuClick(st.idA, f.tabId, { frameId: f.frameId, frameUrl: `${OTP}/frame`, pageUrl: `${HOST}/` });
+      const value = await fieldValue(f.frame, '#otp', digitsPattern(ACCOUNT_A), 10000);
+      const expected = codeAt(ACCOUNT_A, at);
+      win = await st.pages.waitForUrl((u) => u === ownUrl('bind'), { after: before, timeout: 10000 });
+      await sleep(500);
+      const seen = await afterFrameClick(f.rec, f.frame, before);
+      rep.check(
+        'menu-iframe-fill',
+        value === expected && seen.hostValue === '',
+        `click in frame ${f.frameId} (frameUrl ${OTP}/frame, pageUrl ${HOST}/): frame field ${JSON.stringify(value)} (reference ${expected}), ${HOST} field ${JSON.stringify(seen.hostValue)} (must stay empty)`,
+      );
+      rep.check(
+        'menu-iframe-bind-window',
+        Boolean(win) && seen.shown?.state === 'bind' && seen.shown?.origin === OTP && seen.pending?.origin === OTP,
+        `${seen.detail} (must offer ${OTP}, not ${HOST})`,
+      );
+      if (!win) throw new Error('no #bind window');
+      await win.click('#bind-allow', { timeout: 5000 });
+      const data = await poll(async () => {
+        const d = await vaultData();
+        return bindingsIn(d).some((b) => b?.origin === OTP) ? d : null;
+      });
+      const bindings = bindingsIn(data ?? (await vaultData()));
+      const script = await poll(autofillScript);
+      rep.check(
+        'menu-iframe-registration',
+        bindings.length === 1 && bindings[0].origin === OTP && bindings[0].accountId === st.idA && JSON.stringify(script?.matches) === JSON.stringify([`${OTP}/*`]),
+        `after Allow: vault bindings ${JSON.stringify(bindings)}; registrations ${JSON.stringify(await registered())} (exactly [${OTP}/*])`,
+      );
+    } finally {
+      await f.rec.page.close();
+      if (win && !win.isClosed()) await win.close();
+    }
   });
 
   step('autofill-summary', ['autofill-setup'], async () => {
