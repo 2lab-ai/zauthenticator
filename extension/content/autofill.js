@@ -7,9 +7,9 @@
 //
 // Once a code field is found the service worker is asked for a code. It answers only for a bound
 // origin while the vault is unlocked, and only the digits reach this page. A code is asked for at
-// most once per field, a field is filled only while it is empty and at most once per page load,
-// and nothing is ever submitted. Fields that appear or become visible later are looked for during
-// the first minute.
+// most once per field, a field is filled only while it is empty, a page load gets one fill at most
+// (the watch ends with it), and nothing is ever submitted. Until then, fields that appear or become
+// visible later are looked for during the first minute.
 (() => {
   'use strict';
 
@@ -36,7 +36,6 @@
   const seen = new WeakSet(); // fields a code was asked for, or filled, or found unfit to fill
   let stopped = false;
   let asking = false;
-  let filled = false;
   let settleTimer = 0;
   let retryTimer = 0;
 
@@ -58,7 +57,7 @@
   }
 
   function retry() {
-    if (stopped || filled) return;
+    if (stopped) return;
     retryTimer = setTimeout(() => {
       look();
       retry();
@@ -96,25 +95,29 @@
     // The page may have changed while the worker answered: find the field again before filling.
     // It is filled if it is the one just asked for, or one no code was asked for yet.
     const fields = finder.findInDocument(document);
-    if (fields && fields.every((el) => asked.includes(el) || !seen.has(el))) fill(fields, code);
+    if (fields && fields.every((el) => asked.includes(el) || !seen.has(el)) && fill(fields, code)) {
+      // One fill per page load: a later field (another code-like field, the same form shown again)
+      // gets no fresh code.
+      stop();
+      return;
+    }
     // Mutations that arrived while asking were dropped by look(); check once more.
     schedule();
   }
 
+  // → true when the field(s) were filled
   function fill(fields, code) {
     for (const el of fields) seen.add(el);
     if (fields.length === 1) {
       const [el] = fields;
-      if (el.value !== '' || (el.maxLength >= 0 && el.maxLength < code.length)) return;
+      if (el.value !== '' || (el.maxLength >= 0 && el.maxLength < code.length)) return false;
       put(el, code);
-    } else {
-      // Split boxes: one digit each, only when there is exactly one box per digit.
-      if (fields.length !== code.length || fields.some((el) => el.value !== '')) return;
-      fields.forEach((el, i) => put(el, code[i]));
+      return true;
     }
-    // A field is filled: no more retries; DOM changes and the events above are still looked at.
-    filled = true;
-    clearTimeout(retryTimer);
+    // Split boxes: one digit each, only when there is exactly one box per digit.
+    if (fields.length !== code.length || fields.some((el) => el.value !== '')) return false;
+    fields.forEach((el, i) => put(el, code[i]));
+    return true;
   }
 
   function put(el, value) {

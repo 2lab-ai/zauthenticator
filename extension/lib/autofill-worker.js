@@ -1,10 +1,11 @@
 // Auto-fill in the service worker (.prd/03-autofill.md S1-S4). background.js only wires browser
 // events to the exports below; nothing here is a test hook.
 //
-// Every vault read goes through session.readUnlocked(), which re-checks the stored key and the
-// idle limit under the vault Web Lock and locks a session that sat idle too long. This module
-// never touches a page itself: fillFocused() is serialized by chrome.scripting and runs in the
-// frame the menu was opened in, and content/autofill.js asks handleMessage() for a code, which
+// Every vault read goes through session.readUnlocked() or session.withVaultState(), which re-check
+// the stored key and the idle limit under the vault Web Lock and lock a session that sat idle too
+// long. This module never touches a page itself: fillFocused() is serialized by chrome.scripting
+// and runs in the frame the menu was opened in, only while that frame still shows a document of
+// the origin the click was in, and content/autofill.js asks handleMessage() for a code, which
 // answers only for a bound origin while the vault is unlocked, with the digits only.
 import { totp } from './totp.js';
 import { normalizeOrigin, bindingFor, boundOrigins } from './bindings.js';
@@ -44,6 +45,9 @@ function serial(task) {
 
 const menuQueue = serial(buildMenu);
 const syncQueue = serial(sync);
+
+// Session storage holds the raw vault key: readable by extension pages and this worker only.
+store.pinSessionAccess();
 
 // The vault's accounts that can be named and found again: objects with a non-empty string id,
 // the first entry for each id.
@@ -113,6 +117,12 @@ export async function handleMenuClick(info, tab) {
   }
   const tabId = tab?.id;
   if (!itemId.startsWith(MENU_ACCOUNT) || !Number.isInteger(tabId) || tabId < 0) return;
+  // The origin of the document the click was in: the page's for the top frame, the frame's own for
+  // any other (never the page's: a framed site is not the page). The fill happens only in a
+  // document of that origin, and only that origin is offered. No URL for the frame: no fill.
+  const frameId = Number.isInteger(info.frameId) ? info.frameId : 0;
+  const expected = urlOrigin(frameId === 0 ? info.pageUrl : info.frameUrl);
+  if (expected === null) return;
 
   // Choosing an account is activity.
   const data = await session.readUnlocked({ touch: true });
@@ -136,18 +146,21 @@ export async function handleMenuClick(info, tab) {
   let filled = false;
   try {
     const results = await chrome.scripting.executeScript({
-      target: { tabId, frameIds: [Number.isInteger(info.frameId) ? info.frameId : 0] },
+      target: { tabId, frameIds: [frameId] },
       func: fillFocused,
-      args: [code],
+      args: [code, expected],
     });
-    filled = results.some((r) => r && r.result === true);
+    // fillFocused() answers with the origin it found the document at, which must be the one the
+    // click was in.
+    filled = results.some((r) => r && r.result === expected);
   } catch {
     return; // a page the extension may not script: no fill, no offer
   }
   if (!filled) return;
 
-  const origin = normalizeOrigin(info.frameUrl ?? info.pageUrl);
-  if (!origin || bindingFor(data, origin)) return;
+  // Offered: the https origin the fill was checked against, when it has no binding yet.
+  const origin = normalizeOrigin(expected);
+  if (origin !== expected || bindingFor(data, origin)) return;
   // false: the vault locked (or went idle) since the read; there is nothing to offer.
   if ((await session.setPendingBind({ origin, accountId: account.id })) !== true) return;
   await openOwnWindow('bind');
@@ -177,6 +190,16 @@ export async function handleMessage(message, sender) {
   }
 }
 
+// → new URL(url).origin (any scheme; 'null' for an opaque one), or null when url is not a URL.
+function urlOrigin(url) {
+  if (typeof url !== 'string') return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 // The origin of the frame that sent the message (set by the browser), as a binding key, or null.
 function senderOrigin(sender) {
   let raw = sender.origin;
@@ -192,7 +215,8 @@ function senderOrigin(sender) {
 
 /**
  * The one reconciler (S2, S4): registers content/autofill.js for exactly the bound origins and
- * removes granted optional site access that no binding uses. Locked: changes nothing.
+ * removes granted optional site access that no binding uses. Locked or idle: unregisters the
+ * script (the next unlock registers it again) and leaves site access as it is.
  */
 export function syncRegistrations() {
   return syncQueue();
@@ -200,12 +224,17 @@ export function syncRegistrations() {
 
 async function sync() {
   const data = await session.readUnlocked();
-  if (!data) return;
+  if (!data) {
+    // Which sites are bound cannot be read while locked, so no access is removed; the script is
+    // simply not injected anywhere until then.
+    await registerAutofill([]);
+    return;
+  }
   const matches = boundOrigins(data).map((origin) => `${origin}/*`);
   try {
     await registerAutofill(matches);
   } finally {
-    await removeUnusedAccess(matches);
+    await removeUnusedAccess();
   }
 }
 
@@ -221,34 +250,36 @@ async function registerAutofill(matches) {
     js: CONTENT_SCRIPTS,
     allFrames: true,
     runAt: 'document_idle',
-    persistAcrossSessions: true,
+    // Gone when the browser restarts (the vault is locked then); the unlock registers it again.
+    persistAcrossSessions: false,
   };
   if (registered.length > 0) await chrome.scripting.updateContentScripts([script]);
   else await chrome.scripting.registerContentScripts([script]);
 }
 
-// Kept: the bound origins, the origin of a bind offer not answered yet (the bind window may sit
-// between the permission prompt and storing the binding), and host permissions the manifest
-// itself requests.
+// Decided and done under the vault lock (session.withVaultState), against the bindings and the
+// offer stored at that moment: the bind window stores a binding before it clears its offer, so a
+// site the browser has just granted is offered or bound here, never neither. Kept: the bound
+// origins, the origin of a stored offer of any age (the bind window may sit between the
+// permission prompt and storing the binding), and host permissions the manifest itself requests.
+// Locked or idle: nothing is removed.
 // Each removal stands alone, so one refused removal does not keep the others.
-async function removeUnusedAccess(matches) {
-  const keep = new Set(matches);
-  for (const pattern of chrome.runtime.getManifest().host_permissions ?? []) keep.add(pattern);
-  try {
-    const pending = await session.takePendingBind();
-    if (pending && typeof pending.origin === 'string') keep.add(`${pending.origin}/*`);
-  } catch {
-    // no offer readable: nothing extra to keep
-  }
-  const granted = await chrome.permissions.getAll();
-  const unused = (granted.origins ?? []).filter((pattern) => pattern.startsWith('https:') && !keep.has(pattern));
-  for (const pattern of unused) {
-    try {
-      await chrome.permissions.remove({ origins: [pattern] });
-    } catch {
-      // already gone, or not removable
+function removeUnusedAccess() {
+  return session.withVaultState(async ({ data, pending }) => {
+    if (!data) return;
+    const keep = new Set(boundOrigins(data).map((origin) => `${origin}/*`));
+    for (const pattern of chrome.runtime.getManifest().host_permissions ?? []) keep.add(pattern);
+    if (pending) keep.add(`${pending.origin}/*`);
+    const granted = await chrome.permissions.getAll();
+    const unused = (granted.origins ?? []).filter((pattern) => pattern.startsWith('https:') && !keep.has(pattern));
+    for (const pattern of unused) {
+      try {
+        await chrome.permissions.remove({ origins: [pattern] });
+      } catch {
+        // already gone, or not removable
+      }
     }
-  }
+  });
 }
 
 /**
@@ -265,10 +296,14 @@ export function onStorageChanged(changes, area) {
 }
 
 // Injected by chrome.scripting.executeScript into the frame the menu was opened in, as source
-// text: it may use nothing from this module. Fills the focused text field, or, when that is a
-// single-character box, the run of boxes it belongs to (grouped as lib/fieldfind.js groups them)
-// with one digit each, dispatching input and change. Submits nothing. → true when it filled
-function fillFocused(code) {
+// text: it may use nothing from this module. expected is the origin of the document the menu was
+// opened in; when the frame shows a document of another origin now (it navigated while the code
+// was made), nothing is touched. Fills the focused text field, or, when that is a single-character
+// box, the run of boxes it belongs to (grouped as lib/fieldfind.js groups them) with one digit
+// each, dispatching input and change. Submits nothing. → the document's origin when it filled,
+// else false
+function fillFocused(code, expected) {
+  if (location.origin !== expected) return false;
   let el = document.activeElement;
   while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
   const textTypes = ['text', 'tel', 'number', 'password', 'search', 'email', 'url'];
@@ -294,9 +329,9 @@ function fillFocused(code) {
     );
     if (boxes.length === code.length && boxes.includes(el)) {
       boxes.forEach((box, i) => put(box, code[i]));
-      return true;
+      return location.origin;
     }
   }
   put(el, code);
-  return true;
+  return location.origin;
 }

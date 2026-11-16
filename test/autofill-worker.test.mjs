@@ -44,6 +44,8 @@ let registered = [];    // registered content scripts
 let granted = [];       // granted host permission patterns
 let refused = new Set(); // patterns permissions.remove refuses
 let executeScript;      // the chrome.scripting.executeScript behaviour of the current test
+let beforeRegistration = null; // run once inside the next getRegisteredContentScripts call
+const accessLevels = [];       // chrome.storage.session.setAccessLevel arguments, from import on
 
 globalThis.chrome = {
   runtime: {
@@ -55,7 +57,12 @@ globalThis.chrome = {
   i18n: { getMessage: (key) => MESSAGES[key]?.message ?? '' },
   storage: {
     local: area(areas.local),
-    session: area(areas.session),
+    session: {
+      ...area(areas.session),
+      async setAccessLevel(options) {
+        accessLevels.push(structuredClone(options));
+      },
+    },
     onChanged: { addListener() {}, removeListener() {} },
   },
   contextMenus: {
@@ -85,6 +92,11 @@ globalThis.chrome = {
       return executeScript(options);
     },
     async getRegisteredContentScripts({ ids } = {}) {
+      if (beforeRegistration) {
+        const run = beforeRegistration;
+        beforeRegistration = null;
+        await run();
+      }
       return structuredClone(ids ? registered.filter((s) => ids.includes(s.id)) : registered);
     },
     async registerContentScripts(list) {
@@ -102,6 +114,7 @@ globalThis.chrome = {
   },
   permissions: {
     async getAll() {
+      calls.push(['permissions.getAll']);
       return { permissions: ['storage', 'activeTab', 'contextMenus', 'scripting'], origins: [...granted] };
     },
     async remove({ origins }) {
@@ -220,6 +233,7 @@ afterEach(async () => {
   registered = [];
   granted = [];
   refused = new Set();
+  beforeRegistration = null;
 });
 
 test('referenceTotp reproduces RFC 6238 Appendix B', () => {
@@ -345,7 +359,8 @@ test('auto-fill is not activity: lastActiveAt is not refreshed', async () => {
 // ---- menu click (S1) ---------------------------------------------------------------------------
 
 const MENU_VAULT = { accounts: [A, B], bindings: [binding('https://bound.test', 'acc-a')] };
-const filledOk = async () => [{ frameId: 0, result: true }];
+// fillFocused() answers with the origin it checked (its second argument) when it filled.
+const filledOk = async (options) => [{ frameId: options.target.frameIds[0], result: options.args[1] }];
 
 test('menu fill: the code goes into the clicked frame, counts as activity, and an unbound https origin gets the offer', async () => {
   executeScript = filledOk;
@@ -355,8 +370,10 @@ test('menu fill: the code goes into the clicked frame, counts as activity, and a
   const [[, options]] = named('executeScript');
   assert.deepEqual(options.target, { tabId: 7, frameIds: [3] });
   assert.equal(options.func.name, 'fillFocused');
-  assert.equal(options.args.length, 1);
+  assert.equal(options.args.length, 2);
   assert.ok(allowed.includes(options.args[0]), `${options.args[0]} not in ${allowed}`);
+  // The origin of the clicked frame, which fillFocused() compares with the document it runs in.
+  assert.equal(options.args[1], 'https://login.example.test');
   assert.ok(Date.now() - areas.session.get('lastActiveAt') < 5000, 'lastActiveAt refreshed');
   const pending = areas.session.get('pendingBind');
   assert.deepEqual({ origin: pending.origin, accountId: pending.accountId }, { origin: 'https://login.example.test', accountId: 'acc-b' });
@@ -398,9 +415,9 @@ test('no offer when nothing was filled: executeScript refused, or no editable fi
 
 test('no offer when setPendingBind refuses (the vault locked while the field was filled)', async () => {
   await seed(MENU_VAULT);
-  executeScript = async () => {
+  executeScript = async (options) => {
     await store.clearSessionKey();
-    return [{ frameId: 0, result: true }];
+    return filledOk(options);
   };
   await click({ menuItemId: 'acct:acc-a', pageUrl: 'https://new.test/' });
   assert.equal(named('executeScript').length, 1);
@@ -430,6 +447,56 @@ test('an account the vault no longer has, or no tab: nothing is filled', async (
   assert.deepEqual(windows(), []);
 });
 
+test('menu fill in a subframe whose URL the click did not report: nothing is injected or offered (never the page URL)', async () => {
+  executeScript = filledOk;
+  await seed(MENU_VAULT);
+  await click({ menuItemId: 'acct:acc-a', frameId: 3, pageUrl: 'https://embedder.test/' });
+  await click({ menuItemId: 'acct:acc-a', frameId: 5, frameUrl: undefined, pageUrl: 'https://embedder.test/login' });
+  await click({ menuItemId: 'acct:acc-a', frameId: 5, frameUrl: 'not a url', pageUrl: 'https://embedder.test/login' });
+  assert.deepEqual(named('executeScript'), []);
+  assert.deepEqual(windows(), []);
+  assert.equal(areas.session.has('pendingBind'), false);
+});
+
+test("menu fill in the top frame checks the page's origin; a subframe's checks the frame's", async () => {
+  executeScript = filledOk;
+  await seed(MENU_VAULT);
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://top.test/a', frameUrl: 'https://other.test/' });
+  await click({ menuItemId: 'acct:acc-a', frameId: 2, pageUrl: 'https://top.test/a', frameUrl: 'https://framed.test:8443/b' });
+  await click({ menuItemId: 'acct:acc-a', frameId: 4, pageUrl: 'https://top.test/a', frameUrl: 'http://plain.test/c' });
+  assert.deepEqual(named('executeScript').map((c) => [c[1].target.frameIds[0], c[1].args[1]]), [
+    [0, 'https://top.test'],
+    [2, 'https://framed.test:8443'],
+    [4, 'http://plain.test'],
+  ]);
+});
+
+test('no offer unless the frame answers with the origin it was given (a navigated frame fills nothing)', async () => {
+  await seed(MENU_VAULT);
+  for (const result of [true, 'https://elsewhere.test', false, null]) {
+    executeScript = async (options) => [{ frameId: options.target.frameIds[0], result }];
+    await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://new.test/login' });
+  }
+  assert.equal(named('executeScript').length, 4);
+  assert.deepEqual(windows(), []);
+  assert.equal(areas.session.has('pendingBind'), false);
+  // The same click with the expected answer offers the site.
+  executeScript = filledOk;
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://new.test/login' });
+  assert.equal(areas.session.get('pendingBind').origin, 'https://new.test');
+});
+
+test('entries of a hand-edited vault (no id, a repeated id) can be chosen from the menu', async () => {
+  executeScript = filledOk;
+  const { id: _a, ...noId } = A;
+  await seed({ accounts: [noId, { ...B, id: 'dup' }, { ...RFC, id: 'dup' }] });
+  await worker.rebuildMenu();
+  const items = [...menu.keys()].filter((k) => k.startsWith('acct:'));
+  assert.equal(items.length, 3);
+  for (const menuItemId of items) await click({ menuItemId, frameId: 0, pageUrl: 'https://bound.test/' });
+  assert.equal(named('executeScript').length, 3, `filled ${named('executeScript').length} of ${items.join(', ')}`);
+});
+
 // ---- fillFocused, from its source text --------------------------------------------------------
 
 async function capturedFillFocused() {
@@ -439,8 +506,9 @@ async function capturedFillFocused() {
   return named('executeScript')[0][1].func.toString();
 }
 
-// A context with nothing but a tiny DOM: a reference to anything in the worker module fails here.
-function page() {
+// A context with nothing but a tiny DOM and the document's location.origin: a reference to
+// anything in the worker module fails here.
+function page(origin = 'https://bound.test') {
   class Element {
     constructor(tag, attrs = {}) {
       this.tag = tag;
@@ -503,10 +571,13 @@ function page() {
     }
   }
   const document = { activeElement: null };
-  const context = vm.createContext({ HTMLInputElement, HTMLTextAreaElement, Event, document });
-  return { context, document, root: new Element('#document'), Element, HTMLInputElement, HTMLTextAreaElement };
+  const location = { origin };
+  const context = vm.createContext({ HTMLInputElement, HTMLTextAreaElement, Event, document, location });
+  return { context, document, origin, root: new Element('#document'), Element, HTMLInputElement, HTMLTextAreaElement };
 }
-const runIn = (p, source, code) => vm.runInContext(`(${source})(${JSON.stringify(code)})`, p.context);
+// Runs the injected source as executeScript does: fillFocused(code, the clicked frame's origin).
+const runIn = (p, source, code, expected = p.origin) =>
+  vm.runInContext(`(${source})(${JSON.stringify(code)}, ${JSON.stringify(expected)})`, p.context);
 
 test('fillFocused, run from its source alone: fills the focused field with input and change, replacing its value', async () => {
   const source = await capturedFillFocused();
@@ -515,14 +586,15 @@ test('fillFocused, run from its source alone: fills the focused field with input
   const other = new p.HTMLInputElement();
   p.root.append(new p.Element('form').append(field, other));
   p.document.activeElement = field;
-  assert.equal(runIn(p, source, '123456'), true);
+  // It answers with the origin it checked.
+  assert.equal(runIn(p, source, '123456'), 'https://bound.test');
   assert.equal(field.value, '123456');
   assert.deepEqual(field.events, ['input', 'change']);
   assert.deepEqual(other.events, []);
   const area = new p.HTMLTextAreaElement();
   p.root.append(area);
   p.document.activeElement = area;
-  assert.equal(runIn(p, source, '12345678'), true);
+  assert.equal(runIn(p, source, '12345678'), 'https://bound.test');
   assert.equal(area.value, '12345678');
 });
 
@@ -534,7 +606,7 @@ test('fillFocused: a focused box of a split code fills the whole run, one digit 
   for (const box of boxes) row.append(new p.Element('span').append(box));
   p.root.append(new p.HTMLInputElement({ maxlength: 1 }), row);
   p.document.activeElement = boxes[3];
-  assert.equal(runIn(p, source, '135790'), true);
+  assert.equal(runIn(p, source, '135790'), 'https://bound.test');
   assert.deepEqual(boxes.map((b) => b.value), ['1', '3', '5', '7', '9', '0']);
   assert.deepEqual(boxes[0].events, ['input', 'change']);
 });
@@ -546,8 +618,34 @@ test('fillFocused: follows focus into a shadow root', async () => {
   const inner = new p.HTMLInputElement();
   host.shadowRoot = { activeElement: inner };
   p.document.activeElement = host;
-  assert.equal(runIn(p, source, '246810'), true);
+  assert.equal(runIn(p, source, '246810'), 'https://bound.test');
   assert.equal(inner.value, '246810');
+});
+
+test('fillFocused: a document of another origin than the clicked frame (it navigated) → false, nothing written', async () => {
+  const source = await capturedFillFocused();
+  const p = page('https://elsewhere.test');
+  const field = new p.HTMLInputElement();
+  const boxes = Array.from({ length: 6 }, () => new p.HTMLInputElement({ maxlength: 1 }));
+  p.root.append(field, new p.Element('div').append(...boxes));
+  for (const [focused, expected] of [
+    [field, 'https://bound.test'],
+    [boxes[0], 'https://bound.test'],
+    [field, 'https://elsewhere.test:8443'],
+    [field, 'http://elsewhere.test'],
+  ]) {
+    p.document.activeElement = focused;
+    assert.equal(runIn(p, source, '123456', expected), false, String(expected));
+  }
+  // Called without an origin at all.
+  assert.equal(vm.runInContext(`(${source})("123456")`, p.context), false);
+  assert.equal(field.value, '');
+  assert.deepEqual(field.events, []);
+  assert.ok(boxes.every((b) => b.value === '' && b.events.length === 0));
+  // The origin it was given: filled.
+  p.document.activeElement = field;
+  assert.equal(runIn(p, source, '123456', 'https://elsewhere.test'), 'https://elsewhere.test');
+  assert.equal(field.value, '123456');
 });
 
 test('fillFocused: nothing editable focused → false and nothing written', async () => {
@@ -580,7 +678,8 @@ const SCRIPT = (matches) => ({
   js: ['lib/fieldfind.js', 'content/autofill.js'],
   allFrames: true,
   runAt: 'document_idle',
-  persistAcrossSessions: true,
+  // Registered again on every unlock; nothing is left registered across a browser restart.
+  persistAcrossSessions: false,
 });
 
 test('sync: registers the content script for exactly the bound origins whose account exists', async () => {
@@ -616,23 +715,72 @@ test('sync: removes granted site access no binding uses; keeps manifest host_per
   assert.deepEqual(granted.sort(), ['https://a.test/*', 'https://b.test/*', 'https://pending.test/*', REQUIRED]);
 });
 
-test('sync: an expired offer keeps nothing; one refused removal does not stop the others', async () => {
+test('sync: a stored offer keeps its origin at any age (the bind window may still store it); one refused removal does not stop the others', async () => {
   await seed({ accounts: [A] });
-  areas.session.set('pendingBind', { origin: 'https://old.test', accountId: 'acc-a', at: Date.now() - 3 * 60 * 1000 });
+  areas.session.set('pendingBind', { origin: 'https://old.test', accountId: 'acc-a', at: Date.now() - 30 * 60 * 1000 });
   granted = ['https://old.test/*', 'https://x.test/*', 'https://y.test/*'];
   refused = new Set(['https://x.test/*']);
+  await worker.syncRegistrations();
+  assert.deepEqual(granted, ['https://old.test/*', 'https://x.test/*']);
+  // Once the offer is gone, its origin's access goes too.
+  areas.session.delete('pendingBind');
   await worker.syncRegistrations();
   assert.deepEqual(granted, ['https://x.test/*']);
 });
 
-test('sync while locked changes nothing', async () => {
-  await seed(SYNC_VAULT, { locked: true });
-  registered = [SCRIPT(['https://kept.test/*'])];
-  granted = ['https://stale.test/*'];
+test('sync while locked or idle: the auto-fill script is unregistered and site access is left as it is', async () => {
+  for (const options of [{ locked: true }, { lastActive: Date.now() - IDLE_MS }]) {
+    await seed(SYNC_VAULT, options);
+    registered = [SCRIPT(['https://a.test/*'])];
+    granted = ['https://a.test/*', 'https://stale.test/*'];
+    calls.length = 0;
+    await worker.syncRegistrations();
+    assert.deepEqual(calls, [['unregister', ['autofill']]], JSON.stringify(options));
+    assert.deepEqual(registered, []);
+    assert.deepEqual(granted, ['https://a.test/*', 'https://stale.test/*']);
+    // Nothing registered: nothing to do.
+    calls.length = 0;
+    await worker.syncRegistrations();
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('lock → unregistered; unlock (the key written) → registered again, not persisted across sessions', async () => {
+  const key = await seed(SYNC_VAULT);
   await worker.syncRegistrations();
-  assert.deepEqual(calls, []);
-  assert.deepEqual(registered, [SCRIPT(['https://kept.test/*'])]);
-  assert.deepEqual(granted, ['https://stale.test/*']);
+  assert.deepEqual(registered, [SCRIPT(['https://a.test/*', 'https://b.test/*'])]);
+  assert.equal(registered[0].persistAcrossSessions, false);
+  await store.clearSessionKey();
+  await worker.onStorageChanged({ vaultKey: { oldValue: 'x' } }, 'session');
+  assert.deepEqual(registered, []);
+  calls.length = 0;
+  await store.setSessionKey(key);
+  await worker.onStorageChanged({ vaultKey: { newValue: 'x' }, lastActiveAt: { newValue: 1 } }, 'session');
+  assert.deepEqual(named('register').map((c) => c[1]), [[SCRIPT(['https://a.test/*', 'https://b.test/*'])]]);
+});
+
+test('sync: a binding stored (and its offer cleared) while the reconciler runs keeps its site access', async () => {
+  // The bind window: the browser granted the site, then the page stores the binding and only then
+  // clears the offer, all after the reconciler read the vault without that binding.
+  await seed({ accounts: [A] });
+  await store.setPendingBind({ origin: 'https://new.test', accountId: 'acc-a' });
+  granted = ['https://new.test/*', 'https://stale.test/*'];
+  const bindPage = await import('../extension/popup/session.js?bind-window');
+  assert.equal(await bindPage.resume(), 'list');
+  beforeRegistration = async () => {
+    await bindPage.addBinding('https://new.test', 'acc-a');
+    await bindPage.clearPendingBind();
+  };
+  await worker.syncRegistrations();
+  assert.equal(beforeRegistration, null, 'the bind window ran between the read and the removal');
+  assert.deepEqual(granted, ['https://new.test/*']);
+  // The next run (the vault change) registers it.
+  await worker.syncRegistrations();
+  assert.deepEqual(registered, [SCRIPT(['https://new.test/*'])]);
+});
+
+test('the worker pins session storage to trusted contexts (never content scripts) when it loads', () => {
+  assert.deepEqual(accessLevels, [{ accessLevel: 'TRUSTED_CONTEXTS' }]);
 });
 
 // ---- storage triggers --------------------------------------------------------------------------

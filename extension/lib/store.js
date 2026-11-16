@@ -4,8 +4,8 @@
 //   chrome.storage.session.lastActiveAt  last user activity while unlocked (ms since the epoch)
 //   chrome.storage.session.pendingBind   { origin, accountId, at }: the auto-fill offer the
 //                                        service worker makes after a menu fill (lib/bindings.js)
-// Session storage lives in memory only, is cleared when the browser session ends, and by
-// default is readable from trusted extension contexts only (never from content scripts). It
+// Session storage lives in memory only, is cleared when the browser session ends, and is readable
+// from trusted extension contexts only (never from content scripts; pinSessionAccess()). It
 // holds a subset of its three keys: the key and its activity time are written together, an
 // offer is written only while a key is stored (popup/session.js checks under the vault lock),
 // and clearSessionKey() removes all three in one call, so none of them outlives a lock.
@@ -42,6 +42,18 @@ export async function setSessionKey(bytes, activeAt = Date.now()) {
     throw new TypeError('setSessionKey: expected a non-empty Uint8Array');
   }
   await chrome.storage.session.set({ [SESSION_KEY]: base64FromBytes(bytes), [ACTIVE_KEY]: activeAt });
+}
+
+// Keeps session storage readable from trusted extension contexts only (pages and the service
+// worker, never a content script). That is the browser's default; the service worker sets it once
+// when it loads so the raw key's safety never rests on the default. A browser without
+// setAccessLevel already has only that level. Never throws.
+export async function pinSessionAccess() {
+  try {
+    await chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  } catch {
+    // not available: the default (trusted contexts only) holds
+  }
 }
 
 // Every lock goes through here: the key, its activity time and any pending offer go together.

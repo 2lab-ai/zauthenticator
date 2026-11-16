@@ -11,9 +11,26 @@
 (() => {
   const MIN_DIGITS = 6;
   const MAX_DIGITS = 8;
-  // Rule 2, matched against name, id, aria-label and placeholder.
-  const NAME_PATTERN = /(otp|totp|2fa|mfa|one.?time|verification|auth(entication)?.?code|security.?code)/i;
   const NAMED_ATTRIBUTES = ['name', 'id', 'aria-label', 'placeholder'];
+  // A name split into words: at anything that is not a letter or digit, at camelCase humps
+  // (otpCode, OTPCode) and where letters meet digits (otp1; 2fa stays whole).
+  const WORD_BREAK = /[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[0-9])/;
+  // Rule 2, matched against name, id, aria-label and placeholder: one of these words, or one of
+  // the phrases (any separator or none between their parts).
+  const CODE_WORDS = new Set(['otp', 'totp', 'mfa', '2fa']);
+  const CODE_PHRASES = [/one.?time.?(code|pass|password|pin)/i, /verification.?code/i, /auth(entication)?.?code/i];
+  // Rules 2 to 4 pass over a field whose name, id, aria-label, placeholder or autocomplete has one
+  // of these words (whole words, split as above; the last five are common one-word spellings):
+  // other short numbers a page asks for.
+  const OTHER_NUMBER_WORDS = new Set([
+    'zip', 'postal', 'phone', 'tel', 'mobile', 'amount', 'price', 'card', 'cc', 'cvv', 'cvc', 'csc',
+    'birth', 'bday', 'dob', 'date', 'year', 'month', 'day', 'search', 'account', 'qty', 'quantity',
+    'captcha', 'zipcode', 'postcode', 'telephone', 'birthday', 'birthdate',
+  ]);
+  // ... and a field whose autocomplete asks for anything else than a one-time code (empty, on and
+  // off say nothing about the field).
+  const NEUTRAL_AUTOCOMPLETE = ['', 'on', 'off', 'one-time-code'];
+  const EXCLUSION_ATTRIBUTES = [...NAMED_ATTRIBUTES, 'autocomplete'];
   // The input types a code is typed into. Password, email, search, hidden and every other type
   // never match.
   const CODE_TYPES = new Set(['', 'text', 'tel', 'number']);
@@ -56,27 +73,44 @@
     return max === -1 || max >= MIN_DIGITS;
   }
 
+  // The lower-case words of an attribute value (see WORD_BREAK).
+  function words(value) {
+    return value.split(WORD_BREAK).filter((word) => word !== '').map((word) => word.toLowerCase());
+  }
+
+  function namesCode(value) {
+    return words(value).some((word) => CODE_WORDS.has(word)) || CODE_PHRASES.some((phrase) => phrase.test(value));
+  }
+
+  // Named for another number, or marked by autocomplete as another kind of value: rules 2 to 4
+  // never take it.
+  function isOtherField(field) {
+    if (!NEUTRAL_AUTOCOMPLETE.includes(attribute(field, 'autocomplete').trim().toLowerCase())) return true;
+    return EXCLUSION_ATTRIBUTES.some((name) => words(attribute(field, name)).some((word) => OTHER_NUMBER_WORDS.has(word)));
+  }
+
   const SINGLE_FIELD_RULES = [
-    // 1. autocomplete="one-time-code" (the attribute is a token list).
+    // 1. autocomplete="one-time-code" (the attribute is a token list), whatever else the field says.
     (field) => attribute(field, 'autocomplete').toLowerCase().split(/\s+/).includes('one-time-code'),
     // 2. a name, id, label or placeholder that names a code.
-    (field) => NAMED_ATTRIBUTES.some((name) => NAME_PATTERN.test(attribute(field, name))),
+    (field) => !isOtherField(field) && NAMED_ATTRIBUTES.some((name) => namesCode(attribute(field, name))),
     // 3. a numeric field sized for a code.
     (field) => {
       const numeric = attribute(field, 'inputmode').trim().toLowerCase() === 'numeric' ||
         ['tel', 'number'].includes(attribute(field, 'type').trim().toLowerCase());
       const max = maxLength(field);
-      return numeric && max >= MIN_DIGITS && max <= MAX_DIGITS;
+      return numeric && max >= MIN_DIGITS && max <= MAX_DIGITS && !isOtherField(field);
     },
   ];
 
   // 4. The first run of MIN_DIGITS..MAX_DIGITS single-character boxes in one group, every box
-  // fillable. Inputs that are not shown or not of a code type (a hidden input that holds the
-  // joined value) are passed over; any other input ends a run. → indices, or null
+  // fillable and none named for another number. Inputs that are not shown or not of a code type
+  // (a hidden input that holds the joined value) are passed over; any other input ends a run.
+  // → indices, or null
   function boxRun(fields) {
     let run = [];
     const qualifies = () =>
-      run.length >= MIN_DIGITS && run.length <= MAX_DIGITS && run.every((i) => isFillable(fields[i]));
+      run.length >= MIN_DIGITS && run.length <= MAX_DIGITS && run.every((i) => isFillable(fields[i]) && !isOtherField(fields[i]));
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
       if (!isShownCodeInput(field)) continue;
