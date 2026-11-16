@@ -1,0 +1,183 @@
+<!doctype html>
+<!-- One 1280x800 store screenshot: scripts/build-screenshots.mjs fills the slot markers in the
+     body (icon, wordmark, headline, subhead, stage) and renders it at 1x. Background, glow and
+     subhead colour follow the promo tiles (marquee-1400x560.svg): #1c1d42 to #0e0f22 with a
+     #5470e0 glow, subhead #babde4. Text on the left (headline 54 px, subhead 24 px on one line,
+     nothing under 18 px), the capture on the right in a plain frame: the stage holds one .popup,
+     .window or .browser block. Square corners, full bleed. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>screenshot</title>
+<style>
+  html,
+  body {
+    margin: 0;
+  }
+
+  body {
+    position: relative;
+    width: 1280px;
+    height: 800px;
+    overflow: hidden;
+    background:
+      radial-gradient(560px 560px at 940px 410px, rgb(84 112 224 / 30%), rgb(84 112 224 / 0%)),
+      linear-gradient(135deg, #1c1d42 0%, #0e0f22 100%);
+    color: #ffffff;
+    font-family: system-ui, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .copy {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 88px;
+    width: 480px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .lockup {
+    position: absolute;
+    top: 72px;
+    left: 88px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .lockup .icon {
+    width: 44px;
+    height: 44px;
+  }
+
+  .lockup .wordmark {
+    width: 216.61px; /* the wordmark at height 24 (1308.69 x 145) */
+    height: 24px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 54px;
+    font-weight: 650;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+
+  .sub {
+    margin: 22px 0 0;
+    color: #babde4;
+    font-size: 24px;
+    font-weight: 450;
+    line-height: 1.42;
+    white-space: nowrap;
+  }
+
+  .stage {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 600px;
+    display: grid;
+    place-items: center;
+  }
+
+  .shadowed {
+    box-shadow:
+      0 0 0 1px rgb(255 255 255 / 10%),
+      0 34px 80px -12px rgb(0 0 0 / 60%),
+      0 12px 28px -6px rgb(0 0 0 / 30%);
+  }
+
+  .popup {
+    overflow: hidden;
+    border-radius: 14px;
+    background: #ffffff;
+  }
+
+  .popup img,
+  .window img,
+  .browser img {
+    display: block;
+  }
+
+  .window,
+  .browser {
+    overflow: hidden;
+    border-radius: 12px;
+    background: #ffffff;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    border-bottom: 1px solid #dddfe5;
+    background: #ececf0;
+  }
+
+  .window .bar {
+    height: 34px;
+  }
+
+  .browser .bar {
+    height: 54px;
+  }
+
+  .dot {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #cbced6;
+  }
+
+  .address {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 9px;
+    height: 34px;
+    margin-left: 14px;
+    padding: 0 16px;
+    border: 1px solid #dddfe5;
+    border-radius: 17px;
+    background: #ffffff;
+    color: #3d404a;
+    font-size: 18px;
+  }
+
+  .address svg {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: #6b6f7a;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .address .host {
+    color: #15161b;
+  }
+</style>
+</head>
+<body>
+  <div class="lockup">
+    <img class="icon" src="{{ICON}}" alt="">
+    <img class="wordmark" src="{{WORDMARK}}" alt="zauthenticator">
+  </div>
+  <div class="copy">
+    <h1>{{HEADLINE}}</h1>
+    <p class="sub">{{SUBHEAD}}</p>
+  </div>
+  <div class="stage">{{STAGE}}</div>
+</body>
+</html>
