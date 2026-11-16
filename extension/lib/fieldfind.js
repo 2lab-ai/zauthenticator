@@ -27,7 +27,8 @@
   const CODE_PHRASES = [/one.?time.?(code|pass|password|pin)/i, /verification.?code/i, /auth(entication)?.?code/i];
   // Rules 2 and 3 pass over a field whose name, id, aria-label, placeholder or autocomplete has one
   // of these words (whole words, split as above; the last five are common one-word spellings):
-  // other short numbers a page asks for.
+  // other short numbers a page asks for. Rule 3 also skips a run of boxes whose group's aria-label
+  // or id has one ("Verification code sent to your phone").
   const OTHER_NUMBER_WORDS = new Set([
     'zip', 'postal', 'phone', 'tel', 'mobile', 'amount', 'price', 'card', 'cc', 'cvv', 'cvc', 'csc',
     'birth', 'bday', 'dob', 'date', 'year', 'month', 'day', 'search', 'account', 'qty', 'quantity',
@@ -43,9 +44,10 @@
   // The attributes the rules read; describe() copies exactly these.
   const ATTRIBUTES = ['type', 'autocomplete', 'inputmode', 'maxlength', ...NAMED_ATTRIBUTES];
   // Rule 3 also reads these attributes of the element that groups the boxes (a row labelled
-  // "Enter verification code"); describe() copies them into attrs under GROUP_PREFIX + the name,
-  // so the rules need no DOM. Rule 2 does not read them: the group of a lone field is an ancestor
-  // further out (see groupOf()), and its label says nothing sure about that one field.
+  // "Enter verification code"), for a sign of a code and for a word for another number;
+  // describe() copies them into attrs under GROUP_PREFIX + the name, so the rules need no DOM.
+  // Rule 2 does not read them: the group of a lone field is an ancestor further out (see
+  // groupOf()), and its label says nothing sure about that one field.
   const GROUP_ATTRIBUTES = ['aria-label', 'id'];
   const GROUP_PREFIX = 'group-';
 
@@ -73,6 +75,11 @@
   // Shown on the page and of a type a code is typed into.
   function isShownCodeInput(field) {
     return field.visible === true && isCodeType(field);
+  }
+
+  // Not shown on the page, or type=hidden.
+  function isHiddenInput(field) {
+    return field.visible !== true || attribute(field, 'type').trim().toLowerCase() === 'hidden';
   }
 
   // Shown, enabled, writable and empty: a field auto-fill may write into.
@@ -117,6 +124,11 @@
     return GROUP_ATTRIBUTES.some((name) => namesCode(attribute(field, GROUP_PREFIX + name)));
   }
 
+  // The label or id of the field's group has a word for another number (rule 3 only).
+  function isInGroupNamedForOther(field) {
+    return GROUP_ATTRIBUTES.some((name) => words(attribute(field, GROUP_PREFIX + name)).some((word) => OTHER_NUMBER_WORDS.has(word)));
+  }
+
   const SINGLE_FIELD_RULES = [
     // 1. autocomplete="one-time-code", whatever else the field says.
     isMarkedOneTimeCode,
@@ -125,23 +137,25 @@
   ];
 
   // 3. The first run of MIN_DIGITS..MAX_DIGITS single-character boxes in one group, every box
-  // fillable and none named for another number, that says it holds a code: a box marked
-  // one-time-code, a box whose name, id, label or placeholder names a code, or a group whose
-  // aria-label or id does. Inputs that are not shown or not of a code type (a hidden input that
-  // holds the joined value) are passed over, and say nothing for the run; any other input ends a
-  // run. A run with no such sign (a PIN typed into boxes) is skipped, and the next one is looked at.
+  // fillable and none named for another number, in a group whose aria-label and id name no other
+  // number, that says it holds a code: a box marked one-time-code, a box whose name, id, label or
+  // placeholder names a code, or a group whose aria-label or id does. Hidden inputs (type=hidden or
+  // not shown, such as one that holds the joined value) are passed over, and say nothing for the
+  // run; any other input ends a run, a shown password or email field too. A run with no such sign
+  // (a PIN typed into boxes) or in a group named for another number is skipped, and the next one
+  // is looked at.
   // → indices, or null
   function boxRun(fields) {
     let run = [];
     const qualifies = () =>
       run.length >= MIN_DIGITS &&
       run.length <= MAX_DIGITS &&
-      run.every((i) => isFillable(fields[i]) && !isOtherField(fields[i])) &&
+      run.every((i) => isFillable(fields[i]) && !isOtherField(fields[i]) && !isInGroupNamedForOther(fields[i])) &&
       run.some((i) => isMarkedOneTimeCode(fields[i]) || isNamedForCode(fields[i]) || isInGroupNamedForCode(fields[i]));
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
-      if (!isShownCodeInput(field)) continue;
-      const isBox = maxLength(field) === 1;
+      if (isHiddenInput(field)) continue;
+      const isBox = isCodeType(field) && maxLength(field) === 1;
       if (isBox && run.length > 0 && fields[run[0]].group === field.group) {
         run.push(i);
         continue;
