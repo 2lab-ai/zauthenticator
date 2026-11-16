@@ -4,7 +4,7 @@
     "description": "BCP 47 language tag of this locale, used for <html lang>."
   },
   "extName": {
-    "message": "zauthentificator",
+    "message": "zauthenticator",
     "description": "Extension name. Do not translate."
   },
   "extDescription": {
@@ -12,7 +12,7 @@
     "description": "Store/extension description."
   },
   "actionTitle": {
-    "message": "zauthentificator: two-factor codes",
+    "message": "zauthenticator: two-factor codes",
     "description": "Toolbar button tooltip."
   },
   "loading": {
@@ -285,10 +285,13 @@
     "message": "Adding…"
   },
   "errScanTabNeedsPopup": {
-    "message": "Page scanning works from the toolbar button only. Open the page that shows the QR code, click the zauthentificator icon, and try again."
+    "message": "Page scanning works from the toolbar button only. Open the page that shows the QR code, click the zauthenticator icon, and try again."
   },
   "errCaptureFailed": {
     "message": "This tab can't be captured. Browser pages and extension stores are off-limits; try a regular web page."
+  },
+  "errCaptureNoAccess": {
+    "message": "zauthenticator can only capture the tab it was opened on. Click the toolbar icon on the page that shows the QR code and try again."
   },
   "errNoQrTab": {
     "message": "No QR code found on the visible part of the page. Scroll it into view or zoom in, then try again."
@@ -414,7 +417,7 @@
     "placeholders": {
       "file": {
         "content": "$1",
-        "example": "zauthentificator-backup-2026-11-16.json"
+        "example": "zauthenticator-backup-2026-11-16.json"
       }
     }
   },
@@ -440,7 +443,7 @@
     "message": "Enter the passphrase for that backup."
   },
   "errImportFile": {
-    "message": "That file isn't a zauthentificator backup."
+    "message": "That file isn't a zauthenticator backup."
   },
   "errImportPass": {
     "message": "Wrong passphrase for that backup."

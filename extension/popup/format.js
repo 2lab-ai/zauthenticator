@@ -36,10 +36,10 @@ export function displayName(account) {
   return issuer || label;
 }
 
-// zauthentificator-backup-YYYY-MM-DD.json in local time.
+// zauthenticator-backup-YYYY-MM-DD.json in local time.
 export function backupFileName(date = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
-  return `zauthentificator-backup-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.json`;
+  return `zauthenticator-backup-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.json`;
 }
 
 // Shape check for an imported file before asking the vault to open it.

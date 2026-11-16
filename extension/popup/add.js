@@ -82,8 +82,10 @@ export function createAddView({ isTab, done }) {
       try {
         // activeTab grants this after the user clicked the toolbar icon.
         image = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
-      } catch {
-        fail(t('errCaptureFailed'));
+      } catch (error) {
+        // No activeTab grant for this tab (e.g. it navigated since the popup opened) versus a
+        // page Chrome never lets extensions capture (browser pages, extension stores).
+        fail(t(/activeTab/.test(reason(error)) ? 'errCaptureNoAccess' : 'errCaptureFailed'));
         return;
       }
       let account;

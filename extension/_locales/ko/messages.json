@@ -3,13 +3,13 @@
     "message": "ko"
   },
   "extName": {
-    "message": "zauthentificator"
+    "message": "zauthenticator"
   },
   "extDescription": {
     "message": "오픈소스 2단계 인증(TOTP) 앱. 코드는 오프라인에서 만들어지고 비밀 키는 이 기기에 암호화되어 저장돼요."
   },
   "actionTitle": {
-    "message": "zauthentificator: 2단계 인증 코드"
+    "message": "zauthenticator: 2단계 인증 코드"
   },
   "loading": {
     "message": "불러오는 중…"
@@ -279,10 +279,13 @@
     "message": "추가하는 중…"
   },
   "errScanTabNeedsPopup": {
-    "message": "페이지 스캔은 툴바 버튼에서만 할 수 있어요. QR 코드가 있는 페이지에서 zauthentificator 아이콘을 눌러 다시 시도하세요."
+    "message": "페이지 스캔은 툴바 버튼에서만 할 수 있어요. QR 코드가 있는 페이지에서 zauthenticator 아이콘을 눌러 다시 시도하세요."
   },
   "errCaptureFailed": {
     "message": "이 탭은 캡처할 수 없어요. 브라우저 설정 페이지나 확장 프로그램 스토어는 캡처할 수 없으니 일반 웹페이지에서 시도하세요."
+  },
+  "errCaptureNoAccess": {
+    "message": "zauthenticator는 아이콘을 누른 탭만 캡처할 수 있어요. QR 코드가 있는 페이지에서 툴바 아이콘을 눌러 다시 시도하세요."
   },
   "errNoQrTab": {
     "message": "페이지의 보이는 영역에서 QR 코드를 찾지 못했어요. QR 코드가 화면에 보이도록 스크롤하거나 확대한 뒤 다시 시도하세요."
@@ -408,7 +411,7 @@
     "placeholders": {
       "file": {
         "content": "$1",
-        "example": "zauthentificator-backup-2026-11-16.json"
+        "example": "zauthenticator-backup-2026-11-16.json"
       }
     }
   },
@@ -434,7 +437,7 @@
     "message": "그 백업의 비밀번호를 입력하세요."
   },
   "errImportFile": {
-    "message": "zauthentificator 백업 파일이 아니에요."
+    "message": "zauthenticator 백업 파일이 아니에요."
   },
   "errImportPass": {
     "message": "백업 비밀번호가 맞지 않아요."
