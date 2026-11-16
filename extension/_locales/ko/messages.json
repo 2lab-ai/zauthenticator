@@ -1,0 +1,481 @@
+{
+  "lang": {
+    "message": "ko"
+  },
+  "extName": {
+    "message": "zauthenticator"
+  },
+  "extDescription": {
+    "message": "오픈소스 2단계 인증(TOTP) 앱. 코드는 오프라인에서 만들어지고 비밀 키는 이 기기에 암호화되어 저장돼요."
+  },
+  "actionTitle": {
+    "message": "zauthenticator: 2단계 인증 코드"
+  },
+  "loading": {
+    "message": "불러오는 중…"
+  },
+  "errStartup": {
+    "message": "시작하는 중 문제가 생겼어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "setupTitle": {
+    "message": "마스터 비밀번호 만들기"
+  },
+  "setupIntro": {
+    "message": "계정 정보는 이 비밀번호로 암호화되어 이 기기에만 저장돼요."
+  },
+  "setupWarning": {
+    "message": "비밀번호는 복구할 수 없어요. 잊어버리면 저장한 계정을 다시 열 수 없어요."
+  },
+  "setupPassLabel": {
+    "message": "마스터 비밀번호 (8자 이상)"
+  },
+  "setupPass2Label": {
+    "message": "비밀번호 확인"
+  },
+  "setupSubmit": {
+    "message": "보관함 만들기"
+  },
+  "setupBusy": {
+    "message": "만드는 중…"
+  },
+  "errTooShort": {
+    "message": "$COUNT$자 이상 입력해 주세요.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "errMismatch": {
+    "message": "두 비밀번호가 일치하지 않아요."
+  },
+  "errSetupFailed": {
+    "message": "보관함을 만들지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "unlockTitle": {
+    "message": "잠겨 있어요"
+  },
+  "unlockIntro": {
+    "message": "코드를 보려면 마스터 비밀번호를 입력하세요."
+  },
+  "unlockPassLabel": {
+    "message": "마스터 비밀번호"
+  },
+  "unlockSubmit": {
+    "message": "잠금 해제"
+  },
+  "unlockBusy": {
+    "message": "여는 중…"
+  },
+  "errEmptyPass": {
+    "message": "비밀번호를 입력해 주세요."
+  },
+  "errWrongPass": {
+    "message": "비밀번호가 맞지 않아요."
+  },
+  "errUnlockFailed": {
+    "message": "보관함을 열지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "editBtn": {
+    "message": "계정 편집"
+  },
+  "addBtn": {
+    "message": "계정 추가"
+  },
+  "settingsBtn": {
+    "message": "설정"
+  },
+  "lockBtn": {
+    "message": "잠그기"
+  },
+  "accountsLabel": {
+    "message": "계정"
+  },
+  "searchLabel": {
+    "message": "계정 검색"
+  },
+  "searchPlaceholder": {
+    "message": "검색"
+  },
+  "noMatches": {
+    "message": "일치하는 계정이 없어요."
+  },
+  "emptyTitle": {
+    "message": "아직 계정이 없어요"
+  },
+  "emptyHint": {
+    "message": "QR 코드를 스캔하거나, otpauth:// 링크를 붙여 넣거나, 설정 키를 직접 입력하세요."
+  },
+  "addAccountBtn": {
+    "message": "계정 추가"
+  },
+  "copyHint": {
+    "message": "클릭하면 코드가 복사돼요"
+  },
+  "copied": {
+    "message": "복사됨"
+  },
+  "copiedLive": {
+    "message": "$NAME$ 코드를 복사했어요.",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "copyFailed": {
+    "message": "클립보드에 복사하지 못했어요."
+  },
+  "codeUnavailable": {
+    "message": "잘못된 키"
+  },
+  "deleteBtn": {
+    "message": "삭제"
+  },
+  "deleteLabel": {
+    "message": "$NAME$ 삭제",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "deleteConfirm": {
+    "message": "삭제할까요?"
+  },
+  "deleteConfirmLabel": {
+    "message": "한 번 더 누르면 $NAME$ 계정을 삭제해요",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "deletedLive": {
+    "message": "$NAME$ 계정을 삭제했어요.",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "deleteFailed": {
+    "message": "삭제하지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "cancelBtn": {
+    "message": "취소"
+  },
+  "backBtn": {
+    "message": "뒤로"
+  },
+  "addTitle": {
+    "message": "계정 추가"
+  },
+  "scanTabBtn": {
+    "message": "이 페이지에서 스캔"
+  },
+  "scanTabHint": {
+    "message": "현재 탭의 보이는 영역에서 QR 코드를 찾아요."
+  },
+  "scanFileBtn": {
+    "message": "이미지에서 읽기"
+  },
+  "scanFileHint": {
+    "message": "스크린샷이나 저장해 둔 QR 이미지"
+  },
+  "dropHint": {
+    "message": "이미지를 여기로 끌어다 놓거나, 붙여 넣거나(Ctrl+V / ⌘V), 파일을 선택하세요."
+  },
+  "chooseImageLabel": {
+    "message": "QR 코드가 있는 이미지"
+  },
+  "uriTitle": {
+    "message": "otpauth:// 링크 붙여 넣기"
+  },
+  "uriPlaceholder": {
+    "message": "otpauth://totp/Service:you@example.com?secret=…"
+  },
+  "uriHint": {
+    "message": "한 줄에 링크 하나씩 넣으세요."
+  },
+  "uriSubmit": {
+    "message": "링크로 추가"
+  },
+  "manualTitle": {
+    "message": "설정 키 직접 입력"
+  },
+  "manualIssuer": {
+    "message": "서비스"
+  },
+  "manualIssuerPlaceholder": {
+    "message": "예: GitHub"
+  },
+  "manualLabel": {
+    "message": "계정"
+  },
+  "manualLabelPlaceholder": {
+    "message": "예: you@example.com"
+  },
+  "manualSecret": {
+    "message": "비밀 키"
+  },
+  "manualSecretPlaceholder": {
+    "message": "Base32 (예: JBSW Y3DP EHPK 3PXP)"
+  },
+  "advanced": {
+    "message": "고급 설정"
+  },
+  "algorithm": {
+    "message": "알고리즘"
+  },
+  "digits": {
+    "message": "자릿수"
+  },
+  "period": {
+    "message": "주기"
+  },
+  "period30": {
+    "message": "30초"
+  },
+  "period60": {
+    "message": "60초"
+  },
+  "manualSubmit": {
+    "message": "계정 추가"
+  },
+  "scanning": {
+    "message": "QR 코드를 찾는 중…"
+  },
+  "adding": {
+    "message": "추가하는 중…"
+  },
+  "errScanTabNeedsPopup": {
+    "message": "페이지 스캔은 툴바 버튼에서만 할 수 있어요. QR 코드가 있는 페이지에서 zauthenticator 아이콘을 눌러 다시 시도하세요."
+  },
+  "errCaptureFailed": {
+    "message": "이 탭은 캡처할 수 없어요. 브라우저 설정 페이지나 확장 프로그램 스토어는 캡처할 수 없으니 일반 웹페이지에서 시도하세요."
+  },
+  "errCaptureNoAccess": {
+    "message": "zauthenticator는 아이콘을 누른 탭만 캡처할 수 있어요. QR 코드가 있는 페이지에서 툴바 아이콘을 눌러 다시 시도하세요."
+  },
+  "errNoQrTab": {
+    "message": "페이지의 보이는 영역에서 QR 코드를 찾지 못했어요. QR 코드가 화면에 보이도록 스크롤하거나 확대한 뒤 다시 시도하세요."
+  },
+  "errNoQrImage": {
+    "message": "이미지에서 QR 코드를 찾지 못했어요."
+  },
+  "errBadImage": {
+    "message": "이미지를 읽을 수 없어요."
+  },
+  "errDecoderMissing": {
+    "message": "QR 디코더를 불러오지 못했어요."
+  },
+  "errNotImage": {
+    "message": "이미지 파일(PNG, JPEG 등)을 선택하세요."
+  },
+  "errNotOtpauth": {
+    "message": "2단계 인증 설정용 QR 코드(otpauth://)가 아니에요."
+  },
+  "errNotOtpauthLink": {
+    "message": "otpauth:// 링크가 아니에요."
+  },
+  "errMigration": {
+    "message": "Google OTP 내보내기 코드(otpauth-migration://)는 아직 지원하지 않아요. 계정마다 QR 코드나 설정 키로 추가하세요."
+  },
+  "errInvalidLink": {
+    "message": "링크가 올바르지 않아요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "errLine": {
+    "message": "$LINE$번째 줄: $REASON$",
+    "placeholders": {
+      "line": {
+        "content": "$1",
+        "example": "3"
+      },
+      "reason": {
+        "content": "$2",
+        "example": "bad input"
+      }
+    }
+  },
+  "errNoLinks": {
+    "message": "otpauth:// 링크를 하나 이상 붙여 넣으세요."
+  },
+  "errNameRequired": {
+    "message": "서비스나 계정 이름을 입력하세요."
+  },
+  "errSecretRequired": {
+    "message": "비밀 키를 입력하세요."
+  },
+  "errManual": {
+    "message": "입력값을 확인하세요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "errSaveFailed": {
+    "message": "저장하지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "errAllDuplicates": {
+    "message": "이미 목록에 있는 계정이라 추가하지 않았어요."
+  },
+  "addedCount": {
+    "message": "계정 $COUNT$개를 추가했어요.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "skippedCount": {
+    "message": "중복 $COUNT$개는 건너뛰었어요.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "importedCount": {
+    "message": "백업을 가져왔어요. 추가 $ADDED$개, 중복으로 건너뜀 $SKIPPED$개.",
+    "placeholders": {
+      "added": {
+        "content": "$1",
+        "example": "2"
+      },
+      "skipped": {
+        "content": "$2",
+        "example": "1"
+      }
+    }
+  },
+  "settingsTitle": {
+    "message": "설정"
+  },
+  "backupTitle": {
+    "message": "백업"
+  },
+  "exportHint": {
+    "message": "백업 파일은 마스터 비밀번호로 암호화된 그대로 저장돼요. 안전한 곳에 보관하세요."
+  },
+  "exportBtn": {
+    "message": "암호화된 백업 내보내기"
+  },
+  "exported": {
+    "message": "$FILE$ 파일로 저장했어요.",
+    "placeholders": {
+      "file": {
+        "content": "$1",
+        "example": "zauthenticator-backup-2026-11-16.json"
+      }
+    }
+  },
+  "importTitle": {
+    "message": "백업 가져오기"
+  },
+  "importFileLabel": {
+    "message": "백업 파일 (.json)"
+  },
+  "importPassLabel": {
+    "message": "백업할 때 쓴 마스터 비밀번호"
+  },
+  "importSubmit": {
+    "message": "가져오기"
+  },
+  "importing": {
+    "message": "가져오는 중…"
+  },
+  "errImportNoFile": {
+    "message": "먼저 백업 파일을 선택하세요."
+  },
+  "errImportNoPass": {
+    "message": "그 백업의 비밀번호를 입력하세요."
+  },
+  "errImportFile": {
+    "message": "zauthenticator 백업 파일이 아니에요."
+  },
+  "errImportPass": {
+    "message": "백업 비밀번호가 맞지 않아요."
+  },
+  "errImportFailed": {
+    "message": "가져오지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "openTabHint": {
+    "message": "파일 선택 창 때문에 팝업이 닫히면 설정을 새 탭에서 여세요."
+  },
+  "openTabBtn": {
+    "message": "새 탭에서 열기"
+  },
+  "aboutTitle": {
+    "message": "정보"
+  },
+  "securitySummary": {
+    "message": "네트워크 접근도, 사용 통계 수집도 없어요. 비밀 키는 암호화되어 저장되고(마스터 비밀번호에서 PBKDF2로 만든 키, AES-256-GCM) 이 기기 밖으로 나가지 않아요."
+  },
+  "clockHint": {
+    "message": "코드가 맞지 않나요? 코드는 컴퓨터 시계로 계산되니 날짜와 시간이 자동으로 맞춰지도록 설정되어 있는지 확인하세요."
+  },
+  "versionLabel": {
+    "message": "버전 $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "0.1.0"
+      }
+    }
+  },
+  "sourceBtn": {
+    "message": "소스 코드"
+  }
+}
