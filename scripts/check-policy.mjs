@@ -142,7 +142,9 @@ const MANIFEST_POLICY = Object.freeze({
   // background/style or markup, posts a message, or opens, submits or clicks anything; not
   // `attributes` either (setting an attribute node's value rewrites an existing src or href).
   // The injected fillFocused adds the focus reads it needs: activeElement, shadowRoot,
-  // getRootNode and an input's type.
+  // getRootNode and an input's type. content/autofill.js reads the worker's reply (code, and
+  // validMs: how long the code stays valid) and tells a filled field still in the page by
+  // getRootNode.
   contentScriptMembers: [
     'activeElement', 'add', 'addEventListener', 'attrs', 'checkVisibility', 'code', 'disabled',
     'disconnect', 'dispatchEvent', 'display', 'every', 'filter', 'findInDocument', 'findIndex',
@@ -150,7 +152,7 @@ const MANIFEST_POLICY = Object.freeze({
     'getComputedStyle', 'getRootNode', 'group', 'has', 'height', 'hidden', 'includes', 'indexOf',
     'isArray', 'length', 'map', 'matches', 'maxLength', 'observe', 'parentElement', 'persisted',
     'push', 'querySelectorAll', 'readOnly', 'readyState', 'removeEventListener', 'shadowRoot', 'some',
-    'split', 'test', 'toLowerCase', 'trim', 'type', 'value', 'visibility', 'visibilityState',
+    'split', 'test', 'toLowerCase', 'trim', 'type', 'validMs', 'value', 'visibility', 'visibilityState',
     'visible', 'width', 'zauthFieldFind',
   ],
   // The only constructors a content-script file may call with `new`.
@@ -1571,7 +1573,7 @@ const PINNED_POLICY = {
   permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
   contentScriptFiles: ['content/autofill.js', 'lib/fieldfind.js'],
   contentScriptMembers: [
-    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'type', 'trim',
+    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'validMs', 'type', 'trim',
     'toLowerCase', 'test', 'split', 'some', 'shadowRoot', 'removeEventListener', 'readyState',
     'readOnly', 'querySelectorAll', 'push', 'persisted', 'parentElement', 'observe', 'maxLength',
     'matches', 'map', 'length', 'isArray', 'indexOf', 'includes', 'hidden', 'height', 'has', 'group',
@@ -1648,6 +1650,7 @@ const PIN_MUTATIONS = [
   ['contentScriptMembers', (p) => p.contentScriptMembers.push('src')],
   ['contentScriptMembers', (p) => p.contentScriptMembers.push('postMessage')],
   ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'value'))],
+  ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'validMs'))],
   ['contentScriptConstructors', (p) => p.contentScriptConstructors.push('Image')],
   ['contentScriptEvents', (p) => p.contentScriptEvents.push('submit')],
   ['contentScriptChrome', (p) => p.contentScriptChrome.push('runtime.connect')],

@@ -299,10 +299,12 @@ test('a content script of a bound origin gets the current code (independent RFC 
   const six = await codeAroundNow(A, () => ask(sender('https://otp.test')));
   assert.match(six.result.code, /^\d{6}$/);
   assert.ok(six.allowed.includes(six.result.code), `${six.result.code} not in ${six.allowed}`);
-  assert.deepEqual(Object.keys(six.result), ['code']);
+  assert.deepEqual(Object.keys(six.result), ['code', 'validMs']);
+  assert.ok(Number.isInteger(six.result.validMs) && six.result.validMs >= 1 && six.result.validMs <= 30 * 1000, `validMs ${six.result.validMs}`);
   const eight = await codeAroundNow(B, () => ask(sender('https://eight.test')));
   assert.match(eight.result.code, /^\d{8}$/);
   assert.ok(eight.allowed.includes(eight.result.code));
+  assert.ok(Number.isInteger(eight.result.validMs) && eight.result.validMs >= 1 && eight.result.validMs <= 60 * 1000, `validMs ${eight.result.validMs}`);
   // No sender.origin: the origin of sender.url.
   const fromUrl = await codeAroundNow(A, () => ask({ id: SELF_ID, url: 'https://otp.test/deep/path?q=1' }));
   assert.ok(fromUrl.allowed.includes(fromUrl.result.code));
@@ -315,7 +317,43 @@ test('the code is the RFC 6238 Appendix B value at T = 59 s', async (t) => {
     Date.now = realNow;
   });
   await seed({ accounts: [RFC], bindings: [binding('https://otp.test', 'acc-rfc')] }, { lastActive: 59 * 1000 });
-  assert.deepEqual(await ask(sender('https://otp.test')), { code: '94287082' });
+  // 1 s of its 30-second period is left.
+  assert.deepEqual(await ask(sender('https://otp.test')), { code: '94287082', validMs: 1000 });
+});
+
+// validMs: the milliseconds left in the period of the code sent, from the account's period (30 s
+// when the account has none). At the first millisecond of a period the whole period is left.
+test('the reply says how long its code stays valid: the rest of the account period, never 0', async (t) => {
+  const realNow = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  t.after(() => {
+    Date.now = realNow;
+  });
+  const { period, ...NO_PERIOD } = { ...A, id: 'acc-np' };
+  assert.equal(period, 30);
+  const data = {
+    accounts: [A, B, NO_PERIOD],
+    bindings: [binding('https://otp.test', 'acc-a'), binding('https://eight.test', 'acc-b'), binding('https://np.test', 'acc-np')],
+  };
+  const at = async (ms, origin, account) => {
+    now = ms;
+    await seed(data, { lastActive: ms });
+    const reply = await ask(sender(origin));
+    assert.equal(reply.code, referenceTotp({ period: 30, ...account }, ms), `code at ${ms} ms on ${origin}`);
+    return reply.validMs;
+  };
+  // 30-second account A.
+  assert.equal(await at(75 * 1000, 'https://otp.test', A), 15 * 1000);
+  assert.equal(await at(60 * 1000, 'https://otp.test', A), 30 * 1000);
+  assert.equal(await at(60 * 1000 - 1, 'https://otp.test', A), 1);
+  assert.equal(await at(1700000012345, 'https://otp.test', A), 30 * 1000 - (1700000012345 % (30 * 1000)));
+  // 60-second account B.
+  assert.equal(await at(75 * 1000, 'https://eight.test', B), 45 * 1000);
+  assert.equal(await at(120 * 1000, 'https://eight.test', B), 60 * 1000);
+  assert.equal(await at(120 * 1000 - 1, 'https://eight.test', B), 1);
+  // No period stored: 30 seconds, as lib/totp.js reads it.
+  assert.equal(await at(75 * 1000, 'https://np.test', NO_PERIOD), 15 * 1000);
 });
 
 test('wrong extension id, unbound origin, sub-domain, http, opaque origin, missing account → { code: null }', async () => {

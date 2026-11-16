@@ -95,12 +95,41 @@ const UNNAMED = 'input[inputmode="numeric"]:not([name]):not([id])';
 // field (no id or name: "tel" would name it for another number). Auto-fill must fill neither.
 const PINONLY_PATH = '/pinonly';
 const PINONLY_HTML = `<!doctype html><html><head>${HEAD}<title>PIN</title></head><body><form method="post" action="/submitted"><label>PIN <input name="pin" inputmode="numeric" maxlength="6"></label><label>Number <input type="tel" maxlength="8"></label><button>Go</button></form></body></html>`;
+// A sign-in step whose own script plays the site: the first Sign in rejects the code (the field is
+// emptied and "invalid" shown, as for an expired code), the second puts a new field in place of
+// the old one (a re-rendered form; the old one is kept as window.oldOtp), later ones only say what
+// they got. A type="button" outside any form: the page never navigates, so a code that comes back
+// can only come from the content script already running in it.
+const SPA_PATH = '/spa-login';
+const SPA_HTML = `<!doctype html><html><head>${HEAD}<title>Sign in</title></head><body><label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label><button id="go" type="button">Sign in</button><p id="msg"></p><script>
+let tries = 0;
+document.getElementById('go').addEventListener('click', () => {
+  tries += 1;
+  const msg = document.getElementById('msg');
+  const otp = document.getElementById('otp');
+  if (tries === 1) {
+    otp.value = '';
+    msg.textContent = 'invalid code (1)';
+  } else if (tries === 2) {
+    const next = document.createElement('input');
+    next.id = 'otp';
+    next.name = 'otp';
+    next.autocomplete = 'one-time-code';
+    window.oldOtp = otp;
+    otp.replaceWith(next);
+    msg.textContent = 'invalid code (2)';
+  } else {
+    msg.textContent = 'got ' + otp.value;
+  }
+});
+</script></body></html>`;
 
 async function routeTestOrigins(context) {
   const served = [];
   const pages = new Map([
     [MULTI_PATH, MULTI_HTML],
     [PINONLY_PATH, PINONLY_HTML],
+    [SPA_PATH, SPA_HTML],
   ]);
   for (const origin of TEST_ORIGINS) {
     await context.route(`${origin}/**`, (route) => {
@@ -147,6 +176,16 @@ async function waitForFreshPeriod(account, needMs = 8000) {
   const periodMs = account.period * 1000;
   const left = periodMs - (Date.now() % periodMs);
   if (left < needMs) await sleep(left + 300);
+}
+
+// A page's content script that filled a field asks for the next code right after the period ends
+// (it keeps the filled code current). Waits until the current period is at least 2 s old and has
+// at least 2 s left, so a short storage read-back sees no such request.
+async function clearOfPeriodEnds(account) {
+  const periodMs = account.period * 1000;
+  const into = Date.now() % periodMs;
+  if (into < 2000) await sleep(2000 - into);
+  else if (periodMs - into < 2000) await sleep(periodMs - into + 2000);
 }
 
 const codeAt = (account, ms) => referenceTotp(base32ToBytes(account.secret), ms, account);
@@ -690,6 +729,91 @@ export async function runAutofill({ rep, extensionDir }) {
     await rec.page.close();
   });
 
+  // "Fresh code and retry after a failed attempt" (.prd/03-autofill.md): in two tabs of the
+  // /spa-login page, both filled by the content script. Tab 1 is the site rejecting codes: after
+  // the first Sign in empties the field and the second re-renders it, each time the field holds
+  // the current code again; when the period ends the untouched code is replaced by the next one.
+  // Tab 2 is the user typing a code of their own over the filled one: it is kept across the same
+  // period end.
+  step('s3-retry-after-reject', ['s2-bind-allow'], async () => {
+    const url = `${OTP}${SPA_PATH}`;
+    const periodMs = ACCOUNT_A.period * 1000;
+    const recs = [];
+    // The #otp field of `page` once it holds the reference code of the moment it is read.
+    // → { ok, value } (value: what it held last)
+    const currentCode = async (page, timeout) => {
+      let value = null;
+      const ok = await poll(
+        async () => {
+          value = await page.evaluate(() => document.querySelector('#otp')?.value ?? null);
+          return value === codeAt(ACCOUNT_A, Date.now());
+        },
+        timeout,
+        100,
+      );
+      return { ok: Boolean(ok), value };
+    };
+    try {
+      await waitForFreshPeriod(ACCOUNT_A, 12000);
+      const site = await openTestPage(url);
+      recs.push(site);
+      const user = await openTestPage(url);
+      recs.push(user);
+      const filledSite = await currentCode(site.page, 10000);
+      const filledUser = await currentCode(user.page, 10000);
+      if (!filledSite.ok || !filledUser.ok) {
+        throw new Error(`precondition: ${url} not auto-filled: tab 1 ${JSON.stringify(filledSite.value)}, tab 2 ${JSON.stringify(filledUser.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}`);
+      }
+      // Tab 2: the user's own code over the filled one, in one edit (no empty field in between).
+      const typed = ['111111', '222222', '333333'].find((v) => v !== codeAt(ACCOUNT_A, Date.now()) && v !== codeAt(ACCOUNT_A, Date.now() + periodMs));
+      await user.page.fill('#otp', typed);
+
+      // Tab 1, first Sign in: the site empties the field and says the code was invalid.
+      await site.page.click('#go');
+      const rejected = await site.page.evaluate(() => document.querySelector('#msg').textContent);
+      const refilled = await currentCode(site.page, 5000);
+      rep.check(
+        's3-retry-after-reject',
+        refilled.ok && rejected === 'invalid code (1)' && stayed(site, url),
+        `${url}: filled ${JSON.stringify(filledSite.value)}, Sign in -> ${JSON.stringify(rejected)} and the field emptied by the page; then the field ${JSON.stringify(refilled.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}; page still at ${site.page.url()}, ${site.navigations} top-frame navigation(s)`,
+      );
+
+      // Second Sign in: the site puts a new field in place of the old one.
+      await site.page.click('#go');
+      const swapped = await site.page.evaluate(() => ({
+        msg: document.querySelector('#msg').textContent,
+        oldInPage: window.oldOtp ? window.oldOtp.isConnected : null,
+        isNew: document.querySelector('#otp') !== window.oldOtp,
+      }));
+      const second = await currentCode(site.page, 5000);
+      rep.check(
+        's3-retry-new-field',
+        second.ok && swapped.msg === 'invalid code (2)' && swapped.oldInPage === false && swapped.isNew && stayed(site, url),
+        `second Sign in -> ${JSON.stringify(swapped.msg)}, old field in the page ${swapped.oldInPage}, a new field ${swapped.isNew}; the new field ${JSON.stringify(second.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}; ${site.navigations} top-frame navigation(s)`,
+      );
+
+      // The period ends: the untouched code in tab 1 becomes the next one.
+      const boundary = (Math.floor(Date.now() / periodMs) + 1) * periodMs;
+      const before = codeAt(ACCOUNT_A, boundary - 1);
+      await sleep(boundary - Date.now() + 1000);
+      const fresh = await currentCode(site.page, 5000);
+      rep.check(
+        's3-keep-fresh',
+        fresh.ok && fresh.value !== before && Date.now() > boundary,
+        `period ended at ${new Date(boundary).toISOString()}: the field held ${JSON.stringify(second.value)} (reference before the end ${before}), now ${JSON.stringify(fresh.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}`,
+      );
+      // Tab 2, across the same period end: still the user's own code.
+      const kept = await user.page.evaluate(() => document.querySelector('#otp').value);
+      rep.check(
+        's3-user-value-kept',
+        kept === typed && filledUser.ok && Date.now() > boundary + 1000 && stayed(user, url),
+        `tab 2 auto-filled ${JSON.stringify(filledUser.value)}, then the user typed ${JSON.stringify(typed)}; ${Date.now() - boundary} ms after the period end the field holds ${JSON.stringify(kept)}`,
+      );
+    } finally {
+      for (const rec of recs) await rec.page.close();
+    }
+  });
+
   step('s3-locked', ['s3-autofill-bound'], async () => {
     const seeded = await seedPendingBind();
     await lockFromPopup();
@@ -743,6 +867,9 @@ export async function runAutofill({ rep, extensionDir }) {
   step('s3-idle', ['s3-unlocked-refill'], async () => {
     await st.popup.close();
     st.popup = undefined;
+    // The content script in st.s3 still follows the code it filled: a request of its own in the
+    // seed's read-back would find the session idle before the reload does.
+    await clearOfPeriodEnds(ACCOUNT_A);
     const stale = Date.now() - (IDLE_LOCK_MS + 60 * 1000);
     const seeded = await seedPendingBind({ lastActiveAt: stale });
     await reload(st.s3);

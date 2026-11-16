@@ -32,6 +32,12 @@ class El {
     child.parentElement = this;
     this.children.push(child);
   }
+  // The top of the tree the element is in: the document while it is in the page.
+  getRootNode() {
+    let node = this;
+    while (node.parentElement) node = node.parentElement;
+    return node;
+  }
   getAttribute(name) {
     return Object.hasOwn(this.attrs, name) ? this.attrs[name] : null;
   }
@@ -402,6 +408,12 @@ test('findOtpField reads plain attribute maps (no DOM needed)', () => {
 });
 
 // ---- content/autofill.js -----------------------------------------------------------------------
+// Fresh codes, keep-fresh and refills after a rejected code are tested in
+// test/content-autofill.test.mjs; here every code the worker sends stays valid VALID_MS, longer
+// than the 5 minutes (FOLLOW_MS) the script follows a filled field, so none is replaced.
+
+const VALID_MS = 300 * 1000;
+const FOLLOW_MS = 5 * 60 * 1000;
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -527,9 +539,9 @@ function notShownYet(html = '<form><input name="otp" data-t="otp"></form>') {
   };
 }
 
-test('content script: fills the code field once with input and change events, nothing else', async () => {
+test('content script: fills the code field with input and change events, nothing else', async () => {
   const page = '<form><input name="username" value="alice" data-t="user"><input name="otp" data-t="otp"></form>';
-  const run = await runContentScript(page, { code: '123456' });
+  const run = await runContentScript(page, { code: '123456', validMs: VALID_MS });
   assert.deepEqual(run.messages, [{ type: 'autofill-code' }]);
   const otp = byTag(run.doc, 'otp');
   assert.equal(otp.value, '123456');
@@ -537,18 +549,22 @@ test('content script: fills the code field once with input and change events, no
   assert.deepEqual(byTag(run.doc, 'user').events, []);
   assert.equal(byTag(run.doc, 'user').value, 'alice');
   assert.equal(run.doc.children[0].submits, 0);
-  // The page clears the field again: it was filled once, so it stays empty.
+  // The page clears the field again (a rejected code): it is filled again with a fresh code, and
+  // still nothing else is touched or submitted.
   otp.value = '';
   await run.mutate();
-  assert.equal(otp.value, '');
-  assert.equal(run.messages.length, 1);
+  assert.equal(run.messages.length, 2);
+  assert.equal(otp.value, '123456');
+  assert.deepEqual(otp.events, ['input', 'change', 'input', 'change']);
+  assert.deepEqual(byTag(run.doc, 'user').events, []);
+  assert.equal(run.doc.children[0].submits, 0);
 });
 
-test('content script: one fill per page load: a second candidate is never asked for or filled, and the watch stops', async () => {
+test('content script: one filled field at a time: a second candidate is never asked for or filled, and the watch stops after the follow window', async () => {
   // The OTP field and, after it, a field rule 2 also takes (named for a code).
   const page = '<form><input name="otp" data-t="otp"><input name="totp" data-t="second"></form>';
   let n = 0;
-  const run = await runContentScript(page, () => ({ code: String(111111 * ++n).padStart(6, '0') }));
+  const run = await runContentScript(page, () => ({ code: String(111111 * ++n).padStart(6, '0'), validMs: VALID_MS }));
   assert.equal(byTag(run.doc, 'otp').value, '111111');
   await run.mutate();
   for (const type of ['load', 'pageshow', 'resize', 'visibilitychange']) await run.fire(type);
@@ -556,7 +572,9 @@ test('content script: one fill per page load: a second candidate is never asked 
   assert.deepEqual(run.messages, [{ type: 'autofill-code' }]);
   assert.equal(byTag(run.doc, 'second').value, '');
   assert.deepEqual(byTag(run.doc, 'second').events, []);
-  // Nothing is left running after the fill.
+  // Nothing is left running 5 minutes after the fill.
+  await run.timers.advance(FOLLOW_MS - 60 * 1000);
+  assert.equal(run.messages.length, 1);
   assert.ok(run.observers.every((o) => o.disconnected));
   assert.equal(run.timers.pending(), 0);
   assert.equal(run.listeners.length, 0);
@@ -568,12 +586,12 @@ test('content script: one fill per page load: a second candidate is never asked 
   assert.equal(run.messages.length, 1);
 });
 
-test('content script: split boxes filled → the watch stops too (a second run of boxes stays empty)', async () => {
+test('content script: split boxes filled → a second run of boxes stays empty, and the watch stops after the follow window', async () => {
   // The second run is labelled for a code as well, so rule 3 would take it.
   const second = Array.from({ length: 6 }, (_, i) => `<input maxlength="1" data-t="c${i + 1}">`).join('');
-  const run = await runContentScript(`<div>${boxes(6)}</div><div aria-label="Verification code">${second}</div>`, { code: '102938' });
+  const run = await runContentScript(`<div>${boxes(6)}</div><div aria-label="Verification code">${second}</div>`, { code: '102938', validMs: VALID_MS });
   assert.deepEqual(labels(6).map((t) => byTag(run.doc, t).value), ['1', '0', '2', '9', '3', '8']);
-  await run.timers.advance(60 * 1000);
+  await run.timers.advance(FOLLOW_MS);
   assert.equal(run.messages.length, 1);
   assert.ok(['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].every((t) => byTag(run.doc, t).value === ''));
   assert.equal(run.timers.pending(), 0);
@@ -582,7 +600,7 @@ test('content script: split boxes filled → the watch stops too (a second run o
 
 test('content script: a page with only a PIN field, a short numeric field and PIN boxes → no code asked for, nothing filled', async () => {
   const page = `<form><input name="pin" inputmode="numeric" maxlength="6" data-t="pin"><input type="tel" maxlength="8" data-t="tel"><div>${bareBoxes(6)}</div></form>`;
-  const run = await runContentScript(page, { code: '123456' });
+  const run = await runContentScript(page, { code: '123456', validMs: VALID_MS });
   for (const type of ['load', 'pageshow', 'resize', 'visibilitychange']) await run.fire(type);
   await run.mutate();
   await run.timers.advance(60 * 1000);
@@ -603,7 +621,8 @@ test('content script: no code (locked, idle, unbound) → nothing filled and the
 });
 
 test('content script: anything but 6 to 8 digits from the worker is ignored', async () => {
-  for (const reply of [{ code: '12345' }, { code: '123456789' }, { code: '12a456' }, { code: 123456 }, undefined, 'x']) {
+  const badCodes = [{ code: '12345' }, { code: '123456789' }, { code: '12a456' }, { code: 123456 }].map((r) => ({ ...r, validMs: VALID_MS }));
+  for (const reply of [...badCodes, undefined, 'x']) {
     const run = await runContentScript('<input name="otp" data-t="otp">', reply);
     assert.equal(byTag(run.doc, 'otp').value, '', JSON.stringify(reply));
   }
@@ -614,7 +633,7 @@ test('content script: anything but 6 to 8 digits from the worker is ignored', as
 });
 
 test('content script: a field that is not empty is never touched, and no code is asked for', async () => {
-  const run = await runContentScript('<input name="otp" value="99" data-t="otp">', { code: '123456' });
+  const run = await runContentScript('<input name="otp" value="99" data-t="otp">', { code: '123456', validMs: VALID_MS });
   assert.equal(run.messages.length, 0);
   assert.equal(byTag(run.doc, 'otp').value, '99');
 });
@@ -622,7 +641,7 @@ test('content script: a field that is not empty is never touched, and no code is
 test('content script: a value typed while the worker answers is kept', async () => {
   const run = await runContentScript('<input name="otp" data-t="otp">', (doc) => {
     byTag(doc, 'otp').value = '4';
-    return { code: '123456' };
+    return { code: '123456', validMs: VALID_MS };
   });
   assert.equal(byTag(run.doc, 'otp').value, '4');
   assert.deepEqual(byTag(run.doc, 'otp').events, []);
@@ -648,7 +667,7 @@ test('content script: no code → no further looks, no timer and no listener lef
 });
 
 test('content script: a field added later is filled; after 60 s nothing is watched', async () => {
-  const run = await runContentScript('<form id="f"></form>', { code: '654321' });
+  const run = await runContentScript('<form id="f"></form>', { code: '654321', validMs: VALID_MS });
   assert.equal(run.messages.length, 0);
   assert.ok(run.observers.length === 1 && run.observers[0].options.subtree && run.observers[0].options.childList);
   const late = new El('input', { autocomplete: 'one-time-code' });
@@ -656,7 +675,7 @@ test('content script: a field added later is filled; after 60 s nothing is watch
   await run.mutate();
   assert.equal(late.value, '654321');
 
-  const idle = await runContentScript('<form></form>', { code: '654321' });
+  const idle = await runContentScript('<form></form>', { code: '654321', validMs: VALID_MS });
   await idle.timers.advance(60 * 1000);
   assert.ok(idle.observers.every((o) => o.disconnected));
   const tooLate = new El('input', { name: 'otp' });
@@ -670,7 +689,7 @@ test('content script: a field added later is filled; after 60 s nothing is watch
 test('content script: a field shown after the first look is filled once when the frame is resized, loaded or shown', async () => {
   for (const type of ['resize', 'load', 'pageshow', 'visibilitychange']) {
     const late = notShownYet();
-    const run = await runContentScript(late.html, { code: '246810' }, late.setup);
+    const run = await runContentScript(late.html, { code: '246810', validMs: VALID_MS }, late.setup);
     assert.equal(run.messages.length, 0, type);
     late.show();
     await run.fire(type);
@@ -687,25 +706,25 @@ test('content script: a field shown after the first look is filled once when the
 
 test('content script: a field shown after the first look, with no event and no DOM change, is filled once by a later look', async () => {
   const late = notShownYet();
-  const run = await runContentScript(late.html, { code: '135790' }, late.setup);
+  const run = await runContentScript(late.html, { code: '135790', validMs: VALID_MS }, late.setup);
   assert.equal(run.messages.length, 0);
   late.show();
   await run.timers.advance(1000);
   assert.equal(run.messages.length, 1);
   assert.equal(byTag(run.doc, 'otp').value, '135790');
   assert.deepEqual(byTag(run.doc, 'otp').events, ['input', 'change']);
-  // Once a field is filled the retries end; only DOM changes and events are looked at.
+  // While the filled field holds its code the page is not searched again.
   const looks = run.looks();
   await run.timers.advance(10 * 1000);
   assert.equal(run.looks(), looks);
-  await run.timers.advance(60 * 1000);
+  await run.timers.advance(FOLLOW_MS);
   assert.equal(run.messages.length, 1);
   assert.equal(run.timers.pending(), 0);
 });
 
 test('content script: a field that never shows → no code asked for, and after 60 s nothing is left running', async () => {
   const hidden = notShownYet();
-  const run = await runContentScript(hidden.html, { code: '112233' }, hidden.setup);
+  const run = await runContentScript(hidden.html, { code: '112233', validMs: VALID_MS }, hidden.setup);
   await run.timers.advance(60 * 1000);
   assert.equal(run.messages.length, 0);
   assert.equal(run.timers.pending(), 0);
@@ -723,16 +742,16 @@ test('content script: a field that never shows → no code asked for, and after 
 });
 
 test('content script: split boxes get one digit each', async () => {
-  const run = await runContentScript(`<div>${boxes(6)}</div>`, { code: '102938' });
+  const run = await runContentScript(`<div>${boxes(6)}</div>`, { code: '102938', validMs: VALID_MS });
   assert.deepEqual(labels(6).map((t) => byTag(run.doc, t).value), ['1', '0', '2', '9', '3', '8']);
   assert.deepEqual(byTag(run.doc, 'b6').events, ['input', 'change']);
   // An 8-digit code does not fit 6 boxes: nothing is filled.
-  const mismatch = await runContentScript(`<div>${boxes(6)}</div>`, { code: '10293847' });
+  const mismatch = await runContentScript(`<div>${boxes(6)}</div>`, { code: '10293847', validMs: VALID_MS });
   assert.ok(labels(6).every((t) => byTag(mismatch.doc, t).value === ''));
 });
 
 test('content script: a single field whose maxlength is shorter than the code is not filled', async () => {
-  const run = await runContentScript('<input name="otp" type="tel" maxlength="6" data-t="f">', { code: '12345678' });
+  const run = await runContentScript('<input name="otp" type="tel" maxlength="6" data-t="f">', { code: '12345678', validMs: VALID_MS });
   // The field was found and a code asked for; the code does not fit.
   assert.equal(run.messages.length, 1);
   assert.equal(byTag(run.doc, 'f').value, '');
