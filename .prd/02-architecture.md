@@ -107,7 +107,7 @@ State and storage
 
 Inputs and crypto
 - Passphrases are NFC-normalized before PBKDF2 (pre-release, no existing vaults). Vault structural checks (sizes of salt ≤ 64 B, iv = 12 B, ct ≤ 1 MiB) run before key derivation; iterations 1..2,000,000.
-- Backup files > 1 MiB are rejected before reading. Images > 20 MiB are rejected before decoding; PNG/JPEG/GIF/WebP/BMP headers are sniffed and images above 50 megapixels rejected before decoding; decoding uses `createImageBitmap` with resize options so no full-resolution canvas exists above 4096 px per side.
+- Backup files > 2 MiB are rejected before reading (raised in Round 3). Images > 20 MiB are rejected before decoding; PNG/JPEG/GIF/WebP/BMP headers are sniffed and images above 50 megapixels rejected before decoding; decoding uses `createImageBitmap` with resize options so no full-resolution canvas exists above 4096 px per side.
 - `otpauth.parse` rejects a non-empty `issuer` parameter that conflicts with a non-empty label prefix, duplicate `secret/issuer/algorithm/digits/period` parameters, and malformed percent-encoding in the query.
 - Copy recomputes the code at click time (never copies a cached code from an expired period).
 
