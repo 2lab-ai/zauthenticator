@@ -561,6 +561,10 @@ try {
   const pageConsole = watchConsole(page);
   const opened = await opens(context, page);
   rep.pass('open-popup', `chrome-extension://${opened.id}/${POPUP} (id via ${opened.method})`);
+  // getUILanguage() follows the launch's emulated locale; the "lang" message is the catalog
+  // chrome.i18n.getMessage() actually resolves (the UI text the A8 and A9 steps read).
+  const i18n = await page.evaluate(() => ({ ui: chrome.i18n.getUILanguage(), catalog: chrome.i18n.getMessage('lang') }));
+  console.log(`INFO ui-language getUILanguage() ${i18n.ui}, message catalog ${i18n.catalog || '(none)'}`);
 
   step = 'a-setup';
   await waitState(page, 'setup');
