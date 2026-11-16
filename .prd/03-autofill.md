@@ -73,7 +73,7 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
    `{origin, accountId, createdAt}`) → worker sync (`storage.onChanged` on the vault) →
    `registerAutofill(origins)` = `chrome.scripting.registerContentScripts` /
    `updateContentScripts` id `autofill`, `matches: origins.map(o => o + '/*')`, `allFrames: true`,
-   `runAt: 'document_idle'`, `js: ['content/autofill.js']` → session `pendingBind` removed → window
+   `runAt: 'document_idle'`, `js: ['lib/fieldfind.js', 'content/autofill.js']` (one field-finder source shared with the unit tests) → session `pendingBind` removed → window
    closes.
 4. Side effects: vault record (bindings), host permission granted, script registration.
 5. Errors: prompt denied → no binding, `#bind-error`; pending expired/missing → message, nothing

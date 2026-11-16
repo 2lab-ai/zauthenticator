@@ -90,6 +90,8 @@ images are decoded with `createImageBitmap` on a Blob (never `fetch`, never `<im
 
 ## Trust gate (`scripts/check-policy.mjs`)
 
+> v0.1 rule list below; the v0.2 policy (auto-fill permissions, worker, content-script rules) is in [03-autofill.md](03-autofill.md) "Cross-unit contract" and in the gate's pinned `MANIFEST_POLICY`.
+
 Fails (exit 1) when any of these holds:
 - manifest `permissions` ⊄ {`storage`, `activeTab`}; any `host_permissions`, `optional_host_permissions`, `content_scripts`, `externally_connectable`, `update_url`, `key`.
 - CSP missing `connect-src 'none'` or `script-src 'self'` or has `unsafe-eval`/`unsafe-inline`/`wasm-unsafe-eval`.
@@ -102,7 +104,7 @@ State and storage
 - **Cross-page exclusion.** Every vault read-modify-write (`create`, every mutation, `unlock` → session key write, `lock` → session key clear) runs inside `navigator.locks.request('zauthenticator-vault', …)` (Web Locks are shared by all extension pages of the same origin: popup + full tab). Inside the lock a mutation re-reads the stored record, opens it, applies the change, seals, saves.
 - **Lock invalidates in-flight work.** `session.js` keeps a generation counter; `forget()`/`lock()` bump it. Every async path (`resume`, `unlock`, `reload`, mutations) captures the generation (and key) at start and publishes results (`remember`, session-key write) only if both are unchanged. `accounts()` returns `[]` while locked.
 - **Lock clears sensitive inputs** (setup/unlock passphrases, backup passphrase + file, otpauth textarea, manual issuer/label/secret) on local and propagated locks.
-- **Idle auto-lock (15 min, fixed in v0.1).** Session storage may hold exactly `vaultKey` and `lastActiveAt` (ms). Opening a page whose `lastActiveAt` is older than 15 minutes locks before showing codes; user activity in an open page refreshes it.
+- **Idle auto-lock (15 min, fixed in v0.1).** Session storage may hold exactly `vaultKey` and `lastActiveAt` (ms) — v0.2 adds `pendingBind` (03-autofill.md); every lock path clears all of them. Opening a page whose `lastActiveAt` is older than 15 minutes locks before showing codes; user activity in an open page refreshes it.
 - Stored accounts are never dropped by a seal; invalid stored entries render as "Invalid key". Imported entries are validated with `otpauth.normalize`; invalid ones are skipped and counted in the result message. Duplicate identity = canonical secret + issuer + label + algorithm + digits + period.
 
 Inputs and crypto
