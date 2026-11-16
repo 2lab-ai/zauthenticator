@@ -235,17 +235,6 @@ body.no-accounts #edit-btn {
   cursor: progress;
 }
 
-.link-btn {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent-text);
-  font: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
 /* ---- forms ---- */
 
 .field {

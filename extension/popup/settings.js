@@ -5,6 +5,9 @@ import { t } from './i18n.js';
 import { $, setText, withBusy, reason } from './ui.js';
 import { backupFileName, looksLikeRecord } from './format.js';
 
+// A backup is one vault record; anything larger is refused before it is read.
+const MAX_BACKUP_BYTES = 1024 * 1024;
+
 export function createSettingsView({ isTab, done }) {
   const exportBtn = $('#export-btn');
   const exportStatus = $('#export-status');
@@ -28,10 +31,6 @@ export function createSettingsView({ isTab, done }) {
     window.close();
   });
 
-  $('#source-btn').addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getManifest().homepage_url });
-  });
-
   // The stored record is already ciphertext; the backup is that record verbatim.
   async function exportBackup() {
     setText(exportStatus, '');
@@ -51,6 +50,9 @@ export function createSettingsView({ isTab, done }) {
   }
 
   async function importBackup() {
+    // Nothing is written back into the view once the vault locks (lock cleared the form).
+    const gen = session.generation();
+    const live = () => session.isUnlocked() && session.generation() === gen;
     setText(importError, '');
     const file = importFile.files[0];
     if (!file) {
@@ -58,17 +60,23 @@ export function createSettingsView({ isTab, done }) {
       importFile.focus();
       return;
     }
+    if (file.size > MAX_BACKUP_BYTES) {
+      setText(importError, t('errImportTooLarge'));
+      return;
+    }
     if (!importPass.value) {
       setText(importError, t('errImportNoPass'));
       importPass.focus();
       return;
     }
+    const passphrase = importPass.value;
     let record;
     try {
       record = JSON.parse(await file.text());
     } catch {
       record = null;
     }
+    if (!live()) return;
     if (!looksLikeRecord(record)) {
       setText(importError, t('errImportFile'));
       return;
@@ -76,33 +84,42 @@ export function createSettingsView({ isTab, done }) {
     await withBusy(importSubmit, t('importing'), async () => {
       let incoming;
       try {
-        incoming = await session.readBackup(record, importPass.value);
+        incoming = await session.readBackup(record, passphrase);
       } catch (error) {
-        setText(importError, session.isBadPassphrase(error) ? t('errImportPass') : t('errImportFailed', reason(error)));
+        if (!live()) return;
+        if (error.code === 'not-backup') setText(importError, t('errImportFile'));
+        else setText(importError, session.isBadPassphrase(error) ? t('errImportPass') : t('errImportFailed', reason(error)));
         importPass.select();
         return;
       }
+      if (!live()) return;
       let result;
       try {
-        // Merged into the current vault and sealed with the current key.
+        // Validated, merged into the current vault and sealed with the current key.
         result = await session.addAccounts(incoming);
       } catch (error) {
-        setText(importError, t('errSaveFailed', reason(error)));
+        if (live() && error.code !== 'locked') setText(importError, t('errSaveFailed', reason(error)));
         return;
       }
+      if (!live()) return;
       importForm.reset();
       await done(result);
     });
   }
 
-  function open() {
+  // Empties the backup file, its passphrase and every status line (used on lock).
+  function clearSensitive() {
     setText(exportStatus, '');
     setText(importError, '');
     importForm.reset();
+  }
+
+  function open() {
+    clearSensitive();
     openTabRow.hidden = isTab;
     setText(versionEl, t('versionLabel', chrome.runtime.getManifest().version));
     $('#settings-back').focus();
   }
 
-  return { open };
+  return { open, clearSensitive };
 }

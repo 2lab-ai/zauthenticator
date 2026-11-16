@@ -387,19 +387,6 @@
       }
     }
   },
-  "importedCount": {
-    "message": "Backup imported. Added: $ADDED$, duplicates skipped: $SKIPPED$.",
-    "placeholders": {
-      "added": {
-        "content": "$1",
-        "example": "2"
-      },
-      "skipped": {
-        "content": "$2",
-        "example": "1"
-      }
-    }
-  },
   "settingsTitle": {
     "message": "Settings"
   },
@@ -457,6 +444,24 @@
       }
     }
   },
+  "errImportTooLarge": {
+    "message": "That file is larger than 1 MiB, too large to be a zauthenticator backup."
+  },
+  "invalidCount": {
+    "message": "Invalid entries skipped: $COUNT$.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "importDone": {
+    "message": "Backup imported."
+  },
+  "autoLockHint": {
+    "message": "Locks after 15 minutes without use and when the browser quits."
+  },
   "openTabHint": {
     "message": "If the file picker closes this popup, open settings in a tab."
   },
@@ -480,8 +485,5 @@
         "example": "0.1.0"
       }
     }
-  },
-  "sourceBtn": {
-    "message": "Source code"
   }
 }

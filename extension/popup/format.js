@@ -1,5 +1,6 @@
 // Small pure helpers shared by the popup views.
 import * as base32 from '../lib/base32.js';
+import { normalize } from '../lib/otpauth.js';
 
 // "123456" → "123 456", "12345678" → "1234 5678", "1234567" → "1234 567".
 export function groupCode(code) {
@@ -18,9 +19,24 @@ export function canonicalSecret(secret) {
   }
 }
 
-// Two entries are duplicates when secret, issuer and label all match.
+// Two entries are duplicates when secret, issuer, label, algorithm, digits and period all
+// match, compared in canonical form ('sha-256' = 'SHA256', '8' = 8, missing = the default).
+// An entry that is not a valid account is compared by its raw fields.
 export function duplicateKey(account) {
-  return JSON.stringify([canonicalSecret(account.secret), account.issuer ?? '', account.label ?? '']);
+  let a = account !== null && typeof account === 'object' ? account : {};
+  try {
+    a = normalize(a);
+  } catch {
+    // keep the raw fields
+  }
+  return JSON.stringify([
+    canonicalSecret(a.secret),
+    a.issuer ?? '',
+    a.label ?? '',
+    a.algorithm ?? '',
+    a.digits ?? '',
+    a.period ?? '',
+  ]);
 }
 
 export function matchesQuery(account, query) {
