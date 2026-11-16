@@ -10,11 +10,13 @@
 // page. A code with less than 3 s left is not filled: the next period's code is asked for instead.
 // Fields that appear or become visible later are looked for during the first minute. After the
 // first fill the filled field is followed for 5 minutes: when its code expires while it still holds
-// it, the next code replaces it; when the page empties it or replaces it with a new code field (a
-// rejected code), it is filled again with a current code, up to 4 fills in all. A field is written
-// only while it is empty or holds what this script put there; once the user typed into the filled
-// field, or the worker answers with no code, the watch ends. No other field is filled while the
-// filled one is in the page, and nothing is ever submitted.
+// it, the next code replaces it (3 times at most per field set); when the page empties it or
+// replaces it with a new code field (a rejected code), it is filled again with a current code, up
+// to 4 fills in all. A field the page emptied is never given the code it just held again: that
+// code's period is waited out first. A field is written only while it is empty or holds what this
+// script put there; once the user typed into the filled field, or the worker answers with no code,
+// the watch ends. No other field is filled while the filled one is in the page, and nothing is ever
+// submitted.
 (() => {
   'use strict';
 
@@ -27,6 +29,10 @@
   // The first fill and three more after the page emptied or replaced the field. Replacing a code
   // that expired untouched is not counted.
   const MAX_FILLS = 4;
+  // Replacements of a code that expired untouched, per filled field set (refilling the same set
+  // does not start a new count): then the code is left as is. A site that submits on input would
+  // otherwise get a new attempt every period.
+  const MAX_REFRESHES = 3;
   // Less than this left of a code's period: too little to submit it.
   const LATE_MS = 3000;
   // A code is asked for this long after a period ends, so the worker is in the next one.
@@ -59,6 +65,7 @@
   let freshTimer = 0; // the filled code expires
   let deadline = 0;
   let fills = 0;
+  let refreshes = 0; // of the filled field set
   // The field(s) filled last and the code put there (one digit per box for split boxes), and
   // whether that code has expired.
   let filledFields = null;
@@ -148,19 +155,30 @@
     passTyped(asked);
     if (reply.validMs < LATE_MS && !afterWait) {
       // Too little left to submit this code: the next one is asked for when its period starts.
-      waitTimer = setTimeout(() => {
-        waitTimer = 0;
-        passTyped(asked);
-        look(true);
-      }, reply.validMs + MARGIN_MS);
+      askNextPeriod(asked, reply.validMs);
       return;
     }
     // The page may have changed while the worker answered: find the field(s) again (right before
     // writing, so nothing the user typed meanwhile is overwritten).
     const fields = target();
+    if (fields && fields === filledFields && reply.code === filledCode && fields.every((el) => el.value === '')) {
+      // The page emptied the code this script put there, so it was turned down: the same code
+      // would be too. The next period's code is asked for when that period starts.
+      askNextPeriod(asked, reply.validMs);
+      return;
+    }
     if (fields && fill(fields, reply.code, reply.validMs)) return;
     // Mutations that arrived while asking were dropped by look(); check once more.
     schedule();
+  }
+
+  // Asks again once the period of the code just received has ended (no look asks meanwhile).
+  function askNextPeriod(asked, validMs) {
+    waitTimer = setTimeout(() => {
+      waitTimer = 0;
+      passTyped(asked);
+      look(true);
+    }, validMs + MARGIN_MS);
   }
 
   // The worker's answer when it is { code, validMs } with a 6-8 digit code and 1 ms to a whole
@@ -203,6 +221,8 @@
     // A code that expired untouched is replaced; otherwise this is a fill, and the first one starts
     // the follow window.
     const replacing = fields === filledFields && filledFields.every((el, i) => el.value === part(i));
+    if (fields !== filledFields) refreshes = 0;
+    else if (replacing) refreshes += 1;
     if (!replacing) {
       fills += 1;
       if (fills === 1) {
@@ -216,11 +236,15 @@
     filledCode = code;
     expired = false;
     clearTimeout(freshTimer);
-    freshTimer = setTimeout(() => {
-      freshTimer = 0;
-      expired = true;
-      look();
-    }, validMs + MARGIN_MS);
+    freshTimer = 0;
+    // Kept current MAX_REFRESHES times per field set; after that the code stays as it is.
+    if (refreshes < MAX_REFRESHES) {
+      freshTimer = setTimeout(() => {
+        freshTimer = 0;
+        expired = true;
+        look();
+      }, validMs + MARGIN_MS);
+    }
     return true;
   }
 

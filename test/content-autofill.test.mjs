@@ -464,6 +464,47 @@ test('content script: the filled code is replaced by the next one when its perio
   assert.equal(one.value, '333333');
 });
 
+test('content script: a filled field set is kept current 3 times at most, refills of it included; a new field set gets its own 3', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '100001', validMs: 10 * 1000 });
+  await run.timers.advance(10 * 1000 + MARGIN_MS);
+  for (const code of ['100002', '100003', '100004']) {
+    assert.equal(worker.open(), 1, `a request for the code after ${one.value}`);
+    await worker.answer({ code, validMs: 30 * 1000 - MARGIN_MS });
+    assert.equal(one.value, code);
+    await run.timers.advance(30 * 1000);
+  }
+  // Three replacements: the fourth code is left in the field.
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 4);
+  assert.equal(one.value, '100004');
+  // Still followed: the page empties it and it is filled again (a fill, not a replacement), but
+  // the same field is not kept current any more.
+  assert.ok(run.timers.pending() > 0, 'still following the filled field');
+  one.value = '';
+  await run.timers.advance(RETRY_MS);
+  assert.equal(run.messages.length, 5);
+  await worker.answer({ code: '100005', validMs: 10 * 1000 });
+  assert.equal(one.value, '100005');
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 5);
+  assert.equal(one.value, '100005');
+  // The page puts a new field in its place: a new field set, kept current again.
+  one.detach();
+  const fresh = new El('input', { autocomplete: 'one-time-code', 'data-t': 'fresh' });
+  formOf(run.doc).append(fresh);
+  await run.mutate();
+  assert.equal(run.messages.length, 6);
+  await worker.answer({ code: '100006', validMs: 10 * 1000 });
+  assert.equal(fresh.value, '100006');
+  await run.timers.advance(10 * 1000 + MARGIN_MS);
+  assert.equal(run.messages.length, 7);
+  await worker.answer({ code: '100007', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(fresh.value, '100007');
+});
+
 test('content script: { code: null } for a fresher code → the filled code stays, the watch stops', async () => {
   const worker = manualWorker();
   const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
@@ -568,6 +609,42 @@ test('content script: the page empties the filled field (a rejected code) → on
   assert.deepEqual(one.events, ['input', 'change', 'input', 'change']);
   await run.timers.advance(5000);
   assert.equal(run.messages.length, 2);
+});
+
+test('content script: the page empties the filled field while its period still runs → the same code is not filled again; the next period\'s code is', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '111111', validMs: 20 * 1000 });
+  one.value = '';
+  await run.timers.advance(RETRY_MS);
+  assert.equal(run.messages.length, 2);
+  // The same period, the same code: it was just rejected.
+  await worker.answer({ code: '111111', validMs: 19 * 1000 + 500 });
+  assert.equal(one.value, '');
+  assert.deepEqual(one.events, ['input', 'change']);
+  // Nothing is asked for until that period ends; looks and page changes meanwhile ask nothing.
+  await run.mutate();
+  await run.fire('resize');
+  await run.timers.advance(19 * 1000 + 500 + MARGIN_MS - SETTLE_MS - 1);
+  assert.equal(run.messages.length, 2);
+  assert.equal(one.value, '');
+  await run.timers.advance(1);
+  assert.equal(run.messages.length, 3);
+  await worker.answer({ code: '222222', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(one.value, '222222');
+  assert.deepEqual(one.events, ['input', 'change', 'input', 'change']);
+  // That was the second fill of four: two more refills are left.
+  for (const code of ['333333', '444444']) {
+    one.value = '';
+    await run.timers.advance(RETRY_MS);
+    await worker.answer({ code, validMs: 20 * 1000 });
+    assert.equal(one.value, code);
+  }
+  one.value = '';
+  await run.timers.advance(RETRY_MS * 4);
+  assert.equal(run.messages.length, 5);
+  assertStopped(run, 'after the fourth fill was emptied');
 });
 
 test('content script: the page replaces the filled field with a new one → the new one is filled; the old one is left alone', async () => {

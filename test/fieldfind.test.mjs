@@ -541,7 +541,10 @@ function notShownYet(html = '<form><input name="otp" data-t="otp"></form>') {
 
 test('content script: fills the code field with input and change events, nothing else', async () => {
   const page = '<form><input name="username" value="alice" data-t="user"><input name="otp" data-t="otp"></form>';
-  const run = await runContentScript(page, { code: '123456', validMs: VALID_MS });
+  // The second request is answered with the code of a later period.
+  const codes = ['123456', '654321'];
+  let n = 0;
+  const run = await runContentScript(page, () => ({ code: codes[Math.min(n++, 1)], validMs: VALID_MS }));
   assert.deepEqual(run.messages, [{ type: 'autofill-code' }]);
   const otp = byTag(run.doc, 'otp');
   assert.equal(otp.value, '123456');
@@ -554,7 +557,7 @@ test('content script: fills the code field with input and change events, nothing
   otp.value = '';
   await run.mutate();
   assert.equal(run.messages.length, 2);
-  assert.equal(otp.value, '123456');
+  assert.equal(otp.value, '654321');
   assert.deepEqual(otp.events, ['input', 'change', 'input', 'change']);
   assert.deepEqual(byTag(run.doc, 'user').events, []);
   assert.equal(run.doc.children[0].submits, 0);

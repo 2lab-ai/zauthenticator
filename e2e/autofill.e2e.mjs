@@ -729,12 +729,12 @@ export async function runAutofill({ rep, extensionDir }) {
     await rec.page.close();
   });
 
-  // "Fresh code and retry after a failed attempt" (.prd/03-autofill.md): in two tabs of the
-  // /spa-login page, both filled by the content script. Tab 1 is the site rejecting codes: after
-  // the first Sign in empties the field and the second re-renders it, each time the field holds
-  // the current code again; when the period ends the untouched code is replaced by the next one.
-  // Tab 2 is the user typing a code of their own over the filled one: it is kept across the same
-  // period end.
+  // "Fresh code and retry after a failed attempt" (.prd/03-autofill.md): three tabs of the
+  // /spa-login page, all filled by the content script within one period. Tab 1 is the site turning
+  // codes down: the first Sign in empties the field, which then gets the next period's code (never
+  // the one just turned down); the second Sign in re-renders the field, which gets the current code
+  // at once. Tab 2 is the user typing a code of their own over the filled one: it is kept across
+  // the period end. Tab 3 is left alone: when the period ends its code becomes the next one.
   step('s3-retry-after-reject', ['s2-bind-allow'], async () => {
     const url = `${OTP}${SPA_PATH}`;
     const periodMs = ACCOUNT_A.period * 1000;
@@ -755,27 +755,29 @@ export async function runAutofill({ rep, extensionDir }) {
     };
     try {
       await waitForFreshPeriod(ACCOUNT_A, 12000);
-      const site = await openTestPage(url);
-      recs.push(site);
-      const user = await openTestPage(url);
-      recs.push(user);
-      const filledSite = await currentCode(site.page, 10000);
-      const filledUser = await currentCode(user.page, 10000);
-      if (!filledSite.ok || !filledUser.ok) {
-        throw new Error(`precondition: ${url} not auto-filled: tab 1 ${JSON.stringify(filledSite.value)}, tab 2 ${JSON.stringify(filledUser.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}`);
+      for (let i = 0; i < 3; i++) recs.push(await openTestPage(url));
+      const [site, user, idle] = recs;
+      const filled = [await currentCode(site.page, 10000), await currentCode(user.page, 10000), await currentCode(idle.page, 10000)];
+      // The end of the period the tabs were filled in, and that period's code.
+      const boundary = (Math.floor(Date.now() / periodMs) + 1) * periodMs;
+      const first = codeAt(ACCOUNT_A, boundary - 1);
+      if (!filled.every((f) => f.ok && f.value === first)) {
+        throw new Error(`precondition: ${url} not auto-filled in one period: tabs ${JSON.stringify(filled.map((f) => f.value))}, reference ${first}`);
       }
       // Tab 2: the user's own code over the filled one, in one edit (no empty field in between).
-      const typed = ['111111', '222222', '333333'].find((v) => v !== codeAt(ACCOUNT_A, Date.now()) && v !== codeAt(ACCOUNT_A, Date.now() + periodMs));
+      const typed = ['111111', '222222', '333333'].find((v) => v !== first && v !== codeAt(ACCOUNT_A, boundary));
       await user.page.fill('#otp', typed);
 
-      // Tab 1, first Sign in: the site empties the field and says the code was invalid.
+      // Tab 1, first Sign in: the site empties the field and says the code was invalid. The same
+      // code would be turned down again: the field gets the next period's code once it starts.
       await site.page.click('#go');
+      const leftAtReject = boundary - Date.now();
       const rejected = await site.page.evaluate(() => document.querySelector('#msg').textContent);
-      const refilled = await currentCode(site.page, 5000);
+      const refilled = await currentCode(site.page, boundary - Date.now() + 5000);
       rep.check(
         's3-retry-after-reject',
-        refilled.ok && rejected === 'invalid code (1)' && stayed(site, url),
-        `${url}: filled ${JSON.stringify(filledSite.value)}, Sign in -> ${JSON.stringify(rejected)} and the field emptied by the page; then the field ${JSON.stringify(refilled.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}; page still at ${site.page.url()}, ${site.navigations} top-frame navigation(s)`,
+        refilled.ok && refilled.value !== first && Date.now() > boundary && rejected === 'invalid code (1)' && stayed(site, url),
+        `${url}: filled ${first}; Sign in ${leftAtReject} ms before the period end -> ${JSON.stringify(rejected)} and the field emptied by the page; then the field ${JSON.stringify(refilled.value)} (the code turned down was ${first}), reference ${codeAt(ACCOUNT_A, Date.now())}, ${Date.now() - boundary} ms after the period end; page still at ${site.page.url()}, ${site.navigations} top-frame navigation(s)`,
       );
 
       // Second Sign in: the site puts a new field in place of the old one.
@@ -792,22 +794,20 @@ export async function runAutofill({ rep, extensionDir }) {
         `second Sign in -> ${JSON.stringify(swapped.msg)}, old field in the page ${swapped.oldInPage}, a new field ${swapped.isNew}; the new field ${JSON.stringify(second.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}; ${site.navigations} top-frame navigation(s)`,
       );
 
-      // The period ends: the untouched code in tab 1 becomes the next one.
-      const boundary = (Math.floor(Date.now() / periodMs) + 1) * periodMs;
-      const before = codeAt(ACCOUNT_A, boundary - 1);
-      await sleep(boundary - Date.now() + 1000);
-      const fresh = await currentCode(site.page, 5000);
+      // Tab 3, across the same period end: its untouched code became the next one.
+      if (Date.now() < boundary + 1000) await sleep(boundary + 1000 - Date.now());
+      const fresh = await currentCode(idle.page, 5000);
       rep.check(
         's3-keep-fresh',
-        fresh.ok && fresh.value !== before && Date.now() > boundary,
-        `period ended at ${new Date(boundary).toISOString()}: the field held ${JSON.stringify(second.value)} (reference before the end ${before}), now ${JSON.stringify(fresh.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}`,
+        fresh.ok && fresh.value !== first && Date.now() > boundary && stayed(idle, url),
+        `untouched tab, period ended at ${new Date(boundary).toISOString()}: the field held ${first}, now ${JSON.stringify(fresh.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}`,
       );
       // Tab 2, across the same period end: still the user's own code.
       const kept = await user.page.evaluate(() => document.querySelector('#otp').value);
       rep.check(
         's3-user-value-kept',
-        kept === typed && filledUser.ok && Date.now() > boundary + 1000 && stayed(user, url),
-        `tab 2 auto-filled ${JSON.stringify(filledUser.value)}, then the user typed ${JSON.stringify(typed)}; ${Date.now() - boundary} ms after the period end the field holds ${JSON.stringify(kept)}`,
+        kept === typed && Date.now() > boundary + 1000 && stayed(user, url),
+        `tab 2 auto-filled ${first}, then the user typed ${JSON.stringify(typed)}; ${Date.now() - boundary} ms after the period end the field holds ${JSON.stringify(kept)}`,
       );
     } finally {
       for (const rec of recs) await rec.page.close();
