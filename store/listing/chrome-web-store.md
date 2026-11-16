@@ -57,7 +57,7 @@ Features
 - Add an account by scanning a QR code on the current page, from a QR image, from otpauth:// links, or by typing the setup key.
 - Click a code to copy it. A countdown shows when the next code starts.
 - Fill a code into a site: right-click the code field and choose the account.
-- Optional auto-fill: allow a site once, and on later visits the code field is filled for you while zauthenticator is unlocked. If the site rejects an expired code, a fresh one is filled. Forms are never submitted.
+- Optional auto-fill: allow a site once, and on later visits the code field is filled for you while zauthenticator is unlocked. Until you submit, an expiring code is replaced with the new one (at most twice), and if the site rejects the code a fresh one is filled once; the same code is never filled twice, and a site gets at most 3 codes per tab in 5 minutes. Auto-fill stops as soon as you type or delete in the field, leave the page, or lock, and it never submits a form.
 - Export and import an encrypted backup.
 - Locks when you click Lock, after 15 minutes without use, and when the browser quits.
 - English and Korean.
@@ -66,10 +66,11 @@ Privacy
 - No account, no sync, no analytics, no telemetry. The extension's pages and its background worker cannot connect to any server.
 - Secret keys, account names and auto-fill sites are stored only on your device, in a vault encrypted with AES-256-GCM under a key derived from your passphrase (PBKDF2-SHA-256, 600,000 iterations). The passphrase is never stored.
 - A site receives only the 6-8 digit code, and only when you allowed that site or right-clicked its field.
+- Scanning a QR code on the current page takes one picture of the visible part of that tab, only when you click the scan button. It is decoded on your device and never stored or sent.
 - No site access is granted at install. When you allow auto-fill on a site, the browser asks for access to that one site; removing the site gives the access up.
 
 Good to know
-- The passphrase cannot be recovered. Keep an exported backup.
+- The passphrase cannot be recovered. Backups are encrypted with the same passphrase, so a backup protects you against losing the device or browser profile, not against forgetting the passphrase.
 - Codes are computed from your computer's clock, so keep its time set automatically.
 - Uninstalling the extension deletes its vault.
 
@@ -85,7 +86,7 @@ zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 
 - 지금 보고 있는 페이지의 QR 코드, QR 이미지, otpauth:// 링크, 설정 키 직접 입력 중 편한 방법으로 계정을 추가해요.
 - 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
 - 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 계정을 고르면 코드가 입력돼요.
-- 원하면 자동 입력도 돼요. 사이트를 한 번 허용해 두면 다음부터는 잠금이 풀려 있는 동안 코드 입력란을 자동으로 채워요. 사이트가 시간이 지난 코드를 거부하면 새 코드로 다시 채워요. 폼을 제출하지는 않아요.
+- 원하면 자동 입력도 돼요. 사이트를 한 번 허용해 두면 다음부터는 잠금이 풀려 있는 동안 코드 입력란을 자동으로 채워요. 제출하기 전까지 입력한 코드가 만료되면 새 코드로 바꾸고(최대 두 번), 사이트가 코드를 거부하면 새 코드로 한 번 다시 채워요. 같은 코드를 두 번 넣지 않고, 한 탭에서 한 사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 페이지를 떠나면, 잠기면 바로 멈추고, 폼을 제출하지는 않아요.
 - 암호화된 백업을 내보내고 가져올 수 있어요.
 - 잠그기 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 종료하면 잠겨요.
 - 한국어와 영어를 지원해요.
@@ -94,10 +95,11 @@ zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 
 - 회원 가입, 동기화, 사용 통계 수집이 없어요. 확장 프로그램 화면과 백그라운드 워커는 어떤 서버에도 연결할 수 없어요.
 - 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기에만 저장돼요. 마스터 비밀번호에서 만든 키(PBKDF2-SHA-256, 60만 회 반복)로 AES-256-GCM 암호화해요. 비밀번호 자체는 저장하지 않아요.
 - 사이트가 받는 건 6–8자리 코드뿐이고, 허용한 사이트나 직접 오른쪽 클릭한 입력란에만 들어가요.
+- 지금 페이지의 QR 코드를 스캔할 때는 스캔 버튼을 누른 그때만 탭의 보이는 부분을 한 장 캡처해요. 이 이미지는 기기 안에서 읽고, 저장하거나 보내지 않아요.
 - 설치할 때는 사이트 접근 권한을 받지 않아요. 자동 입력을 허용하면 브라우저가 그 사이트 하나에 접근해도 되는지 묻고, 설정의 자동 입력 사이트에서 삭제하면 그 권한도 반납해요.
 
 알아 둘 점
-- 마스터 비밀번호는 복구할 수 없어요. 백업을 내보내 두세요.
+- 마스터 비밀번호는 복구할 수 없어요. 백업도 같은 비밀번호로 암호화되기 때문에, 백업은 기기나 브라우저 프로필을 잃었을 때를 위한 것이고 비밀번호를 잊었을 때는 도움이 되지 않아요.
 - 코드는 컴퓨터 시계로 계산해요. 시간이 자동으로 맞춰지도록 설정해 두세요.
 - 확장 프로그램을 삭제하면 보관함도 함께 지워져요.
 
@@ -164,7 +166,7 @@ Stores the user's vault (TOTP secret keys, account names and the sites chosen fo
 **activeTab**
 
 ```text
-Used only right after a user gesture. (1) When the user clicks the toolbar icon and chooses to scan the page, the visible part of that tab is captured once to read a QR code that sets up a two-factor account. (2) When the user chooses an account in the right-click menu, that account's current code is typed into the field the user right-clicked. There is no access to any tab otherwise.
+Used only right after a user gesture. (1) When the user clicks the toolbar icon and chooses to scan the page, the visible part of that tab is captured once (one JPEG) to read a QR code that sets up a two-factor account; the picture is decoded in the popup, held in memory only for that, and never stored or sent. (2) When the user chooses an account in the right-click menu, that account's current code is typed into the field the user right-clicked. There is no access to any tab otherwise.
 ```
 
 **contextMenus**
@@ -188,7 +190,7 @@ Declared only as an optional host permission and requested one exact origin at a
 **Background service worker** (the dashboard has no field for it; use this if a reviewer asks)
 
 ```text
-The module service worker (background.js) builds the right-click menu, fills a chosen account's code through the scripting API, answers the auto-fill script's request for a code only when the request comes from this extension's own script on a site the user allowed and the vault is unlocked, and keeps the auto-fill registrations in line with the sites the user allowed.
+The module service worker (background.js) builds the right-click menu, fills a chosen account's code through the scripting API, answers the auto-fill script's request for a code only when the request comes from this extension's own script on a site the user allowed and the vault is unlocked (the answer is the code and how long it stays valid, never account names or secrets), and keeps the auto-fill registrations in line with the sites the user allowed.
 ```
 
 ### Remote code
@@ -233,9 +235,9 @@ meaning to what the dashboard shows.
 | Financial and payment information | no | |
 | Personal communications | no | |
 | Location | no | |
-| Web history | no (see Tensions) | The vault holds the sites you chose for auto-fill, not a list of pages visited. |
-| User activity | no | No clicks, keystrokes or scrolling are recorded. |
-| Website content | no (see Tensions) | On allowed sites the script reads field attributes to find the code field; it stores and sends nothing. |
+| Web history | no (see Tensions) | The vault holds only the sites you chose for auto-fill; no list of pages visited, titles or visit times is kept. |
+| User activity | no | The extension does not monitor clicks, keystrokes, mouse movement or scrolling. The auto-fill script only compares the value of the field it filled with the code it put there, to stop when you change it. |
+| Website content | **yes** | When you click the scan button, a picture of the visible part of the current tab is decoded locally to read a QR code. On sites you allowed, the auto-fill script reads input-field attributes (and whether a field is empty) to find the code field. |
 
 **Certifications:** tick all three. The dashboard wording is **unverified** (screenshot only in the
 docs); in meaning they are: user data is not sold or transferred to third parties outside the
@@ -245,26 +247,23 @@ source: https://developer.chrome.com/docs/webstore/program-policies/limited-use,
 
 #### Tensions
 
-The disclosures can be changed later in the dashboard. Whatever you tick, PRIVACY.md, this store
-and the Edge store must say the same thing.
+The disclosures describe what the extension does. When its behaviour changes, update the ticks
+here, the Edge answers and PRIVACY.md together.
 
-- **"Nothing collected" versus "Authentication information".** One reading of the question is
+- **"Nothing collected" versus ticking what is handled on the device.** One reading of the question is
   "what leaves the device": nothing does, so nothing would be ticked, and some authenticator
   listings on the store show "will not collect or use your data". The User Data FAQ quoted above
   takes the other reading: data handled only on the device must be disclosed too. This kit
-  follows the FAQ and ticks **Authentication information**; PRIVACY.md says the same in words
-  (stored on the device, the developer receives nothing). If you tick nothing instead, reword
-  PRIVACY.md's "Data the extension stores on your device" to match.
+  follows the FAQ: the extension handles authentication information and reads website content on
+  the device, so both are ticked, and PRIVACY.md describes the same handling in words.
 - **Web history.** The FAQ counts "the domains or URLs the browser interacts with" as user data.
-  The vault stores the exact sites you chose for auto-fill, and the worker reads a page's origin
-  when you use the menu or when the auto-fill script asks for a code. Default: not ticked, because
-  this is a list of sites you chose, not a record of browsing. Tick it if the dashboard's
-  description of this box covers any stored site address, or if a reviewer reads it that way.
-- **Website content.** The FAQ lists "Website content and resources" and "Form data" as user data.
-  On an allowed site the script reads input-field attributes and whether a field is empty, and it
-  writes the code into the field; it keeps and sends nothing it read. Default: not ticked, because
-  nothing is collected from the page. Tick it if the dashboard's description covers reading page
-  content at all, or if a reviewer asks.
+  What the extension does with site addresses: the vault holds the exact sites you yourself chose
+  for auto-fill (a setting you made, shown and removable in Settings), and the worker looks at the
+  origin of the page you right-clicked or of the frame whose auto-fill script asks for a code, only
+  to decide whether to fill there. It keeps no list of pages you visit, no page titles and no
+  visit times. Default: not ticked, because none of that is browsing history. Tick it if the
+  dashboard's description of this box covers any stored site address, or if a reviewer reads it
+  that way, and keep the Edge answer the same.
 
 ### Privacy policy URL
 

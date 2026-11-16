@@ -50,7 +50,8 @@ Things to know before you move or remove it:
 ### Set a passphrase
 
 The first time you open the popup, you choose a passphrase of 8 characters or more. It encrypts
-your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened.
+your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened,
+and neither can your backups, which are encrypted with the same passphrase.
 
 ### Add an account
 
@@ -75,9 +76,17 @@ Click a code to copy it. A countdown shows when the next code starts.
 2. The first time you do this on an `https` site, a small window asks whether to fill this
    account's code automatically on that exact site. Click **Allow**, then accept the browser's
    own prompt for access to that one site. **Not now**, or declining the prompt, stores nothing.
-3. On later visits, while zauthenticator is unlocked, the code field is filled for you. If the
-   site rejects an expired code, it fills a fresh one. It never submits a form and never changes a
-   field you typed into.
+3. On later visits, while zauthenticator is unlocked, the code field is filled for you.
+
+After a fill, until you submit:
+
+- **The code is kept current.** When the filled code expires, it is replaced with the new one, at
+  most twice.
+- **A rejected code is replaced once.** If the site rejects the code, a fresh one is filled once;
+  the same code is never filled twice.
+- **It is capped.** In one tab, a site gets at most 3 codes in 5 minutes.
+- **It stops** as soon as you type or delete in the field yourself, when you leave the page, or
+  when zauthenticator locks. It never submits a form.
 
 ![The window that asks whether to fill codes automatically on a site](docs/images/popup-autofill-bind.png)
 
@@ -118,6 +127,14 @@ session memory until you lock or the browser quits; after 15 minutes without use
 the next time anything asks for it (see the limits below). Nothing is sent to the developer or
 anyone else; there is no server.
 
+**What it reads from web pages.** Only when you click the button to scan
+the current page, the extension takes one picture of the visible part of that tab (the browser
+allows this for the tab where you just clicked the toolbar icon). The picture is decoded in the
+popup by the bundled QR decoder and held in memory only for that; it is never stored or sent.
+Only the account found in it, if it is a valid two-factor QR code, is added to your vault. On a
+site where you allowed auto-fill, the auto-fill script reads the attributes of the page's input
+fields (such as name, label and placeholder) to find the code field, and keeps none of it.
+
 **What the browser itself records.** Outside the encrypted vault, the browser keeps the list of
 sites you gave the extension access to (shown on the extension's details page) and the list of
 sites its auto-fill script is registered for. Someone who can read your browser profile can see
@@ -140,7 +157,10 @@ secret key, the account name and your passphrase never reach the page.
 
 **Limits worth knowing:**
 
-- The passphrase cannot be recovered, and it cannot be changed yet (planned).
+- The passphrase cannot be recovered, and it cannot be changed yet (planned). An exported backup
+  is encrypted with the same passphrase, so restoring it needs that passphrase too: a backup
+  protects you against losing the device or the browser profile, not against forgetting the
+  passphrase.
 - The computer's clock is the only time source. If codes are rejected, make sure the date and
   time are set automatically.
 - There is no sync, by design. Each browser profile has its own vault; use export and import to
@@ -176,7 +196,7 @@ the release workflow runs the same job on the tagged commit before it publishes 
 | No remote or dynamic code | `script-src 'self'` without `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`; no `eval(`, `new Function`, `importScripts`, string timers, `javascript:` URLs, inline scripts or `on*=` handlers. | `npm run check` |
 | Encrypted at rest | AES-GCM-256 with a key from PBKDF2-SHA-256 (600,000 iterations) over the NFC-normalized passphrase. `chrome.storage.local` holds only `{ v, kdf, iv, ct }`; auto-fill sites are inside the vault. | `npm run e2e` reads storage and the exported backup, and fails if a test secret appears in base32, hex, base64(url), as a byte list or raw bytes, if storage holds any key besides `local.vault` and `session.vaultKey`/`lastActiveAt`/`pendingBind`, or if a lock leaves anything in session storage. |
 | Minimal permissions | `storage`, `activeTab`, `contextMenus`, `scripting`, and optional `https://*/*` granted one site at a time. No `host_permissions`, no content scripts in the manifest, no web-accessible resources; the one content script (`content/autofill.js` with `lib/fieldfind.js`) is registered at run time for the allowed sites only. | `npm run check` fails on any other permission or host pattern, on those manifest keys, on a background other than the `background.js` module worker, on `chrome.scripting` outside `lib/autofill-worker.js`, and on `chrome.permissions` outside that file and `popup/popup.js`. |
-| Auto-fill only where you allowed it | Sites are bound by exact origin. The worker answers only this extension's own content script, from a frame whose origin is bound, while the vault is unlocked and not idle, and answers with the digits only. Auto-fill never submits a form and does not count as activity for the 15-minute lock. | `npm run e2e` part 3: a menu fill types the reference code; **Allow** stores the binding and registers the script for that origin only; a later visit is filled; another origin with the same page, a locked or idle vault, a removed site and a deleted account get nothing; no form is submitted. |
+| Auto-fill only where you allowed it | Sites are bound by exact origin. The worker answers only this extension's own content script, from a frame whose origin is bound, while the vault is unlocked and not idle, and answers with the code and how long it stays valid, never account names or secrets. Auto-fill never submits a form and does not count as activity for the 15-minute lock. | `npm run e2e` part 3: a menu fill types the reference code; **Allow** stores the binding and registers the script for that origin only; a later visit is filled; another origin with the same page, a locked or idle vault, a removed site and a deleted account get nothing; no form is submitted. |
 | Pinned third-party code | The only third-party code is the QR decoder jsQR 1.4.0, vendored unmodified, pinned by sha256, with its license beside it. | `cd extension/vendor && shasum -a 256 -c SHA256SUMS`; `npm run check` verifies the same. See [Third-party code](#third-party-code). |
 
 **Limits of these checks.** The gate reads source text: it is a tripwire for this repository's
@@ -279,14 +299,20 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 ### 사용법
 
 - **처음 열 때** 마스터 비밀번호(8자 이상)를 만들어요. 비밀번호는 복구할 수 없으니 잊지 않도록 해 주세요.
+  백업 파일도 같은 비밀번호로 암호화되기 때문에, 비밀번호를 잊으면 백업으로도 되살릴 수 없어요. 백업은 기기나
+  브라우저 프로필을 잃었을 때를 위한 거예요.
 - **계정 추가**: 지금 보고 있는 페이지의 QR 코드(툴바 아이콘을 눌러 스캔), QR 이미지, `otpauth://` 링크,
   설정 키 직접 입력 중 편한 방법을 쓰면 돼요.
 - **코드 복사**: 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
 - **사이트에 입력**: 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 **zauthenticator**에서 계정을
   고르면 현재 코드가 입력돼요(제출은 하지 않아요). `https` 사이트에서 처음 이렇게 하면 앞으로 이 사이트에서
   자동으로 입력할지 묻는 작은 창이 떠요. **허용**을 누르고 브라우저가 그 사이트 하나에 접근해도 되는지 물을 때
-  동의하면, 다음부터는 잠금이 풀려 있는 동안 코드가 자동으로 입력돼요. 사이트가 시간이 지난 코드를
-  거부하면 새 코드로 다시 입력해요. **나중에**를 누르거나 브라우저 권한을 거절하면 아무것도 저장하지 않아요.
+  동의하면, 다음부터는 잠금이 풀려 있는 동안 코드가 자동으로 입력돼요. **나중에**를 누르거나 브라우저 권한을
+  거절하면 아무것도 저장하지 않아요.
+- 자동으로 입력한 뒤 제출하기 전까지는 이렇게 해요. 입력한 코드가 만료되면 새 코드로 바꿔요(최대 두 번).
+  사이트가 코드를 거부하면 새 코드로 한 번 다시 입력하고, 같은 코드를 두 번 넣지는 않아요. 한 탭에서 한
+  사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 그 페이지를 떠나면, 잠기면 바로
+  멈춰요. 폼을 제출하지는 않아요.
 - 자동 입력은 허용한 바로 그 사이트(같은 주소·포트)에서만 해요. 하위 도메인이나 비슷한 도메인에는
   입력하지 않아요. 코드 입력란이라는 표시가 있는 칸만 채우고, PIN이나 우편번호처럼 모양만 비슷한 칸은
   건드리지 않으니 그런 칸에는 오른쪽 클릭 메뉴로 넣어 주세요.
@@ -304,6 +330,10 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 - 브라우저는 확장 프로그램이 접근할 수 있는 사이트 목록과 자동 입력 스크립트가 등록된 사이트
   목록을 보관함 밖에 따로 기록해요. 브라우저 프로필을 읽을 수 있는 사람은 이 사이트 이름을 볼 수 있어요.
 - 사이트가 받는 건 입력된 6–8자리 코드뿐이에요. 그 사이트의 스크립트는 직접 입력했을 때처럼 이 코드를 읽을 수 있어요.
+- 팝업에서 페이지 스캔 버튼을 누를 때만 지금 탭의 보이는 부분을 한 장 캡처해요. 이 이미지는 팝업 안에서 QR
+  디코더로 읽는 동안만 메모리에 있고, 저장하거나 보내지 않아요. 올바른 2단계 인증 QR 코드라면 거기서 찾은
+  계정만 보관함에 추가해요. 자동 입력을 허용한 사이트에서는 코드 입력란을 찾으려고 입력란의 속성(이름,
+  레이블, placeholder 등)을 읽어요.
 - 권한: `storage`(암호화된 보관함 저장), `activeTab`(툴바 아이콘이나 오른쪽 클릭 메뉴를 쓴 그 탭에서만 QR
   스캔·코드 입력), `contextMenus`(오른쪽 클릭 메뉴), `scripting`(코드 입력과 자동 입력 등록), 그리고 허용한
   사이트 하나씩만 받는 선택적 `https` 사이트 접근이에요. 설치할 때는 어떤 사이트 권한도 받지 않아요.
