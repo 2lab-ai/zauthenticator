@@ -445,7 +445,7 @@
     }
   },
   "errImportTooLarge": {
-    "message": "1MiB보다 큰 파일이라 zauthenticator 백업일 수 없어요."
+    "message": "2MiB보다 큰 파일이라 zauthenticator 백업일 수 없어요."
   },
   "invalidCount": {
     "message": "올바르지 않은 항목 $COUNT$개는 건너뛰었어요.",
