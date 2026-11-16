@@ -277,6 +277,47 @@ test('split boxes with a sign of a code are found: on a box, or on the group', (
   assert.deepEqual(found(`<div>${bareBoxes(6, '', 'p')}</div><div aria-label="Verification code">${bareBoxes(6)}</div>`), labels(6));
 });
 
+// A group label or id with a word for another number (the code went to a phone) skips the run,
+// whatever sign of a code the group or its boxes carry; the same whole words as for one field.
+test('rule 3 skips a run whose group aria-label or id names another number', () => {
+  const phone = 'aria-label="Verification code sent to your phone"';
+  assert.equal(found(`<div ${phone}>${bareBoxes(6)}</div>`), null);
+  assert.equal(found(`<div ${phone}>${boxes(6)}</div>`), null);
+  assert.equal(found(`<div ${phone}>${bareBoxes(6, ' autocomplete="one-time-code"')}</div>`), null);
+  assert.equal(found(`<div id="phone-otp">${bareBoxes(6)}</div>`), null);
+  // Each box in its own wrapper: the row is the group.
+  const wrapped = Array.from({ length: 6 }, (_, i) => `<div class="cell"><input maxlength="1" data-t="b${i + 1}"></div>`).join('');
+  assert.equal(found(`<div class="row" aria-label="Enter the verification code we sent to your mobile">${wrapped}</div>`), null);
+  // The skipped run is passed over, and a code run after it is found.
+  assert.deepEqual(found(`<div ${phone}>${bareBoxes(6, '', 'p')}</div><div aria-label="Verification code">${bareBoxes(6)}</div>`), labels(6));
+  // The same in plain attribute maps.
+  const sixBoxes = (attrs) => Array.from({ length: 6 }, () => ({ attrs: { maxlength: '1', ...attrs }, value: '', visible: true, group: 'g' }));
+  assert.equal(ff.findOtpField(sixBoxes({ 'group-aria-label': 'Verification code sent to your phone' })), null);
+  assert.equal(ff.findOtpField(sixBoxes({ 'group-id': 'otp-phone' })), null);
+});
+
+test('rule 3 still takes a run whose group names a code and no other number', () => {
+  assert.deepEqual(found(`<div aria-label="Verification code">${bareBoxes(6)}</div>`), labels(6));
+  // Whole words only: today is not day.
+  assert.deepEqual(found(`<div aria-label="Verification code for today">${bareBoxes(6)}</div>`), labels(6));
+  // Rule 2 still does not read the group label, for or against a lone field.
+  const lone = { attrs: { name: 'otp', 'group-aria-label': 'Code sent to your phone' }, value: '', visible: true, group: 'g' };
+  assert.deepEqual(ff.findOtpField([lone]), [0]);
+});
+
+// Hidden inputs (type=hidden, or not shown) say nothing for a run and do not break it.
+test('a hidden input inside a run of boxes is passed over', () => {
+  const run = (middle) => Array.from({ length: 6 }, (_, i) => `<input maxlength="1" data-t="b${i + 1}">`).toSpliced(3, 0, middle).join('');
+  assert.deepEqual(found(`<div aria-label="Verification code">${run('<input type="hidden" name="joined">')}</div>`), labels(6));
+  assert.deepEqual(found(`<div aria-label="Verification code">${run('<input type="password" style="display: none">')}</div>`), labels(6));
+  // A shown input of another type after the run ends it; the run is still found.
+  assert.deepEqual(found(`<div aria-label="Verification code">${run('')}<input type="password"></div>`), labels(6));
+  // Plain attribute maps: type=hidden is passed over even when described as shown.
+  const box = (attrs = { maxlength: '1', 'group-id': 'otp' }) => ({ attrs, value: '', visible: true, group: 'g' });
+  const fields = [box(), box(), box(), box({ type: 'hidden' }), box(), box(), box()];
+  assert.deepEqual(ff.findOtpField(fields), [0, 1, 2, 4, 5, 6]);
+});
+
 test('the rules apply in order: one-time-code, then names, then boxes', () => {
   assert.deepEqual(found('<input name="verification" data-t="named"><input autocomplete="one-time-code" data-t="otc">'), ['otc']);
   assert.deepEqual(found(`<div>${boxes(6)}</div><input name="otp" data-t="named">`), ['named']);
@@ -330,6 +371,16 @@ test('box runs that are too short, too long, broken or partly typed are skipped'
   assert.equal(found(`<div>${boxes(3)}</div><div>${boxes(3)}</div>`), null);
   // A visible text field in the middle ends the run.
   assert.equal(found(`<div>${boxes(3)}<input name="x">${boxes(3)}</div>`), null);
+});
+
+test('a shown input of a type no code goes into (password, email, ...) ends a run of boxes', () => {
+  const otpBoxes = (from) => Array.from({ length: 3 }, (_, i) => `<input type="text" maxlength="1" aria-label="OTP" data-t="b${from + i}">`).join('');
+  for (const middle of ['<input type="password">', '<input type="password" maxlength="1">', '<input type="email">', '<input type="search">', '<input type="checkbox">']) {
+    assert.equal(found(`<div aria-label="OTP">${otpBoxes(1)}${middle}${otpBoxes(4)}</div>`), null, middle);
+  }
+  // The same in plain attribute maps.
+  const box = (attrs = { maxlength: '1', 'aria-label': 'OTP' }) => ({ attrs, value: '', visible: true, group: 'g' });
+  assert.equal(ff.findOtpField([box(), box(), box(), box({ type: 'password' }), box(), box(), box()]), null);
 });
 
 test('findOtpField reads plain attribute maps (no DOM needed)', () => {
