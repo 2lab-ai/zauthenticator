@@ -1,16 +1,16 @@
 // Image → QR text, using the vendored jsQR build (../vendor/jsQR.js, loaded by popup.html as a
 // classic script, which defines globalThis.jsQR). Images are decoded locally from a Blob or a
-// data: URL with createImageBitmap (or an <img> on a blob: URL as a fallback) and drawn onto a
-// canvas; nothing here touches the network.
+// data: URL with createImageBitmap and drawn onto a canvas; nothing here touches the network.
 //
 // Size limits, all checked before the image is decoded:
 // - at most MAX_IMAGE_BYTES of file (a data: URL is measured by its length first);
-// - PNG, JPEG, GIF, WebP and BMP headers are read (imagesize.js) and images above
-//   MAX_IMAGE_PIXELS are refused; a recognized header whose size cannot be read is refused too;
-// - larger images of those formats are decoded straight to a bitmap at most FULL_PASS_MAX per
-//   side, so no full-resolution bitmap is kept; every canvas is at most FULL_PASS_MAX per side.
-// Other formats (SVG, AVIF, ICO, ...) are bounded by the byte limit, and their decoded size is
-// checked before any canvas is made.
+// - only PNG, JPEG, GIF, WebP and BMP are decoded: their headers are read (imagesize.js) and
+//   images above MAX_IMAGE_PIXELS are refused; a recognized header whose size cannot be read is
+//   refused too;
+// - any other format (SVG, AVIF, ICO, ...) is refused before any decoder runs: its decoded size
+//   cannot be read in advance, and the byte limit does not bound it;
+// - larger images are decoded straight to a bitmap at most FULL_PASS_MAX per side, so no
+//   full-resolution bitmap is kept; every canvas is at most FULL_PASS_MAX per side.
 
 import { imageSize } from './imagesize.js';
 
@@ -22,7 +22,7 @@ export const MAX_IMAGE_PIXELS = 50000000;
 // Longest side for the first, cheap pass. Full-size tab screenshots on high-DPI screens are
 // several megapixels; a QR code shown on a page is still well resolved after downscaling.
 const FIRST_PASS_MAX = 1280;
-// Longest side for the full-resolution pass, and of any decoded bitmap of a sniffed format.
+// Longest side for the full-resolution pass, and of any decoded bitmap.
 const FULL_PASS_MAX = 4096;
 // Images smaller than this also get an upscaled pass: tiny QR images decode more reliably
 // when each module covers a few pixels.
@@ -33,7 +33,7 @@ const HEADER_BYTES = 64 * 1024;
 const MAX_DATA_URL_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 1024;
 
 export class QRError extends Error {
-  // code ∈ 'no-qr' | 'bad-image' | 'too-large' | 'decoder-missing'
+  // code ∈ 'no-qr' | 'bad-image' | 'too-large' | 'unsupported-format' | 'decoder-missing'
   constructor(code) {
     super(code);
     this.name = 'QRError';
@@ -52,10 +52,11 @@ export async function decodeQR(source) {
   if (blob.size > MAX_IMAGE_BYTES) throw new QRError('too-large');
 
   const size = await readSize(blob);
-  if (size && size.width === null) throw new QRError('bad-image');
-  if (size && size.width * size.height > MAX_IMAGE_PIXELS) throw new QRError('too-large');
+  if (!size) throw new QRError('unsupported-format');
+  if (size.width === null) throw new QRError('bad-image');
+  if (size.width * size.height > MAX_IMAGE_PIXELS) throw new QRError('too-large');
 
-  const image = size ? await loadSniffed(blob, size) : await loadOther(blob);
+  const image = await loadSniffed(blob, size);
   try {
     for (const scale of passScales(image.width, image.height)) {
       const width = Math.max(1, Math.round(image.width * scale));
@@ -102,7 +103,8 @@ function makeCanvas(width, height) {
   return canvas;
 }
 
-// → imageSize() result for the file, reading more than the first bytes only when needed.
+// → imageSize() result for the file (null: not a format whose size it reads), reading more than
+// the first bytes only when needed.
 async function readSize(blob) {
   try {
     const size = imageSize(new Uint8Array(await blob.slice(0, HEADER_BYTES).arrayBuffer()));
@@ -150,28 +152,6 @@ async function loadSniffed(blob, { width, height }) {
     throw new QRError('bad-image');
   }
   return checked({ source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() });
-}
-
-// Any other format: bounded by MAX_IMAGE_BYTES only until it is decoded, then by its size.
-async function loadOther(blob) {
-  try {
-    const bitmap = await createImageBitmap(blob);
-    return checked({ source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() });
-  } catch (error) {
-    if (error instanceof QRError) throw error;
-    // createImageBitmap rejects some formats (for example SVG); an <img> decodes them.
-  }
-  const url = URL.createObjectURL(blob);
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    return checked({ source: img, width: img.naturalWidth, height: img.naturalHeight, close: () => {} });
-  } catch (error) {
-    throw error instanceof QRError ? error : new QRError('bad-image');
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 // Refuses an empty or oversized decoded image (releasing it) before any canvas is made.

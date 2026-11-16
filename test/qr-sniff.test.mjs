@@ -316,26 +316,58 @@ test('decodeQR does not fall back to <img> for a sniffed format the bitmap decod
   assert.equal(calls.images, 0);
 });
 
-test('decodeQR bounds the <img> fallback for other formats', async (t) => {
-  const svg = new Blob(['<svg xmlns="x"/>'], { type: 'image/svg+xml' });
-  const huge = stubBrowser(t, { bitmap: () => new Error('unsupported'), img: { naturalWidth: 10000, naturalHeight: 10000 } });
-  await assert.rejects(decodeQR(svg), isQRError('too-large'));
-  assert.equal(huge.images, 1);
-});
-
-test('decodeQR draws an <img> fallback image on a bounded canvas', async (t) => {
-  const svg = new Blob(['<svg xmlns="x"/>'], { type: 'image/svg+xml' });
-  const calls = stubBrowser(t, { bitmap: () => new Error('unsupported'), img: { naturalWidth: 6000, naturalHeight: 3000 } });
-  assert.equal(await decodeQR(svg), OTPAUTH);
-  assert.equal(calls.images, 1);
-  for (const [w, h] of calls.canvases) assert.ok(w <= 4096 && h <= 4096, `canvas ${w}x${h}`);
-});
-
-test('decodeQR rejects an unknown-format bitmap above 50 megapixels after decoding', async (t) => {
-  const calls = stubBrowser(t, { bitmap: () => ({ width: 10000, height: 10000 }) });
-  await assert.rejects(decodeQR(new Blob([bytes([0, 0, 0, 0x1c, ...ascii('ftypavif')])])), isQRError('too-large'));
-  assert.equal(calls.closed, 1);
+test('decodeQR releases a decoded bitmap that is empty or above 50 megapixels, before any canvas', async (t) => {
+  // A browser that decodes to another size than the header says: the bitmap is still checked.
+  const sizes = [{ width: 10000, height: 10000 }, { width: 0, height: 0 }];
+  const calls = stubBrowser(t, { bitmap: () => sizes.shift() });
+  await assert.rejects(decodeQR(new Blob([png(100, 100)])), isQRError('too-large'));
+  await assert.rejects(decodeQR(new Blob([png(100, 100)])), isQRError('bad-image'));
+  assert.equal(calls.createImageBitmap.length, 2);
+  assert.equal(calls.closed, 2);
   assert.equal(calls.canvases.length, 0);
+});
+
+// Formats imageSize does not read have no size to check before decoding (the byte limit does not
+// bound the decoded size), so no decoder may see them. The stubbed decoders would succeed here,
+// and a PNG afterwards shows the createImageBitmap spy records calls.
+const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100000" height="100000"/>';
+
+test('decodeQR refuses an SVG before any decoder runs', async (t) => {
+  const calls = stubBrowser(t, { img: { naturalWidth: 100, naturalHeight: 100 } });
+  await assert.rejects(decodeQR(new Blob([SVG], { type: 'image/svg+xml' })), isQRError('unsupported-format'));
+  assert.equal(calls.createImageBitmap.length, 0);
+  assert.equal(calls.images, 0);
+  const png100 = new Blob([png(100, 100)]);
+  assert.equal(await decodeQR(png100), OTPAUTH);
+  assert.deepEqual(calls.createImageBitmap, [[png100]]);
+  assert.equal(calls.images, 0);
+});
+
+test('decodeQR refuses an SVG the bitmap decoder rejects, without trying <img>', async (t) => {
+  const calls = stubBrowser(t, { bitmap: () => new Error('unsupported'), img: { naturalWidth: 100, naturalHeight: 100 } });
+  await assert.rejects(decodeQR(new Blob([SVG], { type: 'image/svg+xml' })), isQRError('unsupported-format'));
+  await assert.rejects(decodeQR(`data:image/svg+xml,${encodeURIComponent(SVG)}`), isQRError('unsupported-format'));
+  assert.equal(calls.createImageBitmap.length, 0);
+  assert.equal(calls.images, 0);
+  new Image(); // the Image spy counts constructions
+  assert.equal(calls.images, 1);
+});
+
+test('decodeQR refuses unknown bytes before any decoder runs', async (t) => {
+  const calls = stubBrowser(t, { img: { naturalWidth: 100, naturalHeight: 100 } });
+  for (const sample of [
+    bytes([0, 0, 0, 0x1c, ...ascii('ftypavif'), 0, 0, 0, 0]), // AVIF
+    bytes([0, 0, 1, 0, 1, 0, 16, 16, 0, 0, 1, 0, 32, 0]), // ICO
+    bytes(ascii('RIFF'), u32le(4), ascii('WAVE'), ascii('fmt ')), // RIFF, not WebP
+    bytes(ascii('not an image at all')),
+  ]) {
+    await assert.rejects(decodeQR(new Blob([sample])), isQRError('unsupported-format'));
+  }
+  assert.equal(calls.createImageBitmap.length, 0);
+  assert.equal(calls.images, 0);
+  const png100 = new Blob([png(100, 100)]);
+  assert.equal(await decodeQR(png100), OTPAUTH);
+  assert.deepEqual(calls.createImageBitmap, [[png100]]);
 });
 
 test('decodeQR rejects an oversized data: URL before decoding its base64', async (t) => {

@@ -308,6 +308,9 @@
   "errImageTooLarge": {
     "message": "That image is too large to scan (limit: 20 MB and 50 megapixels)."
   },
+  "errImageFormat": {
+    "message": "Use a PNG, JPEG, GIF, WebP or BMP image."
+  },
   "errNotImage": {
     "message": "Choose an image file (PNG, JPEG, …)."
   },
