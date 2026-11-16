@@ -433,12 +433,15 @@ function navigationHits(text, label, rel) {
 // MANIFEST_POLICY.permissionsFiles other than the members in permissionsMembersAnywhere.
 // Like the chrome.tabs check, any reference counts, not only a call, and a reference without a
 // member (an alias, a computed access) is refused. Inside scriptingFiles only the methods in
-// scriptingMethods may be named: a named member is checked here, on the raw text (comments
-// included), and chrome.scripting without a member on the file's tokens (so a comment that
-// mentions chrome.scripting does not count). → { scripting: [hit], permissions: [hit] }
+// scriptingMethods may be named, checked twice: on the raw text (comments included; the worker's
+// `/` guess cannot hide a member there), and on the file's tokens, which also see a member split
+// off by a comment (chrome.scripting /* x */ .insertCSS) and refuse chrome.scripting without a
+// member (a comment that mentions chrome.scripting does not count there).
+// → { scripting: [hit], permissions: [hit] }
 function scopedApiHits(text, label, rel) {
   const hits = { scripting: [], permissions: [] };
   const { scriptingFiles, scriptingMethods } = MANIFEST_POLICY;
+  const notPinned = (where, member) => `${where} chrome.scripting.${member} is not one of scriptingMethods (${scriptingMethods.join(', ')})`;
   SCOPED_APIS.lastIndex = 0;
   for (const m of text.matchAll(SCOPED_APIS)) {
     const [, area, member] = m;
@@ -446,7 +449,7 @@ function scopedApiHits(text, label, rel) {
     const shown = member ? `chrome.${area}.${member}` : `chrome.${area} (alias or computed access)`;
     if (area === 'scripting') {
       if (!scriptingFiles.includes(rel)) hits.scripting.push(`${where} ${shown} outside ${scriptingFiles.join(', ')}`);
-      else if (member && !scriptingMethods.includes(member)) hits.scripting.push(`${where} ${shown} is not one of scriptingMethods (${scriptingMethods.join(', ')})`);
+      else if (member && !scriptingMethods.includes(member)) hits.scripting.push(notPinned(where, member));
     } else if (!MANIFEST_POLICY.permissionsFiles.includes(rel) && !(member && MANIFEST_POLICY.permissionsMembersAnywhere.includes(member))) {
       hits.permissions.push(`${where} ${shown} outside ${MANIFEST_POLICY.permissionsFiles.join(', ')}`);
     }
@@ -455,10 +458,13 @@ function scopedApiHits(text, label, rel) {
     const { tokens } = jsTokens(text);
     tokens.forEach((tok, k) => {
       if (tok.t !== 'id' || tok.v !== 'chrome' || !isDot(tokens[k + 1]) || tokens[k + 2]?.v !== 'scripting' || tokens[k + 2].t !== 'id') return;
-      if (!(isDot(tokens[k + 3]) && tokens[k + 4]?.t === 'id')) {
-        hits.scripting.push(`${label}:${lineOf(text, tok.i)} chrome.scripting used other than as chrome.scripting.<method> (alias or computed access)`);
-      }
+      const where = `${label}:${lineOf(text, tok.i)}`;
+      const member = isDot(tokens[k + 3]) && tokens[k + 4]?.t === 'id' ? tokens[k + 4].v : null;
+      if (!member) hits.scripting.push(`${where} chrome.scripting used other than as chrome.scripting.<method> (alias or computed access)`);
+      else if (!scriptingMethods.includes(member)) hits.scripting.push(notPinned(where, member));
     });
+    // A member both scans see is reported once.
+    hits.scripting = [...new Set(hits.scripting)];
   }
   return hits;
 }
@@ -2304,6 +2310,11 @@ const CASES = [
   ['scripting-alias-in-worker', appendJs('lib/autofill-worker.js', 'const s = chrome.scripting;\nexport const style = (o) => s.insertCSS(o);\n'), ['scripting-api'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
   ['scripting-computed-in-worker', appendJs('lib/autofill-worker.js', "export const style = (o) => chrome.scripting['insertCSS'](o);\n"), ['scripting-api'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
   ['scripting-destructure-in-worker', appendJs('lib/autofill-worker.js', 'const { insertCSS } = chrome.scripting;\n'), ['scripting-api'], /chrome\.scripting used other than/],
+  // A comment between chrome.scripting and the method hides the member from the raw-text scan.
+  ['scripting-comment-before-dot-in-worker', appendJs('lib/autofill-worker.js', 'export const style = (o) => chrome.scripting /* x */ .insertCSS(o);\n'), ['scripting-api'], /chrome\.scripting\.insertCSS is not one of scriptingMethods/],
+  ['scripting-comment-after-dot-in-worker', appendJs('lib/autofill-worker.js', 'export const style = (o) => chrome.scripting./* x */insertCSS(o);\n'), ['scripting-api'], /chrome\.scripting\.insertCSS is not one of scriptingMethods/],
+  ['scripting-line-comment-in-worker', appendJs('lib/autofill-worker.js', 'export const unstyle = (o) => chrome.scripting // x\n  .removeCSS(o);\n'), ['scripting-api'], /chrome\.scripting\.removeCSS is not one of scriptingMethods/],
+  ['ok-scripting-method-after-comment-in-worker', appendJs('lib/autofill-worker.js', 'export const ids = () => chrome.scripting /* list */ .getRegisteredContentScripts();\n'), []],
   ['scripting-css-key-in-registration', editWorker('js: CONTENT_SCRIPTS', "js: CONTENT_SCRIPTS, css: ['popup/popup.css']"), ['content-script-sinks'], /css in a scripting file/],
   ['scripting-css-member-in-worker', appendJs('lib/autofill-worker.js', "export function widen(script) { script.css = ['popup/popup.css']; }\n"), ['content-script-sinks'], /css in a scripting file/],
   // A worker comment may name chrome.scripting without a method (the real one does).
