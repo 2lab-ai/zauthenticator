@@ -37,7 +37,8 @@ Status: shipped (2026-11-16, v0.2.0) — the implemented auto-fill contract, not
   granted per origin at bind time. No static `content_scripts`, no `host_permissions`.
 - The worker validates every content-script message: `sender.id === chrome.runtime.id`,
   `sender.origin` (fallback `new URL(sender.url).origin`) has a binding, vault unlocked, not idle.
-  Only the 6–8 digit code crosses into the page; secrets, labels and the key never do.
+  Only the 6–8 digit code (and, to the content script, how many milliseconds it stays valid) crosses
+  into the page; secrets, labels and the key never do.
 - Bindings live inside the vault data (encrypted). The browser itself still records granted
   origins and registered script matches — stated in the README.
 - Field detection is a heuristic; the script never submits forms and fills a field only if it is
@@ -98,8 +99,9 @@ Status: shipped (2026-11-16, v0.2.0) — the implemented auto-fill contract, not
    passed over, any other shown non-code input ends it. Rules 2–3 skip a field whose names contain a whole word for
    another number (zip, postal, phone, tel, mobile, amount, price, card, cc, cvv, cvc, csc, birth,
    bday, dob, date, year, month, day, search, account, qty, quantity, captcha, …) or whose
-   `autocomplete` is anything but empty/on/off/one-time-code. One fill per page load: after the first
-   fill the script stops. Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); asks once per field.
+   `autocomplete` is anything but empty/on/off/one-time-code. After a fill the script follows only the
+   filled field(s) (see "Fresh code and retry after a failed attempt": keep-fresh ≤ 3 replacements, ≤ 4 fills,
+   never the same code twice into a rejected field, 5-minute window); no other field is filled while they are present. Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); one request in flight at a time.
 3. Flow: script → `chrome.runtime.sendMessage({type:'autofill-code'})` → worker validates sender
    (rules above) → `vault.open` → binding → account → `totp` → `{code}` → script sets value(s) +
    `input`/`change` events, once per field per page load.
@@ -203,3 +205,8 @@ Contract (S3 additions):
   still at most one filled field set at a time (no other candidate field is filled while the filled one
   is present), still never submits, and auto-fill still never refreshes `lastActiveAt`.
 - Locked/idle/unbound reply (`{code: null}`) still ends the watch.
+- Decided 2026-11-17 (owner-side calls by the dispatcher): a refill never puts the same code twice into a
+  field after it was rejected/emptied — if the reply equals the code last put there, wait for the next
+  period and fill that one (an expired code gets the current, different code at once); keep-fresh is capped
+  at 3 replacements per filled field set (sites that submit on `input` would otherwise resubmit every
+  period). A field the user empties by hand is refilled like a page-emptied one (indistinguishable).
