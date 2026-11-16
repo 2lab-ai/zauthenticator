@@ -13,7 +13,7 @@
 // the next period's code is asked for instead (3 such waits in a row end the watch). Fields that
 // appear or become visible later are looked for during the first minute. After the first fill the
 // filled field is followed for 5 minutes, while the page stays at the same path: when its code
-// expires while it still holds it, the next code replaces it (twice at most per field set); when
+// expires while it still holds it, the next code replaces it (once per field set); when
 // the page empties it or replaces it with a new code field (a rejected code), it is filled once
 // more with a current code. A field is written only while it is empty or holds what this script
 // put there. The user typing into or deleting the filled code, or the worker answering with no
@@ -33,8 +33,9 @@
   const MAX_FILLS = 2;
   // Replacements of a code that expired untouched, per filled field set (refilling the same set
   // does not start a new count): then the code is left as is. A site that submits on input would
-  // otherwise get a new attempt every period.
-  const MAX_REFRESHES = 2;
+  // otherwise get a new attempt every period. One, so that the first fill, one replacement and
+  // the one retry fit in the worker's 3 codes per tab (lib/autofill-worker.js MAX_SERVED).
+  const MAX_REFRESHES = 1;
   // Less than this left of a code's period: too little to submit it.
   const LATE_MS = 3000;
   // Waits for the next period in a row without a fill (late codes, the worker saying wait, the
