@@ -98,6 +98,17 @@ test('tampered ciphertext or IV rejects', async () => {
   }
 });
 
+test('records still open after storage reorders their keys', async () => {
+  const { record, rawKey } = await create(PASS, DATA, FAST);
+  const { salt, iterations, hash, name } = record.kdf;
+  const reordered = JSON.parse(JSON.stringify({
+    ct: record.ct, iv: record.iv, kdf: { salt, iterations, hash, name }, v: record.v,
+  }));
+  assert.deepEqual((await unlock(reordered, PASS)).data, DATA);
+  assert.deepEqual(await open(rawKey, reordered), DATA);
+  assert.deepEqual(await open(rawKey, await seal(rawKey, reordered, DATA)), DATA);
+});
+
 test('tampered kdf.iterations or salt rejects in unlock', async () => {
   const { record } = await create(PASS, DATA, FAST);
   const iterations = { ...record, kdf: { ...record.kdf, iterations: 999 } };

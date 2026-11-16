@@ -9,6 +9,7 @@
 //   {"v":1,"kdf":{"name":"PBKDF2","hash":"SHA-256","iterations":<n>,"salt":"<b64>"}}
 // (exactly this key order, no whitespace), so editing the header breaks decryption.
 
+/** PBKDF2-SHA-256 iteration count used by create() when none is given. */
 export const DEFAULT_ITERATIONS = 600000;
 
 const VERSION = 1;
