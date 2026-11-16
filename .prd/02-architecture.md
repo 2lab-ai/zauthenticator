@@ -75,7 +75,7 @@ only, cleared when the browser session ends or on Lock).
 ```
 
 No background service worker in v0.1. `connect-src 'none'` also blocks `fetch(dataURL)`, so
-images are decoded through `<img>`/`createImageBitmap` on a Blob, never `fetch`.
+images are decoded with `createImageBitmap` on a Blob (never `fetch`, never `<img>`), and only formats whose size is read from the header first (see Round 3).
 
 ## Popup DOM contract (the e2e test drives these ids)
 
