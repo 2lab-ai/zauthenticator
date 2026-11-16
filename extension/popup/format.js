@@ -9,45 +9,55 @@ export function groupCode(code) {
   return `${code.slice(0, cut)} ${code.slice(cut)}`;
 }
 
+// A stored account field as text: a string as is, a finite number in decimal, anything else
+// ''. Never throws, so no stored value (a hand-edited vault can hold any JSON) can stop the
+// list from showing.
+export function text(value) {
+  if (typeof value === 'string') return value;
+  if (Number.isFinite(value)) return String(value);
+  return '';
+}
+
 // Canonical form of a base32 secret, so "jbsw y3dp" and "JBSWY3DP" compare equal.
 export function canonicalSecret(secret) {
-  const text = String(secret ?? '');
+  const raw = text(secret);
   try {
-    return base32.encode(base32.decode(text));
+    return base32.encode(base32.decode(raw));
   } catch {
-    return text.replace(/[\s=-]/g, '').toUpperCase();
+    return raw.replace(/[\s=-]/g, '').toUpperCase();
   }
 }
 
 // Two entries are duplicates when secret, issuer, label, algorithm, digits and period all
 // match, compared in canonical form ('sha-256' = 'SHA256', '8' = 8, missing = the default).
-// An entry that is not a valid account is compared by its raw fields.
+// Issuer, label and secret are compared as text() shows them. An entry that is not a valid
+// account is compared by its raw fields.
 export function duplicateKey(account) {
   let a = account !== null && typeof account === 'object' ? account : {};
   try {
-    a = normalize(a);
+    a = normalize({ ...a, issuer: text(a.issuer), label: text(a.label), secret: text(a.secret) });
   } catch {
     // keep the raw fields
   }
   return JSON.stringify([
     canonicalSecret(a.secret),
-    a.issuer ?? '',
-    a.label ?? '',
-    a.algorithm ?? '',
-    a.digits ?? '',
-    a.period ?? '',
+    text(a.issuer),
+    text(a.label),
+    text(a.algorithm),
+    text(a.digits),
+    text(a.period),
   ]);
 }
 
 export function matchesQuery(account, query) {
   const q = query.trim().toLocaleLowerCase();
   if (!q) return true;
-  return `${account.issuer ?? ''}\n${account.label ?? ''}`.toLocaleLowerCase().includes(q);
+  return `${text(account.issuer)}\n${text(account.label)}`.toLocaleLowerCase().includes(q);
 }
 
 export function displayName(account) {
-  const issuer = account.issuer ?? '';
-  const label = account.label ?? '';
+  const issuer = text(account.issuer);
+  const label = text(account.label);
   if (issuer && label) return `${issuer} (${label})`;
   return issuer || label;
 }

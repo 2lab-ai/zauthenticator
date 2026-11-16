@@ -3,7 +3,7 @@ import * as totp from '../lib/totp.js';
 import * as session from './session.js';
 import { t } from './i18n.js';
 import { $, announce, setText, reason } from './ui.js';
-import { groupCode, matchesQuery, displayName } from './format.js';
+import { groupCode, matchesQuery, displayName, text } from './format.js';
 
 const COPIED_MS = 1500;
 const CONFIRM_MS = 4000;
@@ -89,10 +89,11 @@ export function createListView() {
 
   function buildRow(account) {
     const el = template.content.firstElementChild.cloneNode(true);
-    el.dataset.id = account.id;
+    el.dataset.id = text(account.id);
     // Issuer and label come from scanned QR codes / pasted links: text only, never markup.
-    setText(el.querySelector('.issuer'), account.issuer);
-    setText(el.querySelector('.label'), account.label);
+    // text() also turns a non-string field of a hand-edited vault into '' instead of throwing.
+    setText(el.querySelector('.issuer'), text(account.issuer));
+    setText(el.querySelector('.label'), text(account.label));
     const main = el.querySelector('.account-main');
     main.title = t('copyHint');
     const deleteEl = el.querySelector('.delete');
@@ -111,7 +112,7 @@ export function createListView() {
   }
 
   function periodOf(account) {
-    const period = Number(account.period);
+    const period = Number(text(account.period));
     return Number.isInteger(period) && period > 0 ? period : 30;
   }
 

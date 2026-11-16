@@ -451,7 +451,7 @@
     }
   },
   "errImportTooLarge": {
-    "message": "That file is larger than 1 MiB, too large to be a zauthenticator backup."
+    "message": "That file is larger than 2 MiB, too large to be a zauthenticator backup."
   },
   "invalidCount": {
     "message": "Invalid entries skipped: $COUNT$.",
