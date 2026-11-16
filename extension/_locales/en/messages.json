@@ -491,5 +491,89 @@
         "example": "0.1.0"
       }
     }
+  },
+  "menuUnlock": {
+    "message": "Unlock zauthenticator…"
+  },
+  "menuNoAccounts": {
+    "message": "No accounts yet"
+  },
+  "menuUnnamed": {
+    "message": "Unnamed account"
+  },
+  "bindTitle": {
+    "message": "Fill codes automatically?"
+  },
+  "bindIntro": {
+    "message": "From now on, this account's code is filled in on this site whenever zauthenticator is unlocked."
+  },
+  "bindSiteLabel": {
+    "message": "Site"
+  },
+  "bindAccountLabel": {
+    "message": "Account"
+  },
+  "bindPermissionHint": {
+    "message": "Your browser then asks you to allow access to this site only."
+  },
+  "bindAllow": {
+    "message": "Allow"
+  },
+  "bindCancel": {
+    "message": "Not now"
+  },
+  "bindClose": {
+    "message": "Close"
+  },
+  "bindDenied": {
+    "message": "Access to the site wasn't allowed, so nothing was saved."
+  },
+  "bindExpired": {
+    "message": "This request expired. Right-click the code field and choose the account again."
+  },
+  "bindNoAccount": {
+    "message": "That account no longer exists. Nothing was saved."
+  },
+  "bindFailed": {
+    "message": "Couldn't save: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "bindingsTitle": {
+    "message": "Auto-fill sites"
+  },
+  "bindingsHint": {
+    "message": "Codes are filled in automatically on these sites while zauthenticator is unlocked."
+  },
+  "bindingsEmpty": {
+    "message": "No sites yet. Right-click a code field on a site and choose an account to add one."
+  },
+  "bindingRemove": {
+    "message": "Remove"
+  },
+  "bindingRemoveLabel": {
+    "message": "Remove auto-fill on $ORIGIN$",
+    "placeholders": {
+      "origin": {
+        "content": "$1",
+        "example": "otp.example"
+      }
+    }
+  },
+  "bindingNoAccount": {
+    "message": "Deleted account"
+  },
+  "bindingRemoveFailed": {
+    "message": "Couldn't remove: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
   }
 }

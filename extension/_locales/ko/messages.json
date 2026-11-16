@@ -485,5 +485,89 @@
         "example": "0.1.0"
       }
     }
+  },
+  "menuUnlock": {
+    "message": "zauthenticator 잠금 해제…"
+  },
+  "menuNoAccounts": {
+    "message": "아직 계정이 없어요"
+  },
+  "menuUnnamed": {
+    "message": "이름 없는 계정"
+  },
+  "bindTitle": {
+    "message": "코드를 자동으로 입력할까요?"
+  },
+  "bindIntro": {
+    "message": "앞으로 zauthenticator 잠금이 풀려 있으면 이 사이트에 이 계정의 코드를 자동으로 입력해요."
+  },
+  "bindSiteLabel": {
+    "message": "사이트"
+  },
+  "bindAccountLabel": {
+    "message": "계정"
+  },
+  "bindPermissionHint": {
+    "message": "허용하면 브라우저가 이 사이트에 대한 접근만 허용할지 물어봐요."
+  },
+  "bindAllow": {
+    "message": "허용"
+  },
+  "bindCancel": {
+    "message": "나중에"
+  },
+  "bindClose": {
+    "message": "닫기"
+  },
+  "bindDenied": {
+    "message": "사이트 접근이 허용되지 않아 아무것도 저장하지 않았어요."
+  },
+  "bindExpired": {
+    "message": "요청이 만료됐어요. 코드 입력란에서 마우스 오른쪽 버튼을 눌러 계정을 다시 고르세요."
+  },
+  "bindNoAccount": {
+    "message": "그 계정은 이제 없어요. 아무것도 저장하지 않았어요."
+  },
+  "bindFailed": {
+    "message": "저장하지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "bindingsTitle": {
+    "message": "자동 입력 사이트"
+  },
+  "bindingsHint": {
+    "message": "zauthenticator 잠금이 풀려 있으면 이 사이트들에 코드를 자동으로 입력해요."
+  },
+  "bindingsEmpty": {
+    "message": "아직 사이트가 없어요. 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 계정을 고르면 추가돼요."
+  },
+  "bindingRemove": {
+    "message": "삭제"
+  },
+  "bindingRemoveLabel": {
+    "message": "$ORIGIN$ 자동 입력 삭제",
+    "placeholders": {
+      "origin": {
+        "content": "$1",
+        "example": "otp.example"
+      }
+    }
+  },
+  "bindingNoAccount": {
+    "message": "삭제된 계정"
+  },
+  "bindingRemoveFailed": {
+    "message": "삭제하지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
   }
 }

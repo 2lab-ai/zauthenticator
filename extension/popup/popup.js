@@ -1,16 +1,22 @@
-// Popup entry point. body[data-state] ∈ setup | locked | list | add | settings selects the
-// visible view (popup.css). The same page also runs as a full tab (popup.html#add-file,
-// popup.html#settings) for file pickers, which can close a popup on some platforms.
+// Popup entry point. body[data-state] ∈ setup | locked | list | add | settings | bind selects
+// the visible view (popup.css). The same page also runs as a full tab (popup.html#add-file,
+// popup.html#settings) for file pickers, which can close a popup on some platforms, and in a
+// small window the service worker opens (popup.html#bind, popup.html#unlock; lib/nav.js
+// openOwnWindow) that closes itself once its one job is done.
 import * as store from '../lib/store.js';
+import { normalizeOrigin } from '../lib/bindings.js';
 import * as session from './session.js';
 import { localize, t, uiLang } from './i18n.js';
 import { $, setText, withBusy, reason, clearAnnouncement } from './ui.js';
 import { createListView } from './list.js';
 import { createAddView, summary } from './add.js';
-import { createSettingsView } from './settings.js';
+import { createSettingsView, accountTitle } from './settings.js';
 
 const MIN_PASSPHRASE_LENGTH = 8;
-const UNLOCKED_VIEWS = ['list', 'add', 'settings'];
+const UNLOCKED_VIEWS = ['list', 'add', 'settings', 'bind'];
+// The window views: #bind offers to remember the site of the last menu fill; #unlock only asks
+// for the passphrase.
+const WINDOW_VIEWS = ['bind', 'unlock'];
 // Idle auto-lock (the limit is session.IDLE_LOCK_MS): how often an open page checks it, and
 // the least time between two activity writes from this page.
 const IDLE_CHECK_MS = 30 * 1000;
@@ -19,7 +25,10 @@ const TOUCH_INTERVAL_MS = 30 * 1000;
 let list;
 let add;
 let settings;
+let bind;
 let isTab = false;
+let isWindow = false;  // opened by the service worker in its own window: close when done
+let windowView = null; // 'bind' | 'unlock' from the hash; shown after every unlock until done
 let intent = null;     // view to open right after unlocking: 'add' | 'add-file' | 'settings'
 let showToken = 0;     // the latest show() call; an earlier one stops after its await
 let localOps = 0;      // > 0 while this page starts up, creates, unlocks or locks itself
@@ -34,10 +43,18 @@ async function main() {
   document.documentElement.lang = uiLang();
   localize(document);
   localize($('#account-template').content);
+  localize($('#binding-template').content);
 
-  isTab = await detectTab();
+  // tabs.getCurrent() finds a Tab both in a full tab and in the service worker's window; only the
+  // toolbar popup has none. The hash tells the two apart (only openOwnWindow uses #bind, #unlock).
+  const inTab = await detectTab();
+  const hash = takeHash();
+  windowView = WINDOW_VIEWS.includes(hash) ? hash : null;
+  isWindow = inTab && windowView !== null;
+  isTab = inTab && !isWindow;
   document.documentElement.classList.toggle('tab', isTab);
-  intent = takeIntentFromHash();
+  document.documentElement.classList.toggle('window', isWindow);
+  intent = ['add', 'add-file', 'settings'].includes(hash) ? hash : null;
 
   list = createListView();
   add = createAddView({ isTab, done: (result) => showList(summary(result)) });
@@ -45,6 +62,7 @@ async function main() {
     isTab,
     done: (result) => showList(`${t('importDone')} ${summary(result)}`),
   });
+  bind = createBindView();
 
   wireNavigation();
   wireSetup();
@@ -64,10 +82,11 @@ async function detectTab() {
   }
 }
 
-function takeIntentFromHash() {
+// → the view name in the hash ('' when none); the hash is removed from the address.
+function takeHash() {
   const hash = location.hash.slice(1);
   if (hash) history.replaceState(null, '', location.pathname);
-  return ['add', 'add-file', 'settings'].includes(hash) ? hash : null;
+  return hash;
 }
 
 async function route(state) {
@@ -79,6 +98,14 @@ async function enterUnlocked() {
   // Also when another page did the unlocking: no passphrase stays in a hidden gate field.
   $('#setup-form').reset();
   $('#unlock-form').reset();
+  if (windowView === 'unlock') {
+    await finishWindow();
+    return;
+  }
+  if (windowView === 'bind') {
+    await showBind();
+    return;
+  }
   const next = intent;
   intent = null;
   if (next === 'add-file') await show('add', { fileMode: true });
@@ -110,6 +137,22 @@ async function show(state, options = {}) {
   else if (state === 'list') list.focus();
   else if (state === 'add') add.open(options);
   else if (state === 'settings') settings.open();
+  else if (state === 'bind') bind.focus();
+}
+
+async function showBind() {
+  if (!(await bind.load())) return;
+  await show('bind');
+}
+
+// The window's one job is done (or declined): close it. Anywhere else, go on to the list.
+async function finishWindow() {
+  windowView = null;
+  if (isWindow) {
+    window.close();
+    return;
+  }
+  await showList();
 }
 
 async function showList(message) {
@@ -123,6 +166,7 @@ function clearSensitive() {
   list.clear();
   add.clearSensitive();
   settings.clearSensitive();
+  bind.clear();
   $('#setup-form').reset();
   $('#unlock-form').reset();
   setText($('#setup-error'), '');
@@ -166,6 +210,9 @@ function wireNavigation() {
     if ((state === 'add' || state === 'settings') && !typing) {
       event.preventDefault();
       showList();
+    } else if (state === 'bind') {
+      event.preventDefault();
+      bind.cancel();
     }
   });
 }
@@ -329,6 +376,7 @@ async function reconcile() {
     const result = await session.refresh();
     if (result === 'changed') {
       if (document.body.dataset.state === 'list') await list.render();
+      else if (document.body.dataset.state === 'settings') settings.refresh();
     } else if (result === 'locked') {
       await showLocked();
     } else if (result === 'setup') {
@@ -340,4 +388,161 @@ async function reconcile() {
   const state = document.body.dataset.state;
   if (UNLOCKED_VIEWS.includes(state)) await showLocked();
   else if (state === 'setup' || state === 'locked') await route(await session.resume());
+}
+
+// The bind window (S2): shows the site and account of the offer the service worker stored after a
+// menu fill; Allow asks the browser for access to exactly that site and then stores the binding.
+function createBindView() {
+  const originEl = $('#bind-origin');
+  const accountEl = $('#bind-account');
+  const hintEl = $('#bind-hint');
+  const errorEl = $('#bind-error');
+  const allowBtn = $('#bind-allow');
+  const cancelBtn = $('#bind-cancel');
+  let offer = null; // { origin, accountId, at } on display, while unlocked
+
+  allowBtn.addEventListener('click', allow);
+  cancelBtn.addEventListener('click', cancel);
+
+  // Reads the stored offer into the view. → false when the vault locked meanwhile (the locked
+  // view is shown instead).
+  async function load() {
+    const gen = session.generation();
+    clear();
+    let pending = null;
+    try {
+      pending = await session.takePendingBind();
+    } catch {
+      pending = null;
+    }
+    if (!session.isUnlocked() || session.generation() !== gen) return false;
+    const origin = pending && typeof pending.origin === 'string' ? normalizeOrigin(pending.origin) : null;
+    if (!origin || origin !== pending.origin) {
+      unavailable(t('bindExpired'));
+      return true;
+    }
+    const account = session.accounts().find((a) => a.id === pending.accountId);
+    if (!account) {
+      unavailable(t('bindNoAccount'));
+      return true;
+    }
+    offer = { origin, accountId: account.id, at: pending.at };
+    setText(originEl, origin);
+    setText(accountEl, accountTitle(account));
+    return true;
+  }
+
+  // Nothing to offer: only the message and a Close button remain.
+  function unavailable(message) {
+    offer = null;
+    allowBtn.hidden = true;
+    hintEl.hidden = true;
+    cancelBtn.textContent = t('bindClose');
+    setText(errorEl, message);
+  }
+
+  // The offer is good for session.PENDING_BIND_MS after the menu fill (S2); checked without an
+  // await so it can run before the permission request.
+  function expired(current) {
+    return Number.isFinite(current.at) && Date.now() - current.at >= session.PENDING_BIND_MS;
+  }
+
+  // permissions.request needs the click's user activation, so it is the first call here: no
+  // await comes before it. A request whose prompt is still open stays pending; the button stays
+  // disabled until it settles.
+  function allow() {
+    const current = offer;
+    if (!current || allowBtn.disabled) return;
+    if (expired(current)) {
+      dropOffer(t('bindExpired'));
+      return;
+    }
+    const asked = chrome.permissions.request({ origins: [`${current.origin}/*`] });
+    const gen = session.generation();
+    withBusy(allowBtn, null, () => finishAllow(asked, current, gen)).catch(() => {});
+  }
+
+  async function finishAllow(asked, current, gen) {
+    const live = () => session.isUnlocked() && session.generation() === gen && offer === current;
+    setText(errorEl, '');
+    cancelBtn.disabled = true;
+    try {
+      let granted = false;
+      try {
+        granted = await asked;
+      } catch {
+        granted = false;
+      }
+      if (!live()) return;
+      if (!granted) {
+        setText(errorEl, t('bindDenied'));
+        return;
+      }
+      // The offer must still be the one shown: a lock elsewhere, or a newer menu fill, replaces
+      // or removes it.
+      const still = await session.takePendingBind();
+      if (!live()) return;
+      if (!still || still.origin !== current.origin || still.accountId !== current.accountId) {
+        dropOffer(t('bindExpired'));
+        return;
+      }
+      try {
+        await session.addBinding(current.origin, current.accountId);
+      } catch (error) {
+        if (!live() || error.code === 'locked') return;
+        if (error.code === 'no-account') dropOffer(t('bindNoAccount'));
+        else setText(errorEl, t('bindFailed', reason(error)));
+        return;
+      }
+      await clearPending();
+      if (!live()) return;
+      await finishWindow();
+    } finally {
+      cancelBtn.disabled = false;
+    }
+  }
+
+  // The offer can no longer be stored: drop it (the service worker then takes back any site
+  // access it no longer needs) and leave the message with a Close button.
+  function dropOffer(message) {
+    unavailable(message);
+    clearPending();
+  }
+
+  async function clearPending() {
+    try {
+      await session.clearPendingBind();
+    } catch {
+      // nothing stored to clear
+    }
+  }
+
+  // Not now / Close / Escape: nothing is stored.
+  async function cancel() {
+    if (cancelBtn.disabled) return;
+    cancelBtn.disabled = true;
+    try {
+      await clearPending();
+    } finally {
+      cancelBtn.disabled = false;
+    }
+    await finishWindow();
+  }
+
+  // Empties the view (on lock, and before every load).
+  function clear() {
+    offer = null;
+    setText(originEl, '');
+    setText(accountEl, '');
+    setText(errorEl, '');
+    allowBtn.hidden = false;
+    hintEl.hidden = false;
+    cancelBtn.textContent = t('bindCancel');
+  }
+
+  function focus() {
+    (offer ? allowBtn : cancelBtn).focus();
+  }
+
+  return { load, clear, cancel, focus };
 }
