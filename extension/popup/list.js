@@ -112,21 +112,22 @@ export function createListView() {
     return Number.isInteger(period) && period > 0 ? period : 30;
   }
 
+  // Computes the code at `now` and shows it, unless a later update took over the row meanwhile.
+  // Resolves to the code at `now` either way ('' for an invalid key).
   async function updateCode(row, now) {
     const counter = Math.floor(now / 1000 / periodOf(row.account));
     row.counter = counter;
+    let code = '';
     try {
-      const code = await totp.totp(row.account, now);
-      if (row.counter !== counter) return;
-      row.codeEl.dataset.code = code;
-      row.codeEl.textContent = groupCode(code);
-      row.el.classList.remove('invalid');
+      code = await totp.totp(row.account, now);
     } catch {
-      if (row.counter !== counter) return;
-      row.codeEl.dataset.code = '';
-      row.codeEl.textContent = t('codeUnavailable');
-      row.el.classList.add('invalid');
+      // Invalid stored key: shown as "Invalid key" below.
     }
+    if (row.counter !== counter) return code;
+    row.codeEl.dataset.code = code;
+    row.codeEl.textContent = code ? groupCode(code) : t('codeUnavailable');
+    row.el.classList.toggle('invalid', !code);
+    return code;
   }
 
   function paint(row, now) {
@@ -163,9 +164,15 @@ export function createListView() {
     timer = null;
   }
 
+  // Copies the code for the moment of the click, never the displayed one: that can be from a
+  // period that already ended (a tick is due or still computing, or timers were throttled).
+  // The row is refreshed to show what was copied.
   async function copy(row) {
-    const code = row.codeEl.dataset.code;
-    if (!code) return;
+    const now = Date.now();
+    const code = await updateCode(row, now);
+    // Locked or re-rendered while the code was computed: this row is gone.
+    if (!code || rows.get(row.account.id) !== row) return;
+    paint(row, now);
     try {
       await navigator.clipboard.writeText(code);
     } catch {
