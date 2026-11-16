@@ -115,3 +115,10 @@ Network claim and gate
 - The claim is stated precisely: CSP blocks every connection and remote resource load from extension pages (`default-src 'none'` + explicit directives); the static gate additionally bans URL strings, navigation sinks (`window.open`, `location` assignment/`assign`/`replace`, `chrome.tabs.create/update` with anything but `chrome.runtime.getURL(...)`), and CSS `url(http…)`/`@import`. The settings "Source code" button is removed (the extensions page already links `homepage_url`).
 - The gate requires the CSP to equal the approved policy exactly (directive set and values), rejects duplicate SHA256SUMS paths, and its self-test pins the policy constants against an independently written literal copy.
 - Release publishing reuses the CI verification (unit, gate + self-test, Chromium e2e) and actions are pinned by commit SHA.
+
+## Round 3 contract changes (2026-11-16, from the R2 review)
+
+- `extension/lib/nav.js` is the only code that opens a tab (`openOwnView('add-file' | 'settings')` → this extension's `popup/popup.html#<view>`). The trust gate rejects every tab/window-opening call (`chrome.tabs.create/update/duplicate/goBack/goForward`, `chrome.windows.create/update`, `window.open`, …) outside it and pins `nav.js` by sha256.
+- The gate tokenizes the CSP with ASCII whitespace only and rejects any non-ASCII character in it; SHA256SUMS lines must be canonical (`<sha256>  <name>` with a plain relative name, no `./`, `..`, `\`, or `vendor/` prefix).
+- QR images: only formats whose dimensions are read from the header before decoding (PNG, JPEG, GIF, WebP, BMP) are decoded; every other format is rejected before any decoder runs (`QRError('unsupported-format')`).
+- Idle lock decisions are re-checked under the vault Web Lock against the current `lastActiveAt` and generation before the key is removed. Backup import accepts files up to 2 MiB (a vault at its 1 MiB ciphertext cap exports ~1.37 MiB).
