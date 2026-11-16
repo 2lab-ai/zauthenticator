@@ -76,6 +76,9 @@ async function route(state) {
 }
 
 async function enterUnlocked() {
+  // Also when another page did the unlocking: no passphrase stays in a hidden gate field.
+  $('#setup-form').reset();
+  $('#unlock-form').reset();
   const next = intent;
   intent = null;
   if (next === 'add-file') await show('add', { fileMode: true });
