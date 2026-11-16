@@ -168,8 +168,11 @@ export async function handleMenuClick(info, tab) {
 }
 
 /**
- * runtime.onMessage: { type: 'autofill-code' } from content/autofill.js → { code } for the
- * sender's bound origin while unlocked, else { code: null }. Does not count as activity.
+ * runtime.onMessage: { type: 'autofill-code' } from content/autofill.js → { code, validMs } for the
+ * sender's bound origin while unlocked, else { code: null }. validMs is what is left of the code's
+ * period in milliseconds (1 to the whole period): the content script waits for the next code when
+ * too little is left, and replaces a code it filled when its period ends. Does not count as
+ * activity.
  */
 export async function handleMessage(message, sender) {
   rebuildMenu().catch(() => {});
@@ -184,8 +187,13 @@ export async function handleMessage(message, sender) {
   const account = accountsOf(data).find((a) => a.id === binding.accountId);
   if (!account) return { code: null };
   try {
-    const code = await totp(account, Date.now());
-    return { code: CODE.test(code) ? code : null };
+    const now = Date.now();
+    const code = await totp(account, now);
+    if (!CODE.test(code)) return { code: null };
+    // totp() accepted the period (an integer number of seconds, 30 when missing).
+    const { period = 30 } = account;
+    const periodMs = period * 1000;
+    return { code, validMs: periodMs - (now % periodMs) };
   } catch {
     return { code: null };
   }
