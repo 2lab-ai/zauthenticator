@@ -388,13 +388,62 @@ test('menu fill in the top frame: frame 0 and the page origin', async () => {
   assert.equal(areas.session.get('pendingBind').origin, 'https://new.test');
 });
 
-test('no offer for an origin that already has a binding, or that is not https', async () => {
+test('no offer for an origin already bound to the chosen account, or that is not https', async () => {
   executeScript = filledOk;
   await seed(MENU_VAULT);
-  await click({ menuItemId: 'acct:acc-b', frameId: 0, pageUrl: 'https://bound.test/2fa' });
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://bound.test/2fa' });
   await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'http://plain.test/' });
   await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'file:///tmp/x.html' });
   assert.equal(named('executeScript').length, 3);
+  assert.deepEqual(windows(), []);
+  assert.equal(areas.session.has('pendingBind'), false);
+});
+
+test('a site bound to another account: choosing this one fills it and offers to switch; Allow then binds the site to it', async () => {
+  executeScript = filledOk;
+  await seed(MENU_VAULT);
+  await click({ menuItemId: 'acct:acc-b', frameId: 0, pageUrl: 'https://bound.test/2fa' });
+  assert.equal(named('executeScript').length, 1);
+  const pending = areas.session.get('pendingBind');
+  assert.deepEqual({ origin: pending.origin, accountId: pending.accountId }, { origin: 'https://bound.test', accountId: 'acc-b' });
+  assert.deepEqual(windows(), [['bind', 'popup']]);
+  // Only offered: until Allow the site stays bound to the first account.
+  assert.equal((await ask(sender('https://bound.test'))).code.length, A.digits);
+  // The bind window's Allow (after the browser's prompt) stores the new account for the site.
+  const bindPage = await import('../extension/popup/session.js?rebind-window');
+  assert.equal(await bindPage.resume(), 'list');
+  assert.deepEqual(bindPage.bindings().map((b) => [b.origin, b.accountId]), [['https://bound.test', 'acc-a']]);
+  await bindPage.addBinding(pending.origin, pending.accountId);
+  await bindPage.clearPendingBind();
+  assert.deepEqual(bindPage.bindings().map((b) => [b.origin, b.accountId]), [['https://bound.test', 'acc-b']]);
+  const next = await codeAroundNow(B, () => ask(sender('https://bound.test')));
+  assert.ok(next.allowed.includes(next.result.code), `${next.result.code} not in ${next.allowed}`);
+  // Chosen again with the account it is bound to now: filled, nothing offered.
+  calls.length = 0;
+  await click({ menuItemId: 'acct:acc-b', frameId: 0, pageUrl: 'https://bound.test/2fa' });
+  assert.equal(named('executeScript').length, 1);
+  assert.deepEqual(windows(), []);
+  assert.equal(areas.session.has('pendingBind'), false);
+});
+
+test('a site bound to an account the vault no longer has is offered for the chosen one', async () => {
+  executeScript = filledOk;
+  await seed({ accounts: [A, B], bindings: [binding('https://gone.test', 'acc-x')] });
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://gone.test/' });
+  const pending = areas.session.get('pendingBind');
+  assert.deepEqual({ origin: pending.origin, accountId: pending.accountId }, { origin: 'https://gone.test', accountId: 'acc-a' });
+  assert.deepEqual(windows(), [['bind', 'popup']]);
+});
+
+test('a switch is offered only where the fill happened: a refused or navigated fill on a site bound to another account offers nothing', async () => {
+  await seed(MENU_VAULT);
+  executeScript = async () => {
+    throw new Error('Cannot access contents of the page.');
+  };
+  await click({ menuItemId: 'acct:acc-b', frameId: 0, pageUrl: 'https://bound.test/2fa' });
+  executeScript = async (options) => [{ frameId: options.target.frameIds[0], result: 'https://elsewhere.test' }];
+  await click({ menuItemId: 'acct:acc-b', frameId: 0, pageUrl: 'https://bound.test/2fa' });
+  assert.equal(named('executeScript').length, 2);
   assert.deepEqual(windows(), []);
   assert.equal(areas.session.has('pendingBind'), false);
 });

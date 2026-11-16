@@ -569,5 +569,14 @@
         "example": "bad input"
       }
     }
+  },
+  "bindReplaces": {
+    "message": "지금 이 사이트에 입력하는 $ACCOUNT$ 대신 이 계정을 써요.",
+    "placeholders": {
+      "account": {
+        "content": "$1",
+        "example": "GitHub · alice"
+      }
+    }
   }
 }

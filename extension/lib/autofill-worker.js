@@ -106,7 +106,7 @@ async function buildMenu() {
 
 /**
  * contextMenus.onClicked: fills the chosen account's code into the focused field of the clicked
- * frame (S1), then offers to remember the site when it has no binding yet.
+ * frame (S1), then offers to remember the site for that account unless it is bound to it already.
  */
 export async function handleMenuClick(info, tab) {
   rebuildMenu().catch(() => {});
@@ -158,9 +158,10 @@ export async function handleMenuClick(info, tab) {
   }
   if (!filled) return;
 
-  // Offered: the https origin the fill was checked against, when it has no binding yet.
+  // Offered: the https origin the fill was checked against, unless it is already bound to this
+  // account. A site bound to another account is offered too: Allow then binds it to this one.
   const origin = normalizeOrigin(expected);
-  if (origin !== expected || bindingFor(data, origin)) return;
+  if (origin !== expected || bindingFor(data, origin)?.accountId === account.id) return;
   // false: the vault locked (or went idle) since the read; there is nothing to offer.
   if ((await session.setPendingBind({ origin, accountId: account.id })) !== true) return;
   await openOwnWindow('bind');
