@@ -14,15 +14,20 @@ An open-source Chrome/Edge (Chromium, Manifest V3) TOTP authenticator whose trus
 are **mechanically checkable** from the repository:
 
 1. **Zero network.** The extension makes no network requests. The extension-page CSP sets
-   `connect-src 'none'`, the manifest has no host permissions, and a static gate fails the build
-   on network APIs (`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`).
+   `connect-src 'none'`, the manifest grants no host access at install (v0.2: only optional
+   per-site `https` access for auto-fill, used to run the content script, see 03-autofill.md),
+   and a static gate fails the build on network APIs (`fetch`, `XMLHttpRequest`, `WebSocket`,
+   `EventSource`, `sendBeacon`) in every file, the content script included.
 2. **No remote or dynamic code.** No `eval`, `new Function`, remote scripts, or string timers.
    Vendored third-party code is pinned by sha256 and its license is shipped beside it.
 3. **Encrypted at rest.** Secrets are stored only inside an AES-GCM-256 vault whose key is
    derived from a passphrase (PBKDF2-SHA-256, 600,000 iterations). Plaintext secrets never touch
    `chrome.storage.local` or `chrome.storage.sync`.
 4. **Minimal permissions.** v0.1: `storage`, `activeTab` (QR capture of the current tab only after
-   the user clicks the toolbar icon). Nothing else.
+   the user clicks the toolbar icon). Nothing else. v0.2 adds exactly `contextMenus`, `scripting`,
+   `optional_host_permissions: ["https://*/*"]` (granted one exact site at a time when the user
+   allows auto-fill there), a module service worker and one content script registered at run
+   time for bound sites only (03-autofill.md).
 5. **Readable source.** Plain ES modules, no bundler, no minification, no runtime dependencies
    besides the pinned QR decoder.
 

@@ -1,6 +1,6 @@
 // End-to-end run of the real extension (extension/) in Playwright's Chromium, driven through the
 // popup DOM contract in .prd/02-architecture.md. Codes are compared with an independent TOTP
-// implementation written below on node:crypto (extension/lib is deliberately not imported).
+// implementation on node:crypto in e2e/reference.mjs (extension/lib is deliberately not imported).
 //
 //   npm run e2e                          # headed (CI runs it under xvfb-run)
 //   E2E_HEADLESS=1 npm run e2e           # new-headless Chromium
@@ -12,16 +12,17 @@
 // restart. Part 2 runs in a fresh profile with clipboard access: copy, two pages adding at once,
 // lock from another page, idle auto-lock, spec A9 (QR from an image file), copy after the period
 // changed. Each part-2 step sets up its own preconditions and reports its own failure, so one
-// broken behaviour does not hide the rest.
+// broken behaviour does not hide the rest. Part 3 is auto-fill (.prd/03-autofill.md, S1-S4) on a
+// test copy of the extension, in e2e/autofill.e2e.mjs. Every way the vault locks must leave
+// chrome.storage.session empty (lock-session-empty:* lines).
 // The copy steps write TOTP codes of test secrets to the clipboard (the system one when headed).
 //
 // Prints `PASS|FAIL <name> <detail>` per assertion and exits 1 on any failure.
 
-import { createDecipheriv, createHash, createHmac, pbkdf2 } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import {
   ARTIFACTS,
   HEADLESS,
@@ -37,14 +38,17 @@ import {
   watchNetwork,
   watchPages,
 } from './harness.mjs';
+import { runAutofill } from './autofill.e2e.mjs';
+import { base32ToBytes, decryptRecord, referenceTotp } from './reference.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const POPUP = 'popup/popup.html';
 const PASSPHRASE = 'e2e correct horse battery staple';
 const WRONG_PASSPHRASE = 'e2e wrong passphrase';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
-// .prd/02-architecture.md, Round 2: session storage holds at most these keys.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt'];
+// .prd/02-architecture.md, Round 2, amended by .prd/03-autofill.md ("Cross-unit contract"):
+// session storage holds at most these keys, and none of them once the vault locks.
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind'];
 
 const ACCOUNTS = [
   {
@@ -153,35 +157,7 @@ async function expectedText(page) {
   return { catalog, imageFormat, imported };
 }
 
-// ---- independent TOTP (RFC 4648 base32 + RFC 4226/6238 on node:crypto) ----------------------
-
-function base32ToBytes(input) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const out = [];
-  let bits = 0;
-  let value = 0;
-  for (const ch of input.replace(/=+$/, '').toUpperCase()) {
-    const index = alphabet.indexOf(ch);
-    if (index < 0) throw new Error(`bad base32 character ${ch}`);
-    value = (value << 5) | index;
-    bits += 5;
-    if (bits >= 8) {
-      bits -= 8;
-      out.push((value >>> bits) & 0xff);
-      value &= (1 << bits) - 1;
-    }
-  }
-  return Buffer.from(out);
-}
-
-function referenceTotp(key, nowMs, { algorithm, digits, period }) {
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(nowMs / 1000 / period)));
-  const mac = createHmac(algorithm, key).update(counter).digest();
-  const offset = mac[mac.length - 1] & 0x0f;
-  const binary = ((mac[offset] & 0x7f) << 24) | (mac[offset + 1] << 16) | (mac[offset + 2] << 8) | mac[offset + 3];
-  return String(binary % 10 ** digits).padStart(digits, '0');
-}
+// ---- independent TOTP and vault decryption (e2e/reference.mjs, node:crypto only) ---------------
 
 // The reference itself must be right: RFC 6238 Appendix B, T = 59 s, 8 digits.
 function checkReference(rep) {
@@ -199,30 +175,6 @@ function checkReference(rep) {
   );
   const decoded = base32ToBytes(ACCOUNTS[1].secret).toString('latin1');
   rep.check('reference-base32', decoded === '12345678901234567890123456789012', `${ACCOUNTS[1].secret} -> ${decoded}`);
-}
-
-// ---- independent vault decryption (node:crypto, record format of the extension/lib/vault.js
-// header comment) --------------------------------------------------------------------------------
-
-const pbkdf2Async = promisify(pbkdf2);
-const GCM_TAG_BYTES = 16;
-
-// Key = PBKDF2-SHA-256(UTF-8(NFC(passphrase)), salt, iterations, 32 bytes); AES-256-GCM with the
-// 12-byte iv; additional data = the header JSON in exactly the documented key order; ct ends
-// with the 16-byte tag. → the decrypted data object; throws when the record does not open.
-async function decryptRecord(record, passphrase) {
-  const { v, kdf, iv, ct } = record ?? {};
-  if (v !== 1 || kdf?.name !== 'PBKDF2' || kdf?.hash !== 'SHA-256' || !Number.isInteger(kdf?.iterations) || typeof kdf?.salt !== 'string') {
-    throw new Error(`not a v1 PBKDF2/SHA-256 record: ${JSON.stringify({ v, kdf })}`);
-  }
-  const key = await pbkdf2Async(Buffer.from(passphrase.normalize('NFC'), 'utf8'), Buffer.from(kdf.salt, 'base64'), kdf.iterations, 32, 'sha256');
-  const aad = `{"v":1,"kdf":{"name":"PBKDF2","hash":"SHA-256","iterations":${kdf.iterations},"salt":${JSON.stringify(kdf.salt)}}}`;
-  const sealed = Buffer.from(ct, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
-  decipher.setAAD(Buffer.from(aad, 'utf8'));
-  decipher.setAuthTag(sealed.subarray(sealed.length - GCM_TAG_BYTES));
-  const plain = Buffer.concat([decipher.update(sealed.subarray(0, sealed.length - GCM_TAG_BYTES)), decipher.final()]);
-  return JSON.parse(plain.toString('utf8'));
 }
 
 // → { accounts: [...] } or { error } for a record opened with PASSPHRASE.
@@ -298,6 +250,24 @@ function checkStorage(rep, name, storage) {
       ? `secret found in storage as ${JSON.stringify(leaks)}`
       : `local keys [${Object.keys(storage.local)}], sync keys [${Object.keys(storage.sync)}], session keys [${Object.keys(storage.session)}]; no secret form present`,
   );
+}
+
+// Writes a pending auto-fill offer into session storage, shaped as the worker writes one after a
+// menu fill, so a lock that removed only the v0.1 keys cannot pass a lock-session-empty check.
+// `extra` is written in the same call (e.g. a stale lastActiveAt or a wrong vaultKey).
+// → the offer read back 300 ms later (null when something removed it meanwhile)
+async function seedPendingBind(page, extra = {}) {
+  return page.evaluate(async (more) => {
+    const accountId = document.querySelector('.account')?.dataset.id || 'e2e-seed';
+    await chrome.storage.session.set({ pendingBind: { origin: 'https://seed.test', accountId, at: Date.now() }, ...more });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return (await chrome.storage.session.get('pendingBind')).pendingBind ?? null;
+  }, extra);
+}
+
+function checkLockedEmpty(rep, name, how, seeded, session) {
+  const keys = Object.keys(session);
+  rep.check(name, Boolean(seeded) && keys.length === 0, `${how}; pendingBind seeded before: ${seeded ? 'yes' : 'NO (check not meaningful)'}; session keys after [${keys}] (must be empty)`);
 }
 
 // local holds exactly { vault }, sync nothing, session only keys from SESSION_KEYS_ALLOWED.
@@ -620,10 +590,12 @@ try {
   rep.pass('screenshot-list', listShot);
 
   step = 'd-lock';
+  const seededManual = await seedPendingBind(page);
   await page.click('#lock-btn');
   await waitState(page, 'locked');
   storage = await readStorage(page);
   rep.check('lock', storage.session.vaultKey === undefined, `body[data-state=locked], session keys [${Object.keys(storage.session)}]`);
+  checkLockedEmpty(rep, 'lock-session-empty:manual', 'Lock button', seededManual, storage.session);
   const lockedShot = path.join(ARTIFACTS, 'locked.png');
   await page.screenshot({ path: lockedShot });
   rep.pass('screenshot-locked', lockedShot);
@@ -894,6 +866,7 @@ try {
     await waitState(pageB, 'add', 10000);
     await pageB.fill('#add-uri', TYPED.uri);
     await pageB.fill('#manual-secret', TYPED.secret);
+    const seeded = await seedPendingBind(pageA);
     await pageA.click('#lock-btn');
     await waitState(pageA, 'locked', 10000);
     const reached = await waitState(pageB, 'locked', 10000).then(
@@ -905,8 +878,10 @@ try {
       uri: document.querySelector('#add-uri')?.value.length ?? -1,
       secret: document.querySelector('#manual-secret')?.value.length ?? -1,
     }));
-    const session = Object.keys((await readStorage(pageA)).session);
+    const sessionNow = (await readStorage(pageA)).session;
+    const session = Object.keys(sessionNow);
     rep.check('cross-page-lock', reached && b.state === 'locked', `page B state ${b.state} after page A locked; session keys [${session}]`);
+    checkLockedEmpty(rep, 'lock-session-empty:cross-page', 'lock from page A, seen by page B', seeded, sessionNow);
     rep.check(
       'lock-clears-inputs',
       b.uri === 0 && b.secret === 0,
@@ -928,21 +903,65 @@ try {
       async () => stateOf(pageA),
     );
     rep.check('idle-control-reload-stays-unlocked', control === 'list', `reload with recent activity: state ${control}`);
-    const stale = await pageA.evaluate(async (age) => {
-      const lastActiveAt = Date.now() - age;
-      await chrome.storage.session.set({ lastActiveAt });
-      return lastActiveAt;
-    }, IDLE_LOCK_MS + 60 * 1000);
+    const stale = Date.now() - (IDLE_LOCK_MS + 60 * 1000);
+    const seeded = await seedPendingBind(pageA, { lastActiveAt: stale });
     await pageA.reload();
     const state = await waitState(pageA, 'locked', 10000).then(
       () => 'locked',
       async () => stateOf(pageA),
     );
-    const session = Object.keys((await readStorage(pageA)).session);
+    const sessionNow = (await readStorage(pageA)).session;
+    const session = Object.keys(sessionNow);
     rep.check(
       'idle-auto-lock',
       state === 'locked',
       `lastActiveAt set to ${new Date(stale).toISOString()} (16 min ago), reload -> state ${state}; session keys [${session}]`,
+    );
+    checkLockedEmpty(rep, 'lock-session-empty:idle-page', 'idle session found by an opening page', seeded, sessionNow);
+  });
+
+  // The idle check of a page that stays open (session.lockIfIdle(), run every 30 s and when the
+  // page becomes visible): the visibilitychange is dispatched here instead of waited for.
+  await stepRun('lock-if-idle', async () => {
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    await pageA.bringToFront();
+    const seeded = await seedPendingBind(pageA, { lastActiveAt: Date.now() - (IDLE_LOCK_MS + 60 * 1000) });
+    const visible = await pageA.evaluate(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      return document.visibilityState;
+    });
+    const state = await waitState(pageA, 'locked', 10000).then(
+      () => 'locked',
+      async () => stateOf(pageA),
+    );
+    const sessionNow = (await readStorage(pageA)).session;
+    rep.check('lock-if-idle', state === 'locked', `open page, lastActiveAt 16 min ago, visibilitychange (visibilityState ${visible}) -> state ${state}`);
+    checkLockedEmpty(rep, 'lock-session-empty:lock-if-idle', 'idle session found by an open page', seeded, sessionNow);
+  });
+
+  // A stored key that does not open the vault is dropped when a page finds it, with everything
+  // else in session storage.
+  await stepRun('wrong-session-key', async () => {
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    const wrongKey = Buffer.alloc(32, 7).toString('base64');
+    // Written in one call with the offer; whichever context reads the key next (the worker
+    // reacts to the write) drops all three, so the offer may already be gone 300 ms later.
+    const readBack = await seedPendingBind(pageA, { vaultKey: wrongKey, lastActiveAt: Date.now() });
+    await pageA.reload();
+    const state = await waitState(pageA, 'locked', 10000).then(
+      () => 'locked',
+      async () => stateOf(pageA),
+    );
+    const sessionNow = (await readStorage(pageA)).session;
+    rep.check('wrong-session-key-locks', state === 'locked', `session vaultKey replaced by 32 bytes that do not open the vault, reload -> state ${state}`);
+    checkLockedEmpty(
+      rep,
+      'lock-session-empty:wrong-key',
+      `wrong key written together with a pendingBind and dropped by ${readBack ? 'the opening page' : 'the worker before the reload (offer gone 300 ms after the write)'}`,
+      true,
+      sessionNow,
     );
   });
 
@@ -1055,15 +1074,28 @@ try {
   rep.fail('part2', `${err.message.split('\n')[0]}`);
 }
 
-// Every page seen in every launch, including any the extension opened itself, stayed on the
-// extension's own pages or about:blank.
+// ---- part 3: auto-fill on a test copy (e2e/autofill.e2e.mjs) ----------------------------------
+
+try {
+  const autofill = await runAutofill({ rep, extensionDir: extDir });
+  if (autofill.pages) {
+    pageWatchers.push(autofill.pages);
+    ownOrigins.add(autofill.ownOrigin);
+  }
+} catch (err) {
+  rep.fail('part3', `${err.message.split('\n')[0]}`);
+}
+
+// Every page seen in every launch, including any the extension opened itself (its popup and
+// #bind/#unlock windows), stayed on the extension's own pages or about:blank; part 3's own test
+// pages may also show the routed test origins they were opened on.
 const origins = ownOrigins.size ? [...ownOrigins] : [`chrome-extension://${computeExtensionId(extDir)}`];
 const offenders = pageWatchers.flatMap((w) => w.offenders(origins));
 const pageCount = pageWatchers.reduce((n, w) => n + w.count(), 0);
 rep.check(
   'no-navigation',
   pageWatchers.length > 0 && offenders.length === 0,
-  `${pageCount} pages in ${pageWatchers.length} launches; URLs outside ${origins.join(', ')} and about:blank: ${JSON.stringify(offenders)}`,
+  `${pageCount} pages in ${pageWatchers.length} launches; URLs outside ${origins.join(', ')}, about:blank and part 3's routed test pages: ${JSON.stringify(offenders)}`,
 );
 
 // Positive control, after the assertions above: a page opened by window.open() from another page

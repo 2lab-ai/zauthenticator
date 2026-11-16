@@ -1,8 +1,9 @@
-// Shared Playwright harness for e2e/popup.e2e.mjs and e2e/fixture-smoke.mjs.
+// Shared Playwright harness for e2e/popup.e2e.mjs, e2e/autofill.e2e.mjs and e2e/fixture-smoke.mjs.
 //
 // Launches the Playwright-bundled Chromium with one unpacked extension, finds the extension id
-// without a background service worker, watches every remote request and every opened page in the
-// context, and prints one `PASS|FAIL <name> <detail>` line per assertion.
+// without relying on its service worker, watches every remote request and every opened page in
+// the context, sees which frames the extension's content scripts ran in, and prints one
+// `PASS|FAIL <name> <detail>` line per assertion.
 
 import { chromium } from 'playwright';
 import { createHash } from 'node:crypto';
@@ -29,8 +30,9 @@ export function freshProfileDir(prefix = 'zauth-e2e-profile-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-// headless: false by default (CI runs it under xvfb). E2E_HEADLESS=1 selects the full Chromium
-// build in new-headless mode via channel 'chromium'; the headless shell cannot load extensions.
+// headless: false by default (CI runs it under xvfb). E2E_HEADLESS=1 selects new-headless mode.
+// channel 'chromium' (the full Chromium build) in both modes: the headless shell cannot load
+// extensions.
 //
 // UI language: --lang=en-US asks Chromium for an English UI, which Chromium reads on Linux and
 // Windows. macOS Chromium ignores --lang and follows the system language list (AppleLanguages);
@@ -44,14 +46,72 @@ export async function launch(extDir, userDataDir) {
     acceptDownloads: true,
     locale: 'en-US',
     args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, '--lang=en-US'],
+    channel: 'chromium',
   };
-  if (HEADLESS) options.channel = 'chromium';
   return chromium.launchPersistentContext(userDataDir, options);
 }
 
 // Pages the harness itself opens for its own bookkeeping (the chrome://extensions lookup).
 // watchPages() exempts exactly these Page objects, never a URL.
 const harnessPages = new WeakSet();
+
+// Pages a test opens itself on routed test origins (https://otp.test and the like, answered by
+// context.route, nothing leaves the machine): Page object → origins that page may show. The
+// exemption is by Page object and origin together: any other URL on such a page still counts,
+// and a page the extension opens is never in this map.
+const testPages = new WeakMap();
+
+export function allowTestOrigins(page, origins) {
+  testPages.set(page, new Set(origins));
+}
+
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
+
+// The extension's service worker in `context` (URL under chrome-extension://<id>/), waiting up
+// to `timeout` for it to start. Callers resolve it again for every use instead of keeping it:
+// Chromium may stop an idle worker and start a new one.
+export async function extensionWorker(context, id, timeout = 10000) {
+  const own = (worker) => worker.url().startsWith(`chrome-extension://${id}/`);
+  const running = context.serviceWorkers().find(own);
+  if (running) return running;
+  return context.waitForEvent('serviceworker', { predicate: own, timeout });
+}
+
+// Records the isolated worlds Chromium creates for the extension's content scripts in `page`
+// (CDP Runtime.executionContextCreated with auxData.type 'isolated' and the extension's origin).
+// Playwright's own utility worlds have other origins and are not counted. A cross-site iframe
+// runs in another renderer under site isolation, so its worlds are not seen here: check such a
+// frame by what the script did in it. Call before page.goto().
+// Evidence only for a frame the extension never ran in before: measured with Playwright 1.65.1
+// (Chromium 159), a tab the script had run in reported the world again on every reload after
+// the script was unregistered, while a fresh tab reported none. Use a fresh tab for "injected or
+// not". → { worlds, mainFrameId, inMainFrame(), reset() }
+export async function watchContentScripts(page, id) {
+  const cdp = await page.context().newCDPSession(page);
+  const worlds = [];
+  cdp.on('Runtime.executionContextCreated', ({ context }) => {
+    if (context.auxData?.type === 'isolated' && context.origin === `chrome-extension://${id}`) {
+      worlds.push({ frameId: context.auxData.frameId, name: context.name });
+    }
+  });
+  await cdp.send('Runtime.enable');
+  const { frameTree } = await cdp.send('Page.getFrameTree');
+  const mainFrameId = frameTree.frame.id;
+  return {
+    worlds,
+    mainFrameId,
+    // Content-script worlds created in the top frame since the watch began.
+    inMainFrame: () => worlds.filter((w) => w.frameId === mainFrameId).length,
+    // Forgets what was seen so far (before a reload).
+    reset: () => worlds.splice(0, worlds.length),
+  };
+}
 
 // Fallback id lookup: chrome://extensions renders one <extensions-item id="<extension id>"> per
 // installed extension, two shadow roots deep.
@@ -126,7 +186,14 @@ export function watchNetwork(context) {
     } catch {
       frameUrl = '(no frame)';
     }
+    let page = null;
+    try {
+      page = req.frame().page();
+    } catch {
+      page = null; // a service worker's request has no frame
+    }
     const rec = { url: req.url(), method: req.method(), type: req.resourceType(), frameUrl, outcome: 'pending' };
+    Object.defineProperty(rec, 'page', { value: page, enumerable: false });
     byRequest.set(req, rec);
     records.push(rec);
   });
@@ -144,6 +211,13 @@ export function watchNetwork(context) {
     // requests issued by extension pages at all.
     extensionUrls,
     egress: () => records.filter((r) => !BLOCKED_BEFORE_NETWORK.test(r.outcome)),
+    // egress() without the document loads (main frame or iframe) of routed test origins on
+    // pages the test opened with allowTestOrigins(). Any other request to a test origin, from
+    // any page or the worker, still counts.
+    egressBeyondTestPages: () =>
+      records.filter(
+        (r) => !BLOCKED_BEFORE_NETWORK.test(r.outcome) && !(r.type === 'document' && r.page && testPages.get(r.page)?.has(originOf(r.url))),
+      ),
   };
 }
 
@@ -164,12 +238,25 @@ export function watchPages(context) {
   return {
     count: () => pages.length,
     // URLs outside the extension's own origins (chrome-extension://<id>, as resolved by
-    // openExtensionPage) other than about:blank, on any page the harness did not open for itself.
+    // openExtensionPage) other than about:blank, on any page the harness did not open for itself;
+    // on a page the test opened with allowTestOrigins(), URLs of those origins are not counted.
     offenders(ownOrigins) {
       return pages
         .filter((rec) => !harnessPages.has(rec.page))
-        .flatMap((rec) => rec.urls)
+        .flatMap((rec) => rec.urls.filter((url) => !testPages.get(rec.page)?.has(originOf(url))))
         .filter((url) => url !== 'about:blank' && url !== '' && !ownOrigins.some((origin) => url.startsWith(`${origin}/`)));
+    },
+    // The first page opened since the watch began (or already open) whose main frame has shown
+    // a URL for which test(url) holds, e.g. a window the extension opened. → Page or null after
+    // `timeout`. A URL changed by history.replaceState() still counts: every URL is recorded.
+    async waitForUrl(test, { timeout = 10000, after = 0 } = {}) {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const rec = pages.slice(after).find((r) => r.urls.some(test));
+        if (rec) return rec.page;
+        if (Date.now() > deadline) return null;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
     },
   };
 }
