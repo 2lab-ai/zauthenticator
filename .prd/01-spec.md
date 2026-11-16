@@ -1,6 +1,6 @@
 # 01 — Spec: zauthenticator v0.1
 
-Status: planned (2026-11-16)
+Status: shipped (2026-11-16, v0.1.0) — this is the implemented contract, not a future target.
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # 02 — Architecture
 
-Status: planned (2026-11-16)
+Status: shipped (2026-11-16, v0.1.0) — implemented as described, including the Round 2 and Round 3 changes below; not a future target.
 
 ## Layout
 

@@ -1,26 +1,16 @@
 # v0-1 — loop (open work only)
 
-Status: in-progress (2026-11-16)
+Status: done (2026-11-16) — closed rounds and rows are in [loop.done.md](loop.done.md).
 
-## Round 1 plan
+## Next
 
-Three work units, file ownership disjoint, one coder each, one worktree each
-(`.worktrees/<branch-with-dashes>`). Merge order: WU-A → WU-B → WU-C, then the dispatcher
-runs `npm test`, `npm run check`, `npm run e2e` on a snapshot and reviews.
+- Release `v0.1.0` (tag → release workflow attaches `zauthenticator-0.1.0.zip`).
+- Next workstream: auto-fill, spec [../03-autofill.md](../03-autofill.md).
 
-| ID | Status | Branch | Scope (owned files) |
-|---|---|---|---|
-| WU-A | 🟡 | feat/core | `extension/lib/{base32,totp,otpauth,vault}.js`, `test/*.test.mjs` |
-| WU-B | 🟡 | feat/ui | `extension/manifest.json`, `extension/popup/*`, `extension/lib/{store,qr}.js`, `extension/vendor/*`, `extension/icons/*` |
-| WU-C | 🟡 | feat/tooling | `package.json`, `scripts/*`, `e2e/*`, `.github/workflows/*`, `README.md`, `LICENSE`, `SECURITY.md` |
+## Manual check (not automatable)
 
-## Gaps
-
-| ID | Status | Gap |
-|---|---|---|
-| G1 | 🔴 | Publishing: GitHub repo `2lab-ai/zauthenticator` not created yet. |
-| G2 | 🔴 | A1–A10 not yet observed. |
+- A9 toolbar path: click the toolbar icon on a page showing an otpauth QR, Add → "Scan this tab". The activeTab grant only exists after a real toolbar click.
 
 ## Build facts
 
-- Node v26.9.0 (`node --test`, global WebCrypto). Playwright 1.65.1 with cached Chromium builds.
+- Node v26.9.0 locally, Node 22 in CI (`node --test test/*.test.mjs`, global WebCrypto). Playwright 1.65.1.
