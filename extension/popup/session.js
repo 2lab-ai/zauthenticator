@@ -20,7 +20,7 @@ export const IDLE_LOCK_MS = 15 * 60 * 1000;
 const CLOCK_SLACK_MS = 60 * 1000;
 
 let rawKey = null;   // Uint8Array while unlocked
-let data = null;     // { accounts: [...] } exactly as stored, while unlocked
+let data = null;     // { accounts: [...] } as stored plus the ids withIds() gave, while unlocked
 let recordCt = null; // ciphertext of the record `data` was read from or sealed into
 let epoch = 0;       // the generation; forget() bumps it
 
@@ -38,8 +38,9 @@ export function generation() {
   return epoch;
 }
 
-// The stored entries, for display; empty while locked. A non-object entry (only a hand-made
-// vault could hold one) stays stored but is not shown.
+// The stored entries, for display; empty while locked. Each has an id no other entry has (a
+// non-empty string). A non-object entry (only a hand-made vault could hold one) stays stored but
+// is not shown.
 export function accounts() {
   if (rawKey === null || data === null) return [];
   return data.accounts.filter((a) => a !== null && typeof a === 'object');
@@ -68,7 +69,7 @@ export function resume() {
     }
     let current;
     try {
-      current = normalizeData(await vault.open(key, record));
+      current = loaded(record, await vault.open(key, record));
     } catch {
       // The session key does not open the stored record; ask for the passphrase again.
       drop();
@@ -107,7 +108,7 @@ export function unlock(passphrase) {
     const record = await store.getRecord();
     if (!record) throw new SessionError('no-vault');
     const opened = await vault.unlock(record, passphrase);
-    const current = normalizeData(opened.data);
+    const current = loaded(record, opened.data);
     if (epoch !== gen) throw new SessionError('locked');
     await store.setSessionKey(opened.rawKey);
     if (epoch !== gen) throw new SessionError('locked');
@@ -161,7 +162,7 @@ export function refresh() {
     if (record.ct === recordCt) return 'unchanged';
     let current;
     try {
-      current = normalizeData(await vault.open(key, record));
+      current = loaded(record, await vault.open(key, record));
     } catch {
       if (!live()) return 'stale';
       forget();
@@ -227,16 +228,9 @@ export function addAccounts(incoming) {
   const entries = Array.isArray(incoming) ? incoming : [];
   return mutate((current) => {
     // A malformed stored entry (only a hand-made vault could hold one) stays stored and never
-    // blocks adding: non-objects are left out, and so is an entry whose fields cannot be compared.
+    // blocks adding: non-objects are left out, and duplicateKey() never throws.
     const stored = current.accounts.filter((a) => a !== null && typeof a === 'object');
-    const seenKeys = new Set();
-    for (const a of stored) {
-      try {
-        seenKeys.add(duplicateKey(a));
-      } catch {
-        // e.g. a secret that is an object without a usable toString
-      }
-    }
+    const seenKeys = new Set(stored.map((a) => duplicateKey(a)));
     const seenIds = new Set(stored.map((a) => a.id));
     let added = 0;
     let duplicates = 0;
@@ -297,7 +291,8 @@ function mutate(change) {
     check();
     if (!stored || !sameBytes(stored, key)) throw new SessionError('locked');
     if (!record) throw new SessionError('no-vault');
-    const current = normalizeData(await vault.open(key, record));
+    // While the stored record is the one this page shows, the ids it showed carry over.
+    const current = loaded(record, await vault.open(key, record));
     check();
     const result = change(current);
     const sealed = await vault.seal(key, record, current);
@@ -315,14 +310,43 @@ function remember(key, record, current) {
   recordCt = record.ct ?? null;
 }
 
-// The decrypted data as stored. Entries are kept exactly as they are: one that is not a valid
-// account still shows (as "Invalid key") and survives every later seal. Only a missing list
-// is filled in; anything else that is not { accounts: [...] } is refused, never overwritten.
+// The decrypted data of `record`, ready to show: normalizeData(), then withIds(). When `record`
+// is the one this page already holds, the ids this page gave its entries are given again, so an
+// id this page showed still finds its entry in a later read → change → seal.
+function loaded(record, value) {
+  const current = normalizeData(value);
+  const previous = data !== null && record.ct === recordCt ? data.accounts : [];
+  return withIds(current, previous);
+}
+
+// The decrypted data as stored. Entries are kept as they are (withIds() may add an id): one
+// that is not a valid account still shows (as "Invalid key") and survives every later seal.
+// Only a missing list is filled in; anything else that is not { accounts: [...] } is refused,
+// never overwritten.
 function normalizeData(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SessionError('bad-data');
   if (value.accounts === undefined) return { ...value, accounts: [] };
   if (!Array.isArray(value.accounts)) throw new SessionError('bad-data');
   return value;
+}
+
+// Gives each entry whose id is not a non-empty string, or repeats an earlier entry's id, a new
+// one: the id at the same place in `previous` (this page's read of the same record) if no
+// earlier entry has it, else crypto.randomUUID(). Only a hand-edited vault needs this, since
+// the app writes every entry with crypto.randomUUID(). The id lives in memory until the next
+// seal stores it; nothing else in an entry changes, and a non-object entry is left alone.
+function withIds(current, previous) {
+  const seen = new Set();
+  const usable = (id) => typeof id === 'string' && id !== '' && !seen.has(id);
+  current.accounts.forEach((entry, i) => {
+    if (entry === null || typeof entry !== 'object') return;
+    if (!usable(entry.id)) {
+      const before = previous[i]?.id;
+      entry.id = usable(before) ? before : crypto.randomUUID();
+    }
+    seen.add(entry.id);
+  });
+  return current;
 }
 
 function isStale(lastActiveAt, now = Date.now()) {
