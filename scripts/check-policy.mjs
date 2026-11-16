@@ -11,10 +11,11 @@
 // What enforces what: extension pages cannot open network connections or load remote resources
 // because of their CSP, which this gate requires to equal the approved policy exactly. CSP does
 // not govern top-level navigation, so the gate additionally bans URL strings and navigation sinks
-// (window.open, location assignment, chrome.tabs/windows calls that open anything but
-// chrome.runtime.getURL(...), links, forms and frames that leave the extension); the only pages
-// the extension opens are its own. The gate reads source text; it is a tripwire for the
-// repository's own sources, not a JavaScript parser or a sandbox.
+// (window.open, location assignment, links, forms and frames that leave the extension). Opening
+// a tab is left to one file, lib/nav.js, which opens only this extension's own popup views and is
+// pinned by sha256; everywhere else chrome.windows is refused and chrome.tabs may only be read.
+// The gate reads source text; it is a tripwire for the repository's own sources, not a
+// JavaScript parser or a sandbox. The end-to-end test is what observes the pages a browser opens.
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -27,8 +28,9 @@ const SCRIPT = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT), '..');
 
 // ---- Manifest policy (v0.1) -------------------------------------------------------------------
-// The one place that says what the manifest may ask for. Widening it is a deliberate, reviewed
-// change; the planned auto-fill feature (.prd/03-autofill.md) is expected to be the next one.
+// The one place that says what the manifest may ask for and how the extension may open tabs.
+// Widening it is a deliberate, reviewed change; the planned auto-fill feature
+// (.prd/03-autofill.md) is expected to be the next one.
 // The self-test pins every value here against PINNED_POLICY, a copy written out by hand, so a
 // change has to be made in both places.
 const MANIFEST_POLICY = Object.freeze({
@@ -57,8 +59,15 @@ const MANIFEST_POLICY = Object.freeze({
   // content_security_policy key is allowed.
   extensionPagesCsp:
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  // sha256 of extension/lib/nav.js, the only file that may open or change a tab.
+  navWrapperSha256: 'bcd3c5ef3f2a70537349f0c8957214dd1143d695a0f088ecd7b76130fe9cbf83',
+  // The chrome.tabs methods any other file may use; none of them opens, navigates or reloads a
+  // tab. Every other chrome.tabs member (create, update, duplicate, goBack, goForward, reload,
+  // ...) and all of chrome.windows fail the `navigation` rule outside lib/nav.js.
+  tabsMethodsOutsideNav: ['getCurrent', 'captureVisibleTab'],
 });
 const HOMEPAGE_URL = MANIFEST_POLICY.homepageUrl;
+const NAV_WRAPPER = 'lib/nav.js';
 const ALLOWED_FILE_EXTENSIONS = ['.json', '.js', '.html', '.css', '.png', '.LICENSE'];
 const SUMS_PATH = 'vendor/SHA256SUMS';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -101,19 +110,19 @@ const NAVIGATION_PATTERNS = [
   // location.hash only moves within the page and is allowed.
   ['location assignment', /\blocation(?:\s*\.\s*(?:href|protocol|host|hostname|port|pathname|search))?\s*(?:=(?![=>])|\+=)/g],
   ['location.assign/replace', /\blocation\s*(?:\?\.|\.)\s*(?:assign|replace)\s*\(/g],
-  ['chrome.tabs.duplicate/goBack/goForward', /\bchrome\s*\.\s*tabs\s*(?:\?\.|\.)\s*(?:duplicate|goBack|goForward)\b/g],
   ['setUninstallURL', /\bsetUninstallURL\b/g],
-  // chrome.tabs / chrome.windows used other than as chrome.tabs.<method>: an alias or computed
-  // access would hide a create()/update() call from the url check.
-  ['chrome.tabs/windows alias', /\bchrome\s*\.\s*(?:tabs|windows)\b(?!\s*(?:\?\.|\.)\s*[A-Za-z_$])/g],
+  // `chrome` used other than as chrome.<api> (an alias, destructuring, chrome['tabs']) would hide
+  // which API is called, so it is refused everywhere, lib/nav.js included.
+  ['chrome alias', /(?<![\w$])chrome(?![\w$])(?!\s*(?:\?\.|\.)\s*[A-Za-z_$])/g],
   ['<meta http-equiv=refresh>', /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?\s*refresh/gi],
   // Not preceded by an identifier, so a JSDoc type such as Promise<object> is not an element.
   ['frame/embed/object element', /(?<![\w$])<(?:iframe|frame|frameset|embed|object|portal|fencedframe)\b/gi],
 ];
 // open(<args>) as a call of the global, not a member call (x.open(...)), not a declaration.
 const BARE_OPEN = /(?<![\w$.])(?<!\.\s+)(?<!\bfunction\s*\*?\s*)\bopen\s*(?:\?\.\s*)?\((?=\s*[^\s)])/g;
-const TAB_CALL = /\bchrome\s*\.\s*(tabs|windows)\s*(?:\?\.|\.)\s*(create|update)\s*(?:\?\.\s*)?\(/g;
-const GET_URL = /^\s*chrome\s*\.\s*runtime\s*\.\s*getURL\s*\(/;
+// chrome.tabs / chrome.windows (also with ?.), and the member that follows when there is one.
+// No member means an alias or computed access (chrome.tabs['create'], const t = chrome.tabs).
+const TABS_OR_WINDOWS = /(?<![\w$])chrome\s*(?:\?\.|\.)\s*(tabs|windows)(?![\w$])(?:\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*))?/g;
 const FORBIDDEN_CSP_TOKENS = ["'unsafe-eval'", "'unsafe-inline'", "'wasm-unsafe-eval'"];
 
 const RULES = [
@@ -129,6 +138,7 @@ const RULES = [
   'remote-url',
   'css-remote',
   'navigation',
+  'nav-wrapper',
   'inline-script',
   'locales-url',
   'vendor-sums',
@@ -167,12 +177,28 @@ function findAll(text, patterns, label) {
   return hits;
 }
 
+// CSP is ASCII: a browser splits a policy on ';' and its directives on ASCII whitespace only
+// (tab, LF, FF, CR, space), and skips a directive that holds any non-ASCII character. JavaScript's
+// trim() and \s also take U+00A0, U+2003, U+000B and more, so they must not be used here.
+const CSP_WHITESPACE = /[\t\n\f\r ]+/;
+const CSP_CHARACTER = /[^\t\n\f\r\x20-\x7e]/gu;
+
+// One problem per distinct character outside printable ASCII and ASCII whitespace.
+function cspCharacterProblems(policy) {
+  const seen = new Map();
+  for (const m of policy.matchAll(CSP_CHARACTER)) if (!seen.has(m[0])) seen.set(m[0], m.index);
+  return [...seen].map(([ch, at]) => {
+    const code = `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+    return `character ${code} at offset ${at} (a CSP is printable ASCII separated by tab, LF, FF, CR or space)`;
+  });
+}
+
 // → { directives: Map(name → sorted lower-case sources), duplicates: [name] }
 function parseCsp(policy) {
   const directives = new Map();
   const duplicates = [];
   for (const part of policy.split(';')) {
-    const tokens = part.trim().split(/\s+/).filter(Boolean);
+    const tokens = part.split(CSP_WHITESPACE).filter(Boolean);
     if (tokens.length === 0) continue;
     const name = tokens[0].toLowerCase();
     // Browsers ignore every occurrence after the first; the approved policy has none.
@@ -186,7 +212,7 @@ function parseCsp(policy) {
 function cspDifferences(actualPolicy, approvedPolicy) {
   const actual = parseCsp(actualPolicy);
   const approved = parseCsp(approvedPolicy);
-  const problems = actual.duplicates.map((name) => `duplicate ${name} directive`);
+  const problems = [...cspCharacterProblems(actualPolicy), ...actual.duplicates.map((name) => `duplicate ${name} directive`)];
   for (const [name, want] of approved.directives) {
     const got = actual.directives.get(name);
     if (!got) problems.push(`${name} missing (approved: ${want.join(' ')})`);
@@ -198,8 +224,12 @@ function cspDifferences(actualPolicy, approvedPolicy) {
   return problems;
 }
 
+function sha256Of(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
 function sha256(file) {
-  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  return sha256Of(fs.readFileSync(file));
 }
 
 function inlineScriptHits(html, label) {
@@ -251,21 +281,6 @@ function callArguments(text, open) {
   return null;
 }
 
-// Why the arguments of a chrome.tabs/windows create/update call may open a page other than the
-// extension's own, or null when every url is chrome.runtime.getURL(...).
-function urlArgumentProblem(args, urlOptional) {
-  if (args.includes('...')) return 'uses a spread, so its url cannot be checked';
-  if (!args.includes('{')) return 'has no object literal, so its url cannot be checked';
-  if (/[{,]\s*url\s*[,}]/.test(args)) return 'uses a shorthand url property, so its url cannot be checked';
-  if (/\[\s*['"`]url['"`]\s*\]/.test(args)) return 'uses a computed url property, so its url cannot be checked';
-  const keys = [...args.matchAll(/(?:^|[{,\s])(?:url|'url'|"url")\s*:/g)];
-  if (keys.length === 0) return urlOptional ? null : 'has no url (opens the new tab page)';
-  for (const key of keys) {
-    if (!GET_URL.test(args.slice(key.index + key[0].length))) return 'has a url that is not chrome.runtime.getURL(...)';
-  }
-  return null;
-}
-
 // An href that stays inside the extension: a fragment, or a relative path without a scheme or
 // a leading // (which would leave the extension's origin). Character references are not
 // decoded here, so any '&' is refused.
@@ -275,7 +290,8 @@ function isOwnHref(value) {
   return !/^[a-z][a-z0-9+.-]*:/i.test(v) && !/^[\\/]{2}/.test(v) && !v.includes('&');
 }
 
-function navigationHits(text, label) {
+// `rel` is the file's path inside the extension; only lib/nav.js may open or change a tab.
+function navigationHits(text, label, rel) {
   const hits = findAll(text, NAVIGATION_PATTERNS, label);
 
   BARE_OPEN.lastIndex = 0;
@@ -286,13 +302,16 @@ function navigationHits(text, label) {
     hits.push(`${label}:${lineOf(text, m.index)} open( (global call)`);
   }
 
-  TAB_CALL.lastIndex = 0;
-  for (const m of text.matchAll(TAB_CALL)) {
-    const [, area, method] = m;
-    if (area === 'windows' && method === 'update') continue; // takes no url
-    const call = callArguments(text, m.index + m[0].length - 1);
-    const problem = call ? urlArgumentProblem(call.args, area === 'tabs' && method === 'update') : 'is not a balanced call';
-    if (problem) hits.push(`${label}:${lineOf(text, m.index)} chrome.${area}.${method}( ${problem}`);
+  // Not a call check: any reference to another member (const f = chrome.tabs.create) counts.
+  if (rel !== NAV_WRAPPER) {
+    for (const m of text.matchAll(TABS_OR_WINDOWS)) {
+      const [, area, member] = m;
+      const where = `${label}:${lineOf(text, m.index)}`;
+      if (!member) hits.push(`${where} chrome.${area} used other than as chrome.${area}.<method> (alias or computed access)`);
+      else if (area === 'windows' || !MANIFEST_POLICY.tabsMethodsOutsideNav.includes(member)) {
+        hits.push(`${where} chrome.${area}.${member} outside ${NAV_WRAPPER} (open tabs with openOwnView)`);
+      }
+    }
   }
 
   // Links: no target, and an href only to the extension's own pages or a fragment.
@@ -320,13 +339,19 @@ function navigationHits(text, label) {
   return hits;
 }
 
-// sha256sum lists paths relative to vendor/; './x', 'vendor/x' and 'a/../x' all name vendor/x.
-// → 'vendor/<path>', or null for a path that leaves vendor/.
-function normalizeSumsPath(name) {
-  let p = path.posix.normalize(name.replace(/\\/g, '/'));
-  if (p.startsWith('vendor/')) p = p.slice('vendor/'.length);
-  if (p === '.' || p === '..' || p.startsWith('../') || p.startsWith('/')) return null;
-  return `vendor/${p}`;
+// SHA256SUMS is accepted only in the form `sha256sum` prints when run inside vendor/:
+// `<64 lowercase hex>  <name>` (or ` *<name>`, binary mode), LF line ends, with a plain relative
+// name. No other spelling of a name is rewritten into one, so each file has exactly one.
+const SUMS_LINE = /^([0-9a-f]{64}) [ *](.*)$/;
+
+// Why `name` is not a plain path relative to vendor/, or null.
+function sumsNameProblem(name) {
+  if (/[\x00-\x1f\x7f\\]/.test(name)) return 'has a backslash or control character';
+  if (name.startsWith('/')) return 'is absolute';
+  const parts = name.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) return 'has an empty, . or .. segment';
+  if (parts[0] === 'vendor') return 'starts with vendor/ (names are relative to vendor/)';
+  return null;
 }
 
 function checkVendorSums(extDir, files, label) {
@@ -338,25 +363,26 @@ function checkVendorSums(extDir, files, label) {
   const listed = new Map();
   fs.readFileSync(sumsFile, 'utf8')
     .split('\n')
-    .forEach((raw, i) => {
-      const line = raw.replace(/\r$/, '');
-      if (line.trim() === '' || line.startsWith('#')) return; // sha256sum -c skips '#' comment lines too
-      const m = line.match(/^([0-9a-fA-F]{64}) [ *](.+)$/);
+    .forEach((line, i) => {
+      if (line === '' || line.startsWith('#')) return; // sha256sum -c skips '#' comment lines too
+      const where = `${label(SUMS_PATH)}:${i + 1}`;
+      const m = line.match(SUMS_LINE);
       if (!m) {
-        problems.push(`${label(SUMS_PATH)}:${i + 1} malformed line`);
+        problems.push(`${where} not canonical: ${JSON.stringify(line)} is not "<sha256 in lowercase hex>  <name>" or "<sha256> *<name>"`);
         return;
       }
-      const rel = normalizeSumsPath(m[2]);
-      if (!rel) {
-        problems.push(`${label(SUMS_PATH)}:${i + 1} path ${JSON.stringify(m[2])} is outside vendor/`);
+      const nameProblem = sumsNameProblem(m[2]);
+      if (nameProblem) {
+        problems.push(`${where} not canonical: name ${JSON.stringify(m[2])} ${nameProblem}`);
         return;
       }
+      const rel = `vendor/${m[2]}`;
       // A second entry for the same file must not win (or lose) silently.
       if (listed.has(rel)) {
-        problems.push(`${label(SUMS_PATH)}:${i + 1} lists ${rel} again (first at line ${listed.get(rel).line})`);
+        problems.push(`${where} lists ${rel} again (first at line ${listed.get(rel).line})`);
         return;
       }
-      listed.set(rel, { hash: m[1].toLowerCase(), line: i + 1 });
+      listed.set(rel, { hash: m[1], line: i + 1 });
     });
   for (const f of vendorFiles) {
     const entry = listed.get(f.rel);
@@ -501,7 +527,7 @@ function runChecks(extDir) {
     network.push(...findAll(text, NETWORK_PATTERNS, label(f.rel)));
     dynamic.push(...findAll(text, DYNAMIC_CODE_PATTERNS, label(f.rel)));
     urls.push(...findAll(text, URL_PATTERNS, label(f.rel)));
-    navigation.push(...navigationHits(text, label(f.rel)));
+    navigation.push(...navigationHits(text, label(f.rel), f.rel));
     if (f.rel.endsWith('.html')) inline.push(...inlineScriptHits(text, label(f.rel)));
   }
   const css = styles.flatMap((f) => findAll(fs.readFileSync(f.abs, 'utf8'), CSS_PATTERNS, label(f.rel)));
@@ -518,8 +544,20 @@ function runChecks(extDir) {
   record(
     'navigation',
     navigation.length === 0,
-    navigation.length === 0 ? `no navigation sink, and chrome.tabs/windows open only chrome.runtime.getURL(...), in ${scope}` : navigation.join('; '),
+    navigation.length === 0
+      ? `no navigation sink in ${scope}; outside ${NAV_WRAPPER} no chrome.windows and only chrome.tabs.{${MANIFEST_POLICY.tabsMethodsOutsideNav.join(', ')}}`
+      : navigation.join('; '),
   );
+
+  // The one file allowed to open tabs must be exactly the reviewed one.
+  const wrapper = files.find((f) => f.rel === NAV_WRAPPER);
+  const pin = MANIFEST_POLICY.navWrapperSha256;
+  if (!wrapper) record('nav-wrapper', false, `${label(NAV_WRAPPER)} missing (the only file allowed to open tabs, pinned by sha256)`);
+  else if (wrapper.kind !== 'file') record('nav-wrapper', false, `${label(NAV_WRAPPER)} is a ${wrapper.kind}, not a regular file`);
+  else {
+    const got = sha256(wrapper.abs);
+    record('nav-wrapper', got === pin, got === pin ? `${label(NAV_WRAPPER)} sha256 ${pin} (pinned)` : `${label(NAV_WRAPPER)} sha256 ${got} != pinned ${pin}`);
+  }
   record('inline-script', inline.length === 0, inline.length === 0 ? `no inline <script> or on*= in ${htmlCount} .html files` : inline.join('; '));
 
   const locales = files.filter((f) => f.kind === 'file' && /^_locales\/.+\/messages\.json$/.test(f.rel));
@@ -579,6 +617,8 @@ const PINNED_POLICY = {
   homepageUrl: 'https://github.com/2lab-ai/zauthenticator',
   extensionPagesCsp:
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  navWrapperSha256: 'bcd3c5ef3f2a70537349f0c8957214dd1143d695a0f088ecd7b76130fe9cbf83',
+  tabsMethodsOutsideNav: ['captureVisibleTab', 'getCurrent'],
 };
 
 // Differences between two policies, [] when equal. Lists compare as sorted copies (so a
@@ -610,6 +650,8 @@ const PIN_MUTATIONS = [
   ['forbiddenKeys', (p) => (p.forbiddenKeys = p.forbiddenKeys.filter((k) => k !== 'background'))],
   ['homepageUrl', (p) => (p.homepageUrl = 'https://github.com/2lab-ai/zauthenticator/')],
   ['extensionPagesCsp', (p) => (p.extensionPagesCsp = p.extensionPagesCsp.replace("img-src 'self' data: blob:", 'img-src *'))],
+  ['navWrapperSha256', (p) => (p.navWrapperSha256 = `${p.navWrapperSha256.slice(0, -1)}0`)],
+  ['tabsMethodsOutsideNav', (p) => p.tabsMethodsOutsideNav.push('create')],
   ['newField', (p) => (p.newField = [])],
 ];
 
@@ -621,9 +663,27 @@ const ONE_PIXEL_PNG = Buffer.from(
 const APPROVED_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+// extension/lib/nav.js, byte for byte. Written out here rather than read from the repository so
+// the self-test does not depend on where the script runs; its sha256 must equal the pin.
+const NAV_WRAPPER_SOURCE = [
+  "// The only code in the extension that opens a tab. Every destination is this extension's own",
+  '// popup page with one of the fixed view names below; nothing else can be passed in.',
+  '// The trust gate pins this file by sha256 and rejects tab/window-opening calls anywhere else.',
+  '',
+  "const VIEWS = new Set(['add-file', 'settings']);",
+  '',
+  '/** Opens popup/popup.html#<view> of this extension in a new tab. */',
+  'export async function openOwnView(view) {',
+  '  if (!VIEWS.has(view)) throw new Error(`Unknown view: ${view}`);',
+  '  await chrome.tabs.create({ url: chrome.runtime.getURL(`popup/popup.html#${view}`) });',
+  '}',
+  '',
+].join('\n');
+
 // The clean fixture carries the shapes the real extension uses that must NOT trip a rule
-// (member .open() calls, open() declarations and method shorthand, location reads,
-// chrome.tabs calls on chrome.runtime.getURL, plain forms, JSDoc generics, CSS data: urls).
+// (member .open() calls, open() declarations and method shorthand, location reads, the
+// chrome.tabs reads other files may make, tabs opened through lib/nav.js, plain forms, JSDoc
+// generics, CSS data: urls).
 function cleanFixture() {
   return {
     manifest: {
@@ -640,6 +700,7 @@ function cleanFixture() {
         "// RFC 6238 over WebCrypto\nexport async function hotp(key) {\n  return crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);\n}\n",
       'lib/store.js': "export async function load() { return chrome.storage.local.get('vault'); }\n",
       'lib/qr.js': "import jsQR from '../vendor/jsQR.js';\nexport function decode(img) { return jsQR(img.data, img.width, img.height); }\n",
+      'lib/nav.js': NAV_WRAPPER_SOURCE,
       'lib/vault.js':
         "/**\n * - 'corrupt'  malformed record or key; open() with a key that does not authenticate\n * @returns {Promise<object>} new record\n */\nexport async function open(rawKey, record) {\n  return { rawKey, record };\n}\n",
       'popup/popup.html':
@@ -648,6 +709,7 @@ function cleanFixture() {
         'body { font: 13px system-ui; }\n.brand { background: url(../icons/16.png) no-repeat; }\n.check { background-image: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); }\n@media (prefers-color-scheme: dark) { body { color: white; } }\n',
       'popup/popup.js': [
         "import * as vault from '../lib/vault.js';",
+        "import { openOwnView } from '../lib/nav.js';",
         "document.getElementById('lock-btn').addEventListener('click', () => {});",
         'const add = { open(options) { return options; } };',
         'const settings = { open() {} };',
@@ -662,13 +724,8 @@ function cleanFixture() {
         '  const isTab = Boolean(await chrome.tabs.getCurrent());',
         '  const maybe = await chrome.tabs?.getCurrent();',
         "  const image = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });",
-        "  await chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html#add-file') });",
-        '  await chrome.tabs.create({',
-        "    url: chrome.runtime.getURL('popup/popup.html#settings'), // a full tab",
-        '    active: true,',
-        '  });',
-        '  await chrome.tabs.update(maybe.id, { active: true });',
-        "  await chrome.tabs.update(maybe.id, { url: chrome.runtime.getURL('popup/popup.html') });",
+        "  await openOwnView('add-file');",
+        "  await openOwnView('settings'); // a full tab",
         '  window.close();',
         '  return { isTab, image, here, opened, open };',
         '}',
@@ -770,13 +827,7 @@ const CASES = [
   ['ok-vendor-exempt-from-scan', addJs('vendor/jsQR.js', "fetch('https://x.test/'); eval('1'); new WebSocket('wss://x'); window.open('https://x.test/');\n"), []],
   ['ok-word-boundaries', addJs('lib/words.js', '// prefetch(x) retrieval(y) refetch(z) reopen(x) geolocation = 1\nconst fetched = 1; const evaluate = () => 0; const opener = window.opener;\n'), []],
   ['ok-ds-store-ignored', (fx) => (fx.files['popup/.DS_Store'] = Buffer.from([0, 0, 0, 1, 66, 117, 100, 49])), []],
-  [
-    'ok-sums-binary-marker-and-dot-slash',
-    (fx) => {
-      fx.sums = 'deferred';
-    },
-    [],
-  ],
+  ['ok-sums-binary-marker', editSums((text) => text.replace(/^([0-9a-f]{64}) {2}/gm, '$1 *')), []],
   [
     'ok-sums-comment-line',
     (fx) => {
@@ -813,6 +864,19 @@ const CASES = [
     ),
     [],
   ],
+  // ASCII whitespace (tab, LF, FF, CR, space) separates tokens and directives; anything else
+  // does not, and a browser skips a directive that contains a non-ASCII character.
+  [
+    'ok-csp-ascii-whitespace',
+    setCsp(
+      "\tdefault-src\t'none';\nscript-src\r\n'self';\fstyle-src 'self';img-src\t'self'\fdata:\nblob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\r\n",
+    ),
+    [],
+  ],
+  ['csp-nbsp-separator', setCsp(APPROVED_CSP.replace("default-src 'none'", "default-src 'none'")), ['csp'], /U\+00A0/],
+  ['csp-em-space-separator', setCsp(APPROVED_CSP.replace("; script-src 'self'", "; script-src 'self'")), ['csp'], /U\+2003/],
+  ['csp-nbsp-around-policy', setCsp(` ${APPROVED_CSP} `), ['csp'], /U\+00A0/],
+  ['csp-vertical-tab-separator', setCsp(APPROVED_CSP.replace("connect-src 'none'", "connect-src\u000b'none'")), ['csp'], /U\+000B/],
   ['csp-absent', (fx) => delete fx.manifest.content_security_policy, ['csp']],
   ['csp-mv2-string', (fx) => (fx.manifest.content_security_policy = APPROVED_CSP), ['csp']],
   ['csp-empty', setCsp(''), ['csp']],
@@ -929,6 +993,49 @@ const CASES = [
   ['nav-tabs-computed', addJs('lib/x.js', "chrome.tabs['create']({ url: u });\n"), ['navigation']],
   ['nav-tabs-goback', addJs('lib/x.js', 'chrome.tabs.goBack();\n'), ['navigation']],
   ['nav-tabs-duplicate', addJs('lib/x.js', 'chrome.tabs.duplicate(tab.id);\n'), ['navigation']],
+  // Outside lib/nav.js nothing opens or changes a tab, whatever the arguments look like.
+  ['nav-tabs-create-getURL-elsewhere', addJs('lib/x.js', "chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html#add-file') });\n"), ['navigation']],
+  [
+    'nav-tabs-create-getURL-multiline',
+    addJs('lib/x.js', "await chrome.tabs.create({\n  url: chrome.runtime.getURL('popup/popup.html#settings'),\n  active: true,\n});\n"),
+    ['navigation'],
+  ],
+  ['nav-tabs-create-getURL-concat', addJs('lib/x.js', "chrome.tabs.create({ url: chrome.runtime.getURL('x') + y });\n"), ['navigation']],
+  ['nav-tabs-create-getURL-or', addJs('lib/x.js', 'chrome.tabs.create({ url: chrome.runtime.getURL(a) || other });\n'), ['navigation']],
+  ['nav-tabs-update-built-options', addJs('lib/x.js', 'chrome.tabs.update(id, Object.assign({}, opts));\n'), ['navigation']],
+  ['nav-tabs-update-active', addJs('lib/x.js', 'chrome.tabs.update(id, { active: true });\n'), ['navigation']],
+  ['nav-tabs-update-getURL', addJs('lib/x.js', "chrome.tabs.update(id, { url: chrome.runtime.getURL('popup/popup.html') });\n"), ['navigation']],
+  ['nav-tabs-reload', addJs('lib/x.js', 'chrome.tabs.reload(id);\n'), ['navigation']],
+  ['nav-tabs-goforward', addJs('lib/x.js', 'chrome.tabs.goForward(id);\n'), ['navigation']],
+  ['nav-windows-update', addJs('lib/x.js', 'chrome.windows.update(id, { focused: true });\n'), ['navigation']],
+  ['nav-tabs-method-reference', addJs('lib/x.js', 'const make = chrome.tabs.create;\nmake({ url: u });\n'), ['navigation']],
+  ['nav-tabs-optional-chrome', addJs('lib/x.js', 'export const go = (u) => chrome?.tabs.create({ url: u });\n'), ['navigation']],
+  ['nav-chrome-destructure', addJs('lib/x.js', 'const { tabs } = chrome;\ntabs.create({ url: u });\n'), ['navigation']],
+  ['nav-chrome-computed', addJs('lib/x.js', "chrome['tabs'].create({ url: u });\n"), ['navigation']],
+  ['nav-chrome-alias', addJs('lib/x.js', 'const c = chrome;\nc.tabs.create({ url: u });\n'), ['navigation']],
+  ['nav-tabs-spaced-comment', addJs('lib/x.js', 'chrome.tabs /* x */ .create({ url: u });\n'), ['navigation']],
+  // The exemption is the path lib/nav.js, not the content.
+  ['nav-wrapper-copy-elsewhere', (fx) => (fx.files['popup/nav.js'] = NAV_WRAPPER_SOURCE), ['navigation']],
+  // lib/nav.js itself is pinned by sha256.
+  ['nav-wrapper-missing', (fx) => delete fx.files['lib/nav.js'], ['nav-wrapper'], /missing/],
+  ['nav-wrapper-one-byte', (fx) => (fx.files['lib/nav.js'] = NAV_WRAPPER_SOURCE.replace("'settings'", "'settingz'")), ['nav-wrapper'], /sha256/],
+  ['nav-wrapper-trailing-byte', (fx) => (fx.files['lib/nav.js'] = `${NAV_WRAPPER_SOURCE}\n`), ['nav-wrapper'], /sha256/],
+  [
+    'nav-wrapper-any-url',
+    (fx) => (fx.files['lib/nav.js'] = NAV_WRAPPER_SOURCE.replace('if (!VIEWS.has(view)) throw', 'if (!view) throw').replace('chrome.runtime.getURL(`popup/popup.html#${view}`)', 'view')),
+    ['nav-wrapper'],
+    /sha256/,
+  ],
+  [
+    'nav-wrapper-symlink',
+    (fx) => {
+      delete fx.files['lib/nav.js'];
+      fx.files['lib/nav-real.js'] = NAV_WRAPPER_SOURCE;
+      fx.symlinks['lib/nav.js'] = 'nav-real.js';
+    },
+    ['file-types', 'navigation', 'nav-wrapper'],
+    /not a regular file/,
+  ],
   ['nav-set-uninstall-url', addJs('lib/x.js', 'chrome.runtime.setUninstallURL(chrome.runtime.getManifest().homepage_url);\n'), ['navigation']],
   ['nav-in-comment', addJs('lib/x.js', '// do not call window.open(url) here\n'), ['navigation']],
 
@@ -965,14 +1072,23 @@ const CASES = [
     ['vendor-sums'],
   ],
   ['vendor-no-sums', (fx) => (fx.sums = null), ['vendor-sums']],
-  // Duplicate paths after normalization: a wrong hash listed first and the right one last used
-  // to pass, because the last entry silently won.
-  ['vendor-sums-duplicate-line', editSums((text, hash) => `${text}${hash}  jsQR.js\n`), ['vendor-sums']],
-  ['vendor-sums-duplicate-wrong-last', editSums((text) => `${text}${WRONG_HASH}  ./jsQR.js\n`), ['vendor-sums']],
-  ['vendor-sums-duplicate-dot-slash', editSums((text) => `${WRONG_HASH}  ./jsQR.js\n${text}`), ['vendor-sums']],
-  ['vendor-sums-duplicate-vendor-prefix', editSums((text) => `${WRONG_HASH} *vendor/jsQR.js\n${text}`), ['vendor-sums']],
-  ['vendor-sums-duplicate-dot-segments', editSums((text, hash) => `${text}${hash}  sub/../jsQR.js\n`), ['vendor-sums']],
-  ['vendor-sums-outside-vendor', editSums((text) => `${text}${WRONG_HASH}  ../manifest.json\n`), ['vendor-sums']],
+  // A second entry for the same name must not win (or lose) silently.
+  ['vendor-sums-duplicate-line', editSums((text, hash) => `${text}${hash}  jsQR.js\n`), ['vendor-sums'], /again/],
+  ['vendor-sums-duplicate-wrong-last', editSums((text) => `${text}${WRONG_HASH}  jsQR.js\n`), ['vendor-sums'], /again/],
+  ['vendor-sums-duplicate-wrong-first', editSums((text) => `${WRONG_HASH}  jsQR.js\n${text}`), ['vendor-sums'], /again/],
+  // Only sha256sum's own output form: other spellings of a vendored name used to be rewritten
+  // to it (so ./x, vendor/x and a/../x all named vendor/x); each is now refused as it stands.
+  ['vendor-sums-dot-slash', editSums((text, hash) => text.replace(`${hash}  jsQR.js`, `${hash}  ./jsQR.js`)), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-vendor-prefix', editSums((text, hash) => text.replace(`${hash}  jsQR.js`, `${hash} *vendor/jsQR.js`)), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-dot-segments', editSums((text, hash) => text.replace(`${hash}  jsQR.js`, `${hash}  sub/../jsQR.js`)), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-backslash', editSums((text, hash) => text.replace(`${hash}  jsQR.js`, `${hash}  sub\\..\\jsQR.js`)), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-empty-segment', editSums((text, hash) => text.replace(`${hash}  jsQR.js`, `${hash}  sub//../jsQR.js`)), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-absolute', editSums((text) => `${text}${WRONG_HASH}  /etc/passwd\n`), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-outside-vendor', editSums((text) => `${text}${WRONG_HASH}  ../manifest.json\n`), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-uppercase-hex', editSums((text, hash) => text.replace(hash, hash.toUpperCase())), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-crlf', editSums((text) => text.replace(/\n/g, '\r\n')), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-blank-line', editSums((text) => `${text}   \n`), ['vendor-sums'], /not canonical/],
+  ['vendor-sums-single-space', editSums((text, hash) => text.replace(`${hash}  jsQR.js`, `${hash} jsQR.js`)), ['vendor-sums'], /not canonical/],
   ['vendor-js-without-license', addJs('vendor/extra.js', 'export default 1;\n'), ['vendor-license']],
   [
     'vendor-license-misnamed',
@@ -1002,23 +1118,13 @@ const CASES = [
 function buildCase(dir, mutate) {
   const fx = cleanFixture();
   mutate(fx);
-  const deferred = fx.sums === 'deferred';
   const comment = fx.sums === 'comment';
-  if (deferred || comment) fx.sums = 'auto';
+  if (comment) fx.sums = 'auto';
   writeFixture(dir, fx);
   const sumsFile = path.join(dir, SUMS_PATH);
   if (comment) {
     const sums = fs.readFileSync(sumsFile, 'utf8');
     fs.writeFileSync(sumsFile, `# jsQR, pinned upstream build\n${sums}`);
-  }
-  if (deferred) {
-    // Same hashes, written in the other two standard sha256sum forms.
-    const lines = fs
-      .readFileSync(sumsFile, 'utf8')
-      .trim()
-      .split('\n')
-      .map((l, i) => (i % 2 === 0 ? l.replace('  ', ' *') : l.replace('  ', '  ./')));
-    fs.writeFileSync(sumsFile, `${lines.join('\r\n')}\r\n`);
   }
   if (fx.sumsEdit) {
     const text = fs.readFileSync(sumsFile, 'utf8');
@@ -1056,19 +1162,31 @@ function selfTest() {
       const diff = policyDifferences(MANIFEST_POLICY, copy);
       report(diff.length > 0 && diff.every((d) => d.startsWith(field)), `policy-pin-detects-${field}`, diff.join('; ') || 'no difference reported');
     }
+    // The clean fixture's lib/nav.js is the pinned file, so the cases below test the real wrapper.
+    const fixtureNav = sha256Of(Buffer.from(NAV_WRAPPER_SOURCE));
+    report(
+      fixtureNav === MANIFEST_POLICY.navWrapperSha256,
+      'nav-wrapper-fixture-pin',
+      `NAV_WRAPPER_SOURCE sha256 ${fixtureNav} ${fixtureNav === MANIFEST_POLICY.navWrapperSha256 ? '==' : '!='} navWrapperSha256`,
+    );
 
-    for (const [name, mutate, expected] of CASES) {
+    // A case may also name the reason: a pattern at least one failing rule's detail must match,
+    // so a fixture that fails for some other reason (a missing file, say) does not count.
+    for (const [name, mutate, expected, reason] of CASES) {
       const dir = path.join(root, name);
       buildCase(dir, mutate);
       const results = runChecks(dir);
-      const failed = results.filter((r) => !r.ok).map((r) => r.rule);
+      const failing = results.filter((r) => !r.ok);
+      const failed = failing.map((r) => r.rule);
       const missing = RULES.filter((rule) => !results.some((r) => r.rule === rule));
-      const ok = missing.length === 0 && failed.length === expected.length && expected.every((rule) => failed.includes(rule));
-      const why = results
-        .filter((r) => !r.ok)
-        .map((r) => `${r.rule}: ${r.detail}`)
-        .join(' | ');
-      report(ok, name, `expected FAIL [${expected.join(', ')}] got FAIL [${failed.join(', ')}]${why ? ` (${why})` : ''}`);
+      const ok =
+        missing.length === 0 &&
+        failed.length === expected.length &&
+        expected.every((rule) => failed.includes(rule)) &&
+        (!reason || failing.some((r) => reason.test(r.detail)));
+      const why = failing.map((r) => `${r.rule}: ${r.detail}`).join(' | ');
+      const want = `expected FAIL [${expected.join(', ')}]${reason ? ` matching ${reason}` : ''}`;
+      report(ok, name, `${want} got FAIL [${failed.join(', ')}]${why ? ` (${why})` : ''}`);
     }
 
     // The CLI itself: exit codes, one line per rule, and a clean message when extension/ is absent.
