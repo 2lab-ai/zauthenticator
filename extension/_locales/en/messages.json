@@ -1,0 +1,484 @@
+{
+  "lang": {
+    "message": "en",
+    "description": "BCP 47 language tag of this locale, used for <html lang>."
+  },
+  "extName": {
+    "message": "zauthentificator",
+    "description": "Extension name. Do not translate."
+  },
+  "extDescription": {
+    "message": "Open-source two-factor (TOTP) authenticator. Codes are generated offline and secrets stay encrypted on this device.",
+    "description": "Store/extension description."
+  },
+  "actionTitle": {
+    "message": "zauthentificator: two-factor codes",
+    "description": "Toolbar button tooltip."
+  },
+  "loading": {
+    "message": "Loading…"
+  },
+  "errStartup": {
+    "message": "Something went wrong while starting: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "setupTitle": {
+    "message": "Set a passphrase"
+  },
+  "setupIntro": {
+    "message": "Your accounts are encrypted with this passphrase and stored only on this device."
+  },
+  "setupWarning": {
+    "message": "It cannot be recovered. If you forget it, the saved accounts cannot be decrypted.",
+    "description": "One-line warning shown when creating the vault."
+  },
+  "setupPassLabel": {
+    "message": "Passphrase (8 characters or more)"
+  },
+  "setupPass2Label": {
+    "message": "Confirm passphrase"
+  },
+  "setupSubmit": {
+    "message": "Create vault"
+  },
+  "setupBusy": {
+    "message": "Creating…"
+  },
+  "errTooShort": {
+    "message": "Use at least $COUNT$ characters.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "errMismatch": {
+    "message": "The passphrases don't match."
+  },
+  "errSetupFailed": {
+    "message": "Couldn't create the vault: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "unlockTitle": {
+    "message": "Locked"
+  },
+  "unlockIntro": {
+    "message": "Enter your passphrase to see your codes."
+  },
+  "unlockPassLabel": {
+    "message": "Passphrase"
+  },
+  "unlockSubmit": {
+    "message": "Unlock"
+  },
+  "unlockBusy": {
+    "message": "Unlocking…"
+  },
+  "errEmptyPass": {
+    "message": "Enter your passphrase."
+  },
+  "errWrongPass": {
+    "message": "Wrong passphrase."
+  },
+  "errUnlockFailed": {
+    "message": "Couldn't unlock the vault: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "editBtn": {
+    "message": "Edit accounts"
+  },
+  "addBtn": {
+    "message": "Add account"
+  },
+  "settingsBtn": {
+    "message": "Settings"
+  },
+  "lockBtn": {
+    "message": "Lock"
+  },
+  "accountsLabel": {
+    "message": "Accounts"
+  },
+  "searchLabel": {
+    "message": "Search accounts"
+  },
+  "searchPlaceholder": {
+    "message": "Search"
+  },
+  "noMatches": {
+    "message": "No matching accounts."
+  },
+  "emptyTitle": {
+    "message": "No accounts yet"
+  },
+  "emptyHint": {
+    "message": "Scan a QR code, paste an otpauth:// link, or type in a setup key."
+  },
+  "addAccountBtn": {
+    "message": "Add account"
+  },
+  "copyHint": {
+    "message": "Click to copy the code"
+  },
+  "copied": {
+    "message": "Copied"
+  },
+  "copiedLive": {
+    "message": "Copied the code for $NAME$.",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "copyFailed": {
+    "message": "Couldn't copy to the clipboard."
+  },
+  "codeUnavailable": {
+    "message": "Invalid key"
+  },
+  "deleteBtn": {
+    "message": "Delete"
+  },
+  "deleteLabel": {
+    "message": "Delete $NAME$",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "deleteConfirm": {
+    "message": "Delete?",
+    "description": "Armed delete button; a second click deletes."
+  },
+  "deleteConfirmLabel": {
+    "message": "Click again to delete $NAME$",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "deletedLive": {
+    "message": "Deleted $NAME$.",
+    "placeholders": {
+      "name": {
+        "content": "$1",
+        "example": "GitHub (you@example.com)"
+      }
+    }
+  },
+  "deleteFailed": {
+    "message": "Couldn't delete: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "cancelBtn": {
+    "message": "Cancel"
+  },
+  "backBtn": {
+    "message": "Back"
+  },
+  "addTitle": {
+    "message": "Add account"
+  },
+  "scanTabBtn": {
+    "message": "Scan this page"
+  },
+  "scanTabHint": {
+    "message": "Finds a QR code on the visible part of the current tab."
+  },
+  "scanFileBtn": {
+    "message": "From an image"
+  },
+  "scanFileHint": {
+    "message": "A screenshot or a saved QR picture."
+  },
+  "dropHint": {
+    "message": "Drop an image here, paste one (Ctrl+V / ⌘V), or choose a file."
+  },
+  "chooseImageLabel": {
+    "message": "Image with a QR code"
+  },
+  "uriTitle": {
+    "message": "Paste otpauth:// links"
+  },
+  "uriPlaceholder": {
+    "message": "otpauth://totp/Service:you@example.com?secret=…"
+  },
+  "uriHint": {
+    "message": "One link per line."
+  },
+  "uriSubmit": {
+    "message": "Add from links"
+  },
+  "manualTitle": {
+    "message": "Enter a setup key"
+  },
+  "manualIssuer": {
+    "message": "Service"
+  },
+  "manualIssuerPlaceholder": {
+    "message": "e.g. GitHub"
+  },
+  "manualLabel": {
+    "message": "Account"
+  },
+  "manualLabelPlaceholder": {
+    "message": "e.g. you@example.com"
+  },
+  "manualSecret": {
+    "message": "Secret key"
+  },
+  "manualSecretPlaceholder": {
+    "message": "Base32, e.g. JBSW Y3DP EHPK 3PXP"
+  },
+  "advanced": {
+    "message": "Advanced"
+  },
+  "algorithm": {
+    "message": "Algorithm"
+  },
+  "digits": {
+    "message": "Digits"
+  },
+  "period": {
+    "message": "Period"
+  },
+  "period30": {
+    "message": "30 seconds"
+  },
+  "period60": {
+    "message": "60 seconds"
+  },
+  "manualSubmit": {
+    "message": "Add account"
+  },
+  "scanning": {
+    "message": "Looking for a QR code…"
+  },
+  "adding": {
+    "message": "Adding…"
+  },
+  "errScanTabNeedsPopup": {
+    "message": "Page scanning works from the toolbar button only. Open the page that shows the QR code, click the zauthentificator icon, and try again."
+  },
+  "errCaptureFailed": {
+    "message": "This tab can't be captured. Browser pages and extension stores are off-limits; try a regular web page."
+  },
+  "errNoQrTab": {
+    "message": "No QR code found on the visible part of the page. Scroll it into view or zoom in, then try again."
+  },
+  "errNoQrImage": {
+    "message": "No QR code found in that image."
+  },
+  "errBadImage": {
+    "message": "That image couldn't be read."
+  },
+  "errDecoderMissing": {
+    "message": "The QR decoder failed to load."
+  },
+  "errNotImage": {
+    "message": "Choose an image file (PNG, JPEG, …)."
+  },
+  "errNotOtpauth": {
+    "message": "That QR code is not a two-factor setup code (otpauth://)."
+  },
+  "errNotOtpauthLink": {
+    "message": "Not an otpauth:// link."
+  },
+  "errMigration": {
+    "message": "Google Authenticator export codes (otpauth-migration://) aren't supported yet. Add each account from its own QR code or setup key."
+  },
+  "errInvalidLink": {
+    "message": "Invalid link: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "errLine": {
+    "message": "Line $LINE$: $REASON$",
+    "placeholders": {
+      "line": {
+        "content": "$1",
+        "example": "3"
+      },
+      "reason": {
+        "content": "$2",
+        "example": "bad input"
+      }
+    }
+  },
+  "errNoLinks": {
+    "message": "Paste at least one otpauth:// link."
+  },
+  "errNameRequired": {
+    "message": "Enter a service or an account name."
+  },
+  "errSecretRequired": {
+    "message": "Enter the secret key."
+  },
+  "errManual": {
+    "message": "Check the details: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "errSaveFailed": {
+    "message": "Couldn't save: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "errAllDuplicates": {
+    "message": "Already in your list, so nothing was added."
+  },
+  "addedCount": {
+    "message": "Accounts added: $COUNT$.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "skippedCount": {
+    "message": "Duplicates skipped: $COUNT$.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "importedCount": {
+    "message": "Backup imported. Added: $ADDED$, duplicates skipped: $SKIPPED$.",
+    "placeholders": {
+      "added": {
+        "content": "$1",
+        "example": "2"
+      },
+      "skipped": {
+        "content": "$2",
+        "example": "1"
+      }
+    }
+  },
+  "settingsTitle": {
+    "message": "Settings"
+  },
+  "backupTitle": {
+    "message": "Backup"
+  },
+  "exportHint": {
+    "message": "The backup file stays encrypted with your passphrase. Keep it somewhere safe."
+  },
+  "exportBtn": {
+    "message": "Export encrypted backup"
+  },
+  "exported": {
+    "message": "Saved $FILE$.",
+    "placeholders": {
+      "file": {
+        "content": "$1",
+        "example": "zauthentificator-backup-2026-11-16.json"
+      }
+    }
+  },
+  "importTitle": {
+    "message": "Import a backup"
+  },
+  "importFileLabel": {
+    "message": "Backup file (.json)"
+  },
+  "importPassLabel": {
+    "message": "Passphrase used for that backup"
+  },
+  "importSubmit": {
+    "message": "Import"
+  },
+  "importing": {
+    "message": "Importing…"
+  },
+  "errImportNoFile": {
+    "message": "Choose a backup file first."
+  },
+  "errImportNoPass": {
+    "message": "Enter the passphrase for that backup."
+  },
+  "errImportFile": {
+    "message": "That file isn't a zauthentificator backup."
+  },
+  "errImportPass": {
+    "message": "Wrong passphrase for that backup."
+  },
+  "errImportFailed": {
+    "message": "Couldn't import: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "bad input"
+      }
+    }
+  },
+  "openTabHint": {
+    "message": "If the file picker closes this popup, open settings in a tab."
+  },
+  "openTabBtn": {
+    "message": "Open in a tab"
+  },
+  "aboutTitle": {
+    "message": "About"
+  },
+  "securitySummary": {
+    "message": "No network access, no telemetry. Secrets are encrypted at rest (AES-256-GCM with a PBKDF2 key from your passphrase) and never leave this device."
+  },
+  "clockHint": {
+    "message": "Codes rejected? They are computed from your computer's clock, so make sure the date and time are set automatically."
+  },
+  "versionLabel": {
+    "message": "Version $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "0.1.0"
+      }
+    }
+  },
+  "sourceBtn": {
+    "message": "Source code"
+  }
+}

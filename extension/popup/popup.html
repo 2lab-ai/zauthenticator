@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title data-i18n="extName">zauthentificator</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="../vendor/jsQR.js"></script>
+  <script type="module" src="popup.js"></script>
+</head>
+<body data-state="loading">
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand-icon" src="../icons/32.png" alt="" width="20" height="20">
+      <span class="brand-name" data-i18n="extName">zauthentificator</span>
+    </div>
+    <div class="topbar-actions">
+      <button type="button" id="edit-btn" class="icon-btn" aria-pressed="false" data-i18n-label="editBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>
+      </button>
+      <button type="button" id="add-btn" class="icon-btn" data-i18n-label="addBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" id="settings-btn" class="icon-btn" data-i18n-label="settingsBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+      </button>
+      <button type="button" id="lock-btn" class="icon-btn" data-i18n-label="lockBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <p id="live" class="visually-hidden" aria-live="polite"></p>
+
+  <main id="main">
+    <section class="view" data-view="loading" aria-busy="true">
+      <p class="loading" data-i18n="loading">Loading…</p>
+    </section>
+
+    <section class="view gate" data-view="setup" aria-labelledby="setup-title">
+      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+      <h1 id="setup-title" data-i18n="setupTitle">Create a passphrase</h1>
+      <p class="lead" data-i18n="setupIntro">Your accounts are encrypted with this passphrase and stay on this device.</p>
+      <p class="warning" data-i18n="setupWarning">It cannot be recovered. If you forget it, your accounts cannot be decrypted.</p>
+      <form id="setup-form" class="stack" novalidate>
+        <div class="field">
+          <label for="setup-pass" data-i18n="setupPassLabel">Passphrase (at least 8 characters)</label>
+          <input id="setup-pass" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <div class="field">
+          <label for="setup-pass2" data-i18n="setupPass2Label">Confirm passphrase</label>
+          <input id="setup-pass2" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <p id="setup-error" class="error" role="alert"></p>
+        <button type="submit" id="setup-submit" class="btn primary block" data-i18n="setupSubmit">Create vault</button>
+      </form>
+    </section>
+
+    <section class="view gate" data-view="locked" aria-labelledby="unlock-title">
+      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/></svg>
+      <h1 id="unlock-title" data-i18n="unlockTitle">Locked</h1>
+      <p class="lead" data-i18n="unlockIntro">Enter your passphrase to show your codes.</p>
+      <form id="unlock-form" class="stack" novalidate>
+        <div class="field">
+          <label for="unlock-pass" data-i18n="unlockPassLabel">Passphrase</label>
+          <input id="unlock-pass" type="password" autocomplete="current-password" required>
+        </div>
+        <p id="unlock-error" class="error" role="alert"></p>
+        <button type="submit" id="unlock-submit" class="btn primary block" data-i18n="unlockSubmit">Unlock</button>
+      </form>
+    </section>
+
+    <section class="view" data-view="list" aria-label="Accounts" data-i18n-label="accountsLabel">
+      <div class="search-row">
+        <input id="search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="searchPlaceholder" data-i18n-label="searchLabel">
+      </div>
+      <p id="list-notice" class="notice" role="status"></p>
+      <ul id="accounts" class="accounts"></ul>
+      <p id="no-matches" class="muted center" data-i18n="noMatches" hidden>No matching accounts.</p>
+      <div id="empty" class="empty" hidden>
+        <svg class="empty-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 12h2M11 12h2M15 12h2"/></svg>
+        <h2 data-i18n="emptyTitle">No accounts yet</h2>
+        <p class="muted" data-i18n="emptyHint">Add one by scanning a QR code or pasting an otpauth:// link.</p>
+        <button type="button" id="empty-add-btn" class="btn primary" data-i18n="addAccountBtn">Add account</button>
+      </div>
+    </section>
+
+    <section class="view" data-view="add" aria-labelledby="add-title">
+      <div class="view-header">
+        <button type="button" id="add-cancel" class="icon-btn" data-i18n-label="cancelBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h1 id="add-title" data-i18n="addTitle">Add account</h1>
+      </div>
+      <p id="add-error" class="error" role="alert"></p>
+      <p id="add-status" class="status" role="status"></p>
+
+      <div class="scan-row">
+        <button type="button" id="scan-tab-btn" class="tile">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/></svg>
+          <span class="tile-title" data-i18n="scanTabBtn">Scan QR on this page</span>
+          <span class="tile-hint" data-i18n="scanTabHint">Reads the visible part of the current tab</span>
+        </button>
+        <button type="button" id="scan-file-btn" class="tile">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20 15l-4.5-4.5L7 19"/></svg>
+          <span class="tile-title" data-i18n="scanFileBtn">QR from an image</span>
+          <span class="tile-hint" data-i18n="scanFileHint">Screenshot or saved picture</span>
+        </button>
+      </div>
+
+      <div id="drop-zone" class="drop-zone">
+        <p data-i18n="dropHint">Drop an image here, paste one, or choose a file.</p>
+        <label class="visually-hidden" for="scan-file-input" data-i18n="chooseImageLabel">Image with a QR code</label>
+        <input id="scan-file-input" type="file" accept="image/*" multiple>
+      </div>
+
+      <section class="section" aria-labelledby="uri-title">
+        <h2 id="uri-title"><label for="add-uri" data-i18n="uriTitle">Paste otpauth:// links</label></h2>
+        <textarea id="add-uri" rows="3" spellcheck="false" autocomplete="off" data-i18n-placeholder="uriPlaceholder"></textarea>
+        <p class="hint" data-i18n="uriHint">One link per line.</p>
+        <button type="button" id="add-uri-submit" class="btn" data-i18n="uriSubmit">Add from links</button>
+      </section>
+
+      <section class="section" aria-labelledby="manual-title">
+        <h2 id="manual-title" data-i18n="manualTitle">Enter a setup key</h2>
+        <form id="manual-form" novalidate>
+          <div class="field">
+            <label for="manual-issuer" data-i18n="manualIssuer">Service</label>
+            <input id="manual-issuer" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="manualIssuerPlaceholder">
+          </div>
+          <div class="field">
+            <label for="manual-label" data-i18n="manualLabel">Account</label>
+            <input id="manual-label" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="manualLabelPlaceholder">
+          </div>
+          <div class="field">
+            <label for="manual-secret" data-i18n="manualSecret">Secret key</label>
+            <input id="manual-secret" class="mono" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" data-i18n-placeholder="manualSecretPlaceholder">
+          </div>
+          <details class="advanced">
+            <summary data-i18n="advanced">Advanced</summary>
+            <div class="advanced-grid">
+              <div class="field">
+                <label for="manual-algorithm" data-i18n="algorithm">Algorithm</label>
+                <select id="manual-algorithm">
+                  <option value="SHA1" selected>SHA-1</option>
+                  <option value="SHA256">SHA-256</option>
+                  <option value="SHA512">SHA-512</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="manual-digits" data-i18n="digits">Digits</label>
+                <select id="manual-digits">
+                  <option value="6" selected>6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="manual-period" data-i18n="period">Period</label>
+                <select id="manual-period">
+                  <option value="30" selected data-i18n="period30">30 seconds</option>
+                  <option value="60" data-i18n="period60">60 seconds</option>
+                </select>
+              </div>
+            </div>
+          </details>
+          <button type="submit" id="manual-submit" class="btn primary block" data-i18n="manualSubmit">Add account</button>
+        </form>
+      </section>
+    </section>
+
+    <section class="view" data-view="settings" aria-labelledby="settings-title">
+      <div class="view-header">
+        <button type="button" id="settings-back" class="icon-btn" data-i18n-label="backBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h1 id="settings-title" data-i18n="settingsTitle">Settings</h1>
+      </div>
+
+      <section class="section first" aria-labelledby="backup-title">
+        <h2 id="backup-title" data-i18n="backupTitle">Backup</h2>
+        <p class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
+        <button type="button" id="export-btn" class="btn" data-i18n="exportBtn">Export encrypted backup</button>
+        <p id="export-status" class="status" role="status"></p>
+      </section>
+
+      <section class="section" aria-labelledby="import-title">
+        <h2 id="import-title" data-i18n="importTitle">Import a backup</h2>
+        <form id="import-form" novalidate>
+          <div class="field">
+            <label for="import-file" data-i18n="importFileLabel">Backup file</label>
+            <input id="import-file" type="file" accept=".json,application/json">
+          </div>
+          <div class="field">
+            <label for="import-pass" data-i18n="importPassLabel">Passphrase of that backup</label>
+            <input id="import-pass" type="password" autocomplete="off">
+          </div>
+          <p id="import-error" class="error" role="alert"></p>
+          <button type="submit" id="import-submit" class="btn" data-i18n="importSubmit">Import</button>
+        </form>
+        <div id="open-tab-row" class="open-tab-row">
+          <p class="hint" data-i18n="openTabHint">If choosing a file closes this popup, open this page in a tab.</p>
+          <button type="button" id="open-tab-btn" class="btn" data-i18n="openTabBtn">Open in a tab</button>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="about-title">
+        <h2 id="about-title" data-i18n="aboutTitle">About</h2>
+        <p class="hint" data-i18n="securitySummary">No network access and no telemetry. Secrets are encrypted at rest and never leave this device.</p>
+        <p class="hint" data-i18n="clockHint">Codes rejected? They are computed from your computer's clock. Make sure it is set automatically.</p>
+        <p class="about-row">
+          <span id="version" class="muted"></span>
+          <button type="button" id="source-btn" class="link-btn" data-i18n="sourceBtn">Source code</button>
+        </p>
+      </section>
+    </section>
+  </main>
+
+  <template id="account-template">
+    <li class="account">
+      <button type="button" class="account-main">
+        <span class="account-text">
+          <span class="issuer"></span>
+          <span class="label"></span>
+        </span>
+        <span class="code" data-code=""></span>
+        <span class="timer">
+          <span class="remaining"></span>
+          <progress class="countdown" max="30" value="30" aria-hidden="true"></progress>
+        </span>
+        <span class="copied-badge" data-i18n="copied">Copied</span>
+      </button>
+      <button type="button" class="delete" data-i18n="deleteBtn">Delete</button>
+    </li>
+  </template>
+</body>
+</html>
