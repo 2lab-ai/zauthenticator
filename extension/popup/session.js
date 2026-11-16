@@ -46,21 +46,23 @@ export function accounts() {
 }
 
 // → 'setup' | 'locked' | 'list'. Locks first when the session sat idle too long.
+// Runs while this page holds no key (startup, or re-checking a locked page), so finding the
+// vault locked must not bump the generation: that would cancel an unlock queued behind it.
 export function resume() {
   const gen = epoch;
   return exclusive(async () => {
     const record = await store.getRecord();
     if (!record) {
-      forget();
+      drop();
       return 'setup';
     }
     const key = await store.getSessionKey();
     if (!key) {
-      forget();
+      drop();
       return 'locked';
     }
     if (isStale(await store.getLastActive())) {
-      forget();
+      drop();
       await store.clearSessionKey();
       return 'locked';
     }
@@ -69,7 +71,7 @@ export function resume() {
       current = normalizeData(await vault.open(key, record));
     } catch {
       // The session key does not open the stored record; ask for the passphrase again.
-      forget();
+      drop();
       await store.clearSessionKey();
       return 'locked';
     }
@@ -126,6 +128,11 @@ function forget() {
   rawKey = null;
   data = null;
   recordCt = null;
+}
+
+// forget(), but only when this page holds a key: nothing else is in flight to invalidate.
+function drop() {
+  if (rawKey !== null) forget();
 }
 
 // Re-checks this page against storage after a change notification: another page saved or

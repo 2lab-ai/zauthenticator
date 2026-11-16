@@ -84,8 +84,9 @@ export function createAddView({ isTab, done }) {
       setText(statusEl, t('scanning'));
       let image;
       try {
-        // activeTab grants this after the user clicked the toolbar icon.
-        image = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
+        // activeTab grants this after the user clicked the toolbar icon. JPEG keeps a capture of
+        // a photo-heavy 5K/6K screen well under the decoder's byte cap (lib/qr.js).
+        image = await chrome.tabs.captureVisibleTab(undefined, { format: 'jpeg', quality: 92 });
       } catch (error) {
         if (!live(gen)) return;
         // No activeTab grant for this tab (e.g. it navigated since the popup opened) versus a
@@ -253,6 +254,7 @@ export function createAddView({ isTab, done }) {
     if (error instanceof QRError) {
       if (error.code === 'no-qr') return t(source === 'tab' ? 'errNoQrTab' : 'errNoQrImage');
       if (error.code === 'bad-image') return t('errBadImage');
+      if (error.code === 'too-large') return t('errImageTooLarge');
       return t('errDecoderMissing');
     }
     return reason(error);
