@@ -7,8 +7,8 @@
 // - at most MAX_IMAGE_BYTES of file (a data: URL is measured by its length first);
 // - PNG, JPEG, GIF, WebP and BMP headers are read (imagesize.js) and images above
 //   MAX_IMAGE_PIXELS are refused; a recognized header whose size cannot be read is refused too;
-// - larger images are decoded straight to a bitmap whose longest side is at most FULL_PASS_MAX,
-//   so no full-resolution bitmap or canvas is kept.
+// - larger images of those formats are decoded straight to a bitmap at most FULL_PASS_MAX per
+//   side, so no full-resolution bitmap is kept; every canvas is at most FULL_PASS_MAX per side.
 // Other formats (SVG, AVIF, ICO, ...) are bounded by the byte limit, and their decoded size is
 // checked before any canvas is made.
 
@@ -115,20 +115,34 @@ async function readSize(blob) {
   }
 }
 
-// A sniffed format (known size within the limits). Above FULL_PASS_MAX the browser decodes
-// straight to a smaller bitmap. Only the short side is given: the browser derives the other one
-// from the image as it is displayed, so the result keeps its aspect ratio and stays within
-// FULL_PASS_MAX per side even when EXIF orientation swaps width and height. No <img> fallback:
-// it would decode at full resolution.
-async function loadSniffed(blob, { width, height }) {
+// createImageBitmap options for an image of this header size: none up to FULL_PASS_MAX, else a
+// bitmap at most FULL_PASS_MAX per side.
+// Only the short side is given: the browser derives the other one from the image as it is
+// displayed, so the result keeps its aspect ratio and stays in bounds even when EXIF orientation
+// swaps width and height (then it is smaller than it could be). The short side is rounded down
+// and aims one pixel below the limit, because the browser rounds the derived side up (Chromium
+// was measured one pixel above the exact value).
+// An image thinner than that ratio would need a short side below 1 px; both sides are given
+// then (such an image cannot hold a QR code, so any distortion does not matter).
+function resizeOptions(width, height) {
   const longest = Math.max(width, height);
-  let options;
-  if (longest > FULL_PASS_MAX) {
-    const scale = FULL_PASS_MAX / longest;
-    options = width >= height
-      ? { resizeHeight: Math.max(1, Math.round(height * scale)), resizeQuality: 'high' }
-      : { resizeWidth: Math.max(1, Math.round(width * scale)), resizeQuality: 'high' };
+  if (longest <= FULL_PASS_MAX) return undefined;
+  const target = FULL_PASS_MAX - 1;
+  const short = Math.floor((Math.min(width, height) * target) / longest);
+  if (short < 1) {
+    return width >= height
+      ? { resizeWidth: target, resizeHeight: 1, resizeQuality: 'high' }
+      : { resizeWidth: 1, resizeHeight: target, resizeQuality: 'high' };
   }
+  return width >= height
+    ? { resizeHeight: short, resizeQuality: 'high' }
+    : { resizeWidth: short, resizeQuality: 'high' };
+}
+
+// A sniffed format (known size within the limits), decoded straight to a bitmap of bounded
+// size. No <img> fallback: it would decode at full resolution.
+async function loadSniffed(blob, { width, height }) {
+  const options = resizeOptions(width, height);
   let bitmap;
   try {
     bitmap = await (options ? createImageBitmap(blob, options) : createImageBitmap(blob));

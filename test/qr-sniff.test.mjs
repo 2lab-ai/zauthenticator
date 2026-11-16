@@ -151,19 +151,22 @@ test('imageSize returns null for formats it does not know', () => {
 const OTPAUTH = 'otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP';
 
 // Models createImageBitmap's resize: with one of resizeWidth/resizeHeight the other side keeps
-// the image's aspect ratio.
+// the image's aspect ratio, rounded up the worst way Chromium was seen to round it (one pixel
+// above the exact value: 769 for an exact 768).
+const derived = (exact) => Math.floor(exact) + 1;
 async function browserBitmap(blob, options = {}) {
   const size = imageSize(new Uint8Array(await blob.arrayBuffer()));
   const width = size?.width ?? 100;
   const height = size?.height ?? 100;
-  if (options.resizeWidth) return { width: options.resizeWidth, height: Math.ceil((options.resizeWidth * height) / width) };
-  if (options.resizeHeight) return { width: Math.ceil((options.resizeHeight * width) / height), height: options.resizeHeight };
+  if (options.resizeWidth && options.resizeHeight) return { width: options.resizeWidth, height: options.resizeHeight };
+  if (options.resizeWidth) return { width: options.resizeWidth, height: derived((options.resizeWidth * height) / width) };
+  if (options.resizeHeight) return { width: derived((options.resizeHeight * width) / height), height: options.resizeHeight };
   return { width, height };
 }
 
 // Replaces the browser globals decodeQR uses and records every call.
 function stubBrowser(t, { bitmap = browserBitmap, decoded = OTPAUTH, img = null } = {}) {
-  const calls = { createImageBitmap: [], canvases: [], closed: 0, images: 0, atob: 0 };
+  const calls = { createImageBitmap: [], bitmaps: [], canvases: [], closed: 0, images: 0, atob: 0 };
   const saved = {};
   const set = (name, value) => {
     saved[name] = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -174,6 +177,7 @@ function stubBrowser(t, { bitmap = browserBitmap, decoded = OTPAUTH, img = null 
     calls.createImageBitmap.push(options === undefined ? [blob] : [blob, options]);
     const size = await bitmap(blob, options);
     if (size instanceof Error) throw size;
+    calls.bitmaps.push([size.width, size.height]);
     return { ...size, close: () => calls.closed++ };
   });
   set('OffscreenCanvas', class {
@@ -270,14 +274,30 @@ test('decodeQR asks for a resized bitmap with the longest side at most 4096', as
   const atLimit = new Blob([png(7071, 7071)]);
   assert.equal(await decodeQR(atLimit), OTPAUTH);
   assert.deepEqual(calls.createImageBitmap, [
-    // Only the short side is given; the browser keeps the aspect ratio of the image as it is
-    // oriented, so the bound holds whether or not EXIF rotation swaps the sides.
-    [landscape, { resizeHeight: 2048, resizeQuality: 'high' }],
+    // Only the short side is given (rounded down, aiming at 4095); the browser keeps the aspect
+    // ratio of the image as it is oriented, so the bound holds whether or not EXIF rotation swaps
+    // the sides.
+    [landscape, { resizeHeight: 2047, resizeQuality: 'high' }],
     [portrait, { resizeWidth: 1755, resizeQuality: 'high' }],
-    [atLimit, { resizeHeight: 4096, resizeQuality: 'high' }],
+    [atLimit, { resizeHeight: 4095, resizeQuality: 'high' }],
   ]);
   for (const [w, h] of calls.canvases) assert.ok(w <= 4096 && h <= 4096, `canvas ${w}x${h}`);
   assert.equal(calls.closed, 3);
+});
+
+test('decoded bitmaps stay within 4096 per side for ratios that do not divide evenly', async (t) => {
+  const calls = stubBrowser(t, { decoded: null });
+  const sizes = [[3000, 6999], [6999, 3000], [100, 39000], [39000, 100], [4097, 4096], [4097, 1], [1, 50000000], [12345, 4049]];
+  for (const [w, h] of sizes) {
+    await assert.rejects(decodeQR(new Blob([png(w, h)])), isQRError('no-qr'), `${w}x${h}`);
+  }
+  assert.equal(calls.bitmaps.length, sizes.length);
+  for (const [[w, h], [bw, bh]] of sizes.map((size, i) => [size, calls.bitmaps[i]])) {
+    assert.ok(bw >= 1 && bh >= 1 && bw <= 4096 && bh <= 4096, `${w}x${h} decoded to ${bw}x${bh}`);
+  }
+  // Thinner than 4095:1: both sides are given.
+  assert.deepEqual(calls.createImageBitmap[6][1], { resizeWidth: 1, resizeHeight: 4095, resizeQuality: 'high' });
+  for (const [w, h] of calls.canvases) assert.ok(w <= 4096 && h <= 4096, `canvas ${w}x${h}`);
 });
 
 test('decodeQR decodes small images at their own size', async (t) => {
@@ -340,6 +360,7 @@ test('decodeQR still decodes a normal data: URL', async (t) => {
   const calls = stubBrowser(t);
   const url = `data:image/png;base64,${Buffer.from(png(640, 480)).toString('base64')}`;
   assert.equal(await decodeQR(url), OTPAUTH);
+  assert.equal(calls.atob, 1, 'the atob spy sees a normal base64 data: URL');
   assert.equal(calls.createImageBitmap.length, 1);
   assert.equal(calls.createImageBitmap[0][0].size, png(640, 480).length);
   await assert.rejects(decodeQR('data:image/png;base64,***'), isQRError('bad-image'));
