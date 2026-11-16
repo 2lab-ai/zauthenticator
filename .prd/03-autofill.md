@@ -1,6 +1,6 @@
 # 03 — Auto-fill OTP into web pages
 
-Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-autofill/](v0-2-autofill/).
+Status: shipped (2026-11-16, v0.2.0) — the implemented auto-fill contract, not a future target; workstream record in [v0-2-autofill/](v0-2-autofill/).
 
 ## User request (verbatim, 2026-11-16)
 
@@ -93,7 +93,9 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
    of 6–8 sibling single-character inputs (split boxes) that carries a code sign (a box marked
    one-time-code or named for a code, or a group element whose aria-label/id names a code). A field
    that is only sized like a code (numeric, maxlength 6–8) has no sign and is never filled
-   unattended — the right-click menu still fills it. Rules 2–3 skip a field whose names contain a whole word for
+   unattended — the right-click menu still fills it. A box run is also skipped when its group's
+   aria-label/id names another number (e.g. "code sent to your phone"); hidden inputs inside a run are
+   passed over, any other shown non-code input ends it. Rules 2–3 skip a field whose names contain a whole word for
    another number (zip, postal, phone, tel, mobile, amount, price, card, cc, cvv, cvc, csc, birth,
    bday, dob, date, year, month, day, search, account, qty, quantity, captcha, …) or whose
    `autocomplete` is anything but empty/on/off/one-time-code. One fill per page load: after the first
