@@ -8,7 +8,8 @@
 //   node scripts/build-store-assets.mjs --src <dir>     # read the masters from <dir>
 //
 // Outputs (paths relative to the output root):
-//   extension/icons/16.png 32.png   icon-16.svg, icon-32.svg: each on its own pixel grid, no ring
+//   extension/icons/16.png 32.png   icon-16.svg (z only), icon-32.svg (z + simplified ring), each
+//                                   on its own pixel grid
 //   extension/icons/48.png          icon.svg full bleed (96-unit grid, so 48 px is pixel-aligned)
 //   extension/icons/128.png         same bytes as store/assets/chrome-icon-128.png
 //   store/assets/chrome-icon-128.png        icon.svg as 96x96 art with 16 px transparent padding

@@ -8,8 +8,8 @@
       <stop offset="1" stop-color="#0e0f22"/>
     </linearGradient>
     <radialGradient id="glow" cx="277" cy="280" r="600" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#6670e0" stop-opacity="0.34"/>
-      <stop offset="1" stop-color="#6670e0" stop-opacity="0"/>
+      <stop offset="0" stop-color="#5470e0" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#5470e0" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <rect width="1400" height="560" fill="url(#bg)"/>
