@@ -14,8 +14,9 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
 2. **Fill now.** Choosing an account computes its current code in the service worker and types it
    into the right-clicked field (the focused element of the clicked frame) with `input`/`change`
    events; nothing is submitted. Counts as user activity (refreshes `lastActiveAt`).
-3. **Remember (once per site).** Right after a menu fill on an `https:` origin that has no binding
-   yet, a small extension window asks: "Fill <issuer · label> automatically on <origin> from now
+3. **Remember (per site, per chosen account).** Right after a menu fill on an `https:` origin that is
+   not yet bound to the account just chosen (unbound, or bound to another account — then the window
+   also says which account it replaces, `#bind-replaces`), a small extension window asks: "Fill <issuer · label> automatically on <origin> from now
    on?" [Allow] [Not now]. Allow → the browser's own permission prompt for exactly
    `<origin>/*` → on grant, the binding `origin → account id` is stored inside the encrypted
    vault and the auto-fill content script is (re)registered for the bound origins. Not now or a
@@ -59,7 +60,7 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
    → stop) → `chrome.scripting.executeScript({target:{tabId, frameIds:[frameId]}, func: fillFocused,
    args:[code, expected]})` (activeTab from the menu click); `fillFocused` writes nothing unless
    `location.origin === expected` at injection time.
-   If the fill succeeded and `normalizeOrigin(expected)` is an unbound https origin →
+   If the fill succeeded and `normalizeOrigin(expected)` is an https origin not already bound to this account →
    `session.setPendingBind({origin, accountId})` (true only while unlocked) → `nav.openOwnWindow('bind')`.
 4. Side effects: page field value = code; session `lastActiveAt` refreshed; session `pendingBind`.
 5. Errors: locked/idle → open unlock window instead, no fill; account missing → rebuild menu, no
