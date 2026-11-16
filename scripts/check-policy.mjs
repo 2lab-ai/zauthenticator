@@ -143,17 +143,18 @@ const MANIFEST_POLICY = Object.freeze({
   // `attributes` either (setting an attribute node's value rewrites an existing src or href).
   // The injected fillFocused adds the focus reads it needs: activeElement, shadowRoot,
   // getRootNode and an input's type. content/autofill.js reads the worker's reply (code, and
-  // validMs: how long the code stays valid) and tells a filled field still in the page by
-  // getRootNode.
+  // validMs: how long the code stays valid), tells a filled field still in the page by
+  // getRootNode, a user's edit of it by an input event's isTrusted, and the page's path by
+  // document.URL (read-only; location.pathname would be writable and navigate).
   contentScriptMembers: [
     'activeElement', 'add', 'addEventListener', 'attrs', 'checkVisibility', 'code', 'disabled',
     'disconnect', 'dispatchEvent', 'display', 'every', 'filter', 'findInDocument', 'findIndex',
     'forEach', 'freeze', 'from', 'getAttribute', 'getBoundingClientRect', 'getClientRects',
     'getComputedStyle', 'getRootNode', 'group', 'has', 'height', 'hidden', 'includes', 'indexOf',
-    'isArray', 'length', 'map', 'matches', 'maxLength', 'observe', 'parentElement', 'persisted',
-    'push', 'querySelectorAll', 'readOnly', 'readyState', 'removeEventListener', 'shadowRoot', 'some',
-    'split', 'test', 'toLowerCase', 'trim', 'type', 'validMs', 'value', 'visibility', 'visibilityState',
-    'visible', 'width', 'zauthFieldFind',
+    'isArray', 'isTrusted', 'length', 'map', 'matches', 'maxLength', 'observe', 'parentElement',
+    'persisted', 'push', 'querySelectorAll', 'readOnly', 'readyState', 'removeEventListener',
+    'shadowRoot', 'some', 'split', 'test', 'toLowerCase', 'trim', 'type', 'URL', 'validMs', 'value',
+    'visibility', 'visibilityState', 'visible', 'width', 'zauthFieldFind',
   ],
   // The only constructors a content-script file may call with `new`.
   contentScriptConstructors: ['Event', 'MutationObserver', 'Set', 'WeakSet'],
@@ -1573,10 +1574,10 @@ const PINNED_POLICY = {
   permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
   contentScriptFiles: ['content/autofill.js', 'lib/fieldfind.js'],
   contentScriptMembers: [
-    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'validMs', 'type', 'trim',
+    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'validMs', 'URL', 'type', 'trim',
     'toLowerCase', 'test', 'split', 'some', 'shadowRoot', 'removeEventListener', 'readyState',
     'readOnly', 'querySelectorAll', 'push', 'persisted', 'parentElement', 'observe', 'maxLength',
-    'matches', 'map', 'length', 'isArray', 'indexOf', 'includes', 'hidden', 'height', 'has', 'group',
+    'matches', 'map', 'length', 'isTrusted', 'isArray', 'indexOf', 'includes', 'hidden', 'height', 'has', 'group',
     'getRootNode', 'getComputedStyle', 'getClientRects', 'getBoundingClientRect', 'getAttribute',
     'from', 'freeze', 'forEach', 'findIndex', 'findInDocument', 'filter', 'every', 'display',
     'dispatchEvent', 'disconnect', 'disabled', 'code', 'checkVisibility', 'attrs', 'addEventListener',
@@ -1651,6 +1652,9 @@ const PIN_MUTATIONS = [
   ['contentScriptMembers', (p) => p.contentScriptMembers.push('postMessage')],
   ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'value'))],
   ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'validMs'))],
+  ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'isTrusted'))],
+  ['contentScriptMembers', (p) => (p.contentScriptMembers = p.contentScriptMembers.filter((m) => m !== 'URL'))],
+  ['contentScriptMembers', (p) => p.contentScriptMembers.push('pathname')],
   ['contentScriptConstructors', (p) => p.contentScriptConstructors.push('Image')],
   ['contentScriptEvents', (p) => p.contentScriptEvents.push('submit')],
   ['contentScriptChrome', (p) => p.contentScriptChrome.push('runtime.connect')],

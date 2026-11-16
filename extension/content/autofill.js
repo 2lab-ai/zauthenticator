@@ -7,16 +7,18 @@
 //
 // Once a code field is found the service worker is asked for a code. It answers only for a bound
 // origin while the vault is unlocked, and only the digits and how long they stay valid reach this
-// page. A code with less than 3 s left is not filled: the next period's code is asked for instead.
-// Fields that appear or become visible later are looked for during the first minute. After the
-// first fill the filled field is followed for 5 minutes: when its code expires while it still holds
-// it, the next code replaces it (3 times at most per field set); when the page empties it or
-// replaces it with a new code field (a rejected code), it is filled again with a current code, up
-// to 4 fills in all. A field the page emptied is never given the code it just held again: that
-// code's period is waited out first. A field is written only while it is empty or holds what this
-// script put there; once the user typed into the filled field, or the worker answers with no code,
-// the watch ends. No other field is filled while the filled one is in the page, and nothing is ever
-// submitted.
+// page. The worker gives a tab each code once and at most 3 codes in any 5 minutes, across page
+// loads: asked again too soon it says wait ({ code: null, validMs }), then no ({ code: null }).
+// A code with less than 3 s left is not filled, and neither is the code this script filled last:
+// the next period's code is asked for instead (3 such waits in a row end the watch). Fields that
+// appear or become visible later are looked for during the first minute. After the first fill the
+// filled field is followed for 5 minutes, while the page stays at the same path: when its code
+// expires while it still holds it, the next code replaces it (twice at most per field set); when
+// the page empties it or replaces it with a new code field (a rejected code), it is filled once
+// more with a current code. A field is written only while it is empty or holds what this script
+// put there. The user typing into or deleting the filled code, or the worker answering with no
+// code, ends the watch. No other field is filled while the filled one is in the page, and nothing
+// is ever submitted.
 (() => {
   'use strict';
 
@@ -26,15 +28,18 @@
   const WATCH_MS = 60 * 1000;
   // Counted from the first fill.
   const FOLLOW_MS = 5 * 60 * 1000;
-  // The first fill and three more after the page emptied or replaced the field. Replacing a code
-  // that expired untouched is not counted.
-  const MAX_FILLS = 4;
+  // The first fill and one more after the page emptied or replaced the field (one retry).
+  // Replacing a code that expired untouched is not counted.
+  const MAX_FILLS = 2;
   // Replacements of a code that expired untouched, per filled field set (refilling the same set
   // does not start a new count): then the code is left as is. A site that submits on input would
   // otherwise get a new attempt every period.
-  const MAX_REFRESHES = 3;
+  const MAX_REFRESHES = 2;
   // Less than this left of a code's period: too little to submit it.
   const LATE_MS = 3000;
+  // Waits for the next period in a row without a fill (late codes, the worker saying wait, the
+  // code filled last): then the watch ends. Only a period of a few seconds gets there.
+  const MAX_WAITS = 3;
   // A code is asked for this long after a period ends, so the worker is in the next one.
   const MARGIN_MS = 250;
   // The longest period lib/totp.js accepts.
@@ -66,6 +71,9 @@
   let deadline = 0;
   let fills = 0;
   let refreshes = 0; // of the filled field set
+  let waits = 0; // since the last fill
+  // The page's path at the first fill: the login step being followed.
+  let fillPath = '';
   // The field(s) filled last and the code put there (one digit per box for split boxes), and
   // whether that code has expired.
   let filledFields = null;
@@ -102,11 +110,21 @@
     return filledFields.length === 1 ? filledCode : filledCode[i];
   }
 
+  // The page's address without its query and fragment (document.URL follows history.pushState).
+  function pagePath() {
+    return document.URL.split(/[?#]/)[0];
+  }
+
   // The field(s) to ask a code for now, or null. While the filled field(s) are in the page they
   // are the only candidate: asked for again when their code expired while they still hold it, or
   // when the page emptied them and they are still where a code field is found. Changed to anything
-  // else: the user typed, and the watch ends.
+  // else: the user typed, and the watch ends. So does the page moving to another path after the
+  // first fill (the login went on; a code field there is another matter).
   function target() {
+    if (fills > 0 && pagePath() !== fillPath) {
+      stop();
+      return null;
+    }
     if (filledFields) {
       const inPage = filledFields.filter((el) => el.getRootNode() === document);
       if (inPage.length === filledFields.length) {
@@ -137,9 +155,7 @@
     return fields && !fields.some((el) => seen.has(el)) ? fields : null;
   }
 
-  // afterWait: this look ends a wait for the next period, and its code is filled however little of
-  // it is left (a period that short has no later code with more).
-  async function look(afterWait = false) {
+  async function look() {
     if (stopped || asking || waitTimer) return;
     const asked = target();
     if (!asked) return;
@@ -148,48 +164,50 @@
     asking = false;
     if (stopped) return;
     if (reply === null) {
-      // Locked, idle, not bound, or no answer: nothing more will be filled on this page.
+      // Locked, idle, not bound, past the worker's limit, or no answer: nothing more will be
+      // filled on this page.
       stop();
       return;
     }
     passTyped(asked);
-    if (reply.validMs < LATE_MS && !afterWait) {
-      // Too little left to submit this code: the next one is asked for when its period starts.
+    if (reply.code === null || reply.validMs < LATE_MS || reply.code === filledCode) {
+      // The worker gave this tab its current code already, too little is left to submit this one,
+      // or it is the code this script filled before: turned down if the page emptied or replaced
+      // the field, so it would be again. The next period's code is asked for when it starts.
       askNextPeriod(asked, reply.validMs);
       return;
     }
     // The page may have changed while the worker answered: find the field(s) again (right before
     // writing, so nothing the user typed meanwhile is overwritten).
     const fields = target();
-    if (fields && fields === filledFields && reply.code === filledCode && fields.every((el) => el.value === '')) {
-      // The page emptied the code this script put there, so it was turned down: the same code
-      // would be too. The next period's code is asked for when that period starts.
-      askNextPeriod(asked, reply.validMs);
-      return;
-    }
     if (fields && fill(fields, reply.code, reply.validMs)) return;
     // Mutations that arrived while asking were dropped by look(); check once more.
     schedule();
   }
 
   // Asks again once the period of the code just received has ended (no look asks meanwhile).
+  // MAX_WAITS waits in a row without a fill end the watch instead.
   function askNextPeriod(asked, validMs) {
+    waits += 1;
+    if (waits > MAX_WAITS) {
+      stop();
+      return;
+    }
     waitTimer = setTimeout(() => {
       waitTimer = 0;
       passTyped(asked);
-      look(true);
+      look();
     }, validMs + MARGIN_MS);
   }
 
-  // The worker's answer when it is { code, validMs } with a 6-8 digit code and 1 ms to a whole
-  // period left, else null.
+  // The worker's answer when it is { code, validMs } with a 6-8 digit code, or { code: null,
+  // validMs } (wait), with 1 ms to a whole period left; else null.
   async function ask() {
     try {
       const reply = await chrome.runtime.sendMessage({ type: 'autofill-code' });
       if (
         reply &&
-        typeof reply.code === 'string' &&
-        CODE.test(reply.code) &&
+        (reply.code === null || (typeof reply.code === 'string' && CODE.test(reply.code))) &&
         typeof reply.validMs === 'number' &&
         reply.validMs > 0 &&
         reply.validMs <= MAX_VALID_MS
@@ -219,7 +237,7 @@
       return false;
     }
     // A code that expired untouched is replaced; otherwise this is a fill, and the first one starts
-    // the follow window.
+    // the follow window at this path.
     const replacing = fields === filledFields && filledFields.every((el, i) => el.value === part(i));
     if (fields !== filledFields) refreshes = 0;
     else if (replacing) refreshes += 1;
@@ -228,12 +246,15 @@
       if (fills === 1) {
         clearTimeout(deadline);
         deadline = setTimeout(stop, FOLLOW_MS);
+        fillPath = pagePath();
       }
     }
+    if (fields !== filledFields) follow(fields);
     if (fields.length === 1) put(fields[0], code);
     else fields.forEach((el, i) => put(el, code[i]));
     filledFields = fields;
     filledCode = code;
+    waits = 0;
     expired = false;
     clearTimeout(freshTimer);
     freshTimer = 0;
@@ -248,6 +269,20 @@
     return true;
   }
 
+  // Listens on the field(s) being filled now (instead of the ones filled before) for the user's own
+  // edits.
+  function follow(fields) {
+    if (filledFields) for (const el of filledFields) el.removeEventListener('input', edited);
+    for (const el of fields) el.addEventListener('input', edited);
+  }
+
+  // An input event on a filled field. Only the browser makes trusted ones, for the user's typing,
+  // deleting or pasting: the events put() sends and a page's own are untrusted, and a page setting
+  // the value sends none. A user edit ends the watch: the field is theirs from then on.
+  function edited(event) {
+    if (event.isTrusted) stop();
+  }
+
   function put(el, value) {
     el.value = value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -257,6 +292,7 @@
   function stop() {
     stopped = true;
     observer.disconnect();
+    if (filledFields) for (const el of filledFields) el.removeEventListener('input', edited);
     for (const type of WINDOW_EVENTS) window.removeEventListener(type, schedule);
     document.removeEventListener('visibilitychange', schedule);
     clearTimeout(settleTimer);

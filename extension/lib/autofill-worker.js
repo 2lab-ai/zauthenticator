@@ -6,7 +6,9 @@
 // long. This module never touches a page itself: fillFocused() is serialized by chrome.scripting
 // and runs in the frame the menu was opened in, only while that frame still shows a document of
 // the origin the click was in, and content/autofill.js asks handleMessage() for a code, which
-// answers only for a bound origin while the vault is unlocked, with the digits only.
+// answers only for a bound origin while the vault is unlocked, with the digits only. What it gave
+// each tab and origin is kept in session storage (store.getServed()), so neither a page that
+// reloads itself nor a restarted worker gets around its limits.
 import { totp } from './totp.js';
 import { normalizeOrigin, bindingFor, boundOrigins } from './bindings.js';
 import { openOwnWindow } from './nav.js';
@@ -25,6 +27,11 @@ const SCRIPT_ID = 'autofill';
 // scripts, so the field finder defines a global that content/autofill.js reads.
 const CONTENT_SCRIPTS = ['lib/fieldfind.js', 'content/autofill.js'];
 const CODE = /^\d{6,8}$/;
+// Auto-fill limits per tab and origin: each code once, and this many codes in any SERVED_MS. A
+// site that submits on input and reloads on a rejected code starts its content script again with
+// every count of its own at zero; these hold across such loads.
+const MAX_SERVED = 3;
+const SERVED_MS = 5 * 60 * 1000;
 
 // Runs `task` one call at a time. A call made while an earlier run still waits to start joins
 // that run: it would read the same state.
@@ -137,11 +144,11 @@ export async function handleMenuClick(info, tab) {
   }
   let code;
   try {
-    code = await totp(account, Date.now());
+    code = (await codeAt(account, Date.now()))?.code;
   } catch {
     return; // invalid stored key
   }
-  if (!CODE.test(code)) return;
+  if (!code) return;
 
   let filled = false;
   try {
@@ -158,6 +165,9 @@ export async function handleMenuClick(info, tab) {
   }
   if (!filled) return;
 
+  // The user's own choice: auto-fill in this tab and origin may serve codes again.
+  await forgetServed(tabId, normalizeOrigin(expected));
+
   // Offered: the https origin the fill was checked against, unless it is already bound to this
   // account. A site bound to another account is offered too: Allow then binds it to this one.
   const origin = normalizeOrigin(expected);
@@ -171,8 +181,11 @@ export async function handleMenuClick(info, tab) {
  * runtime.onMessage: { type: 'autofill-code' } from content/autofill.js → { code, validMs } for the
  * sender's bound origin while unlocked, else { code: null }. validMs is what is left of the code's
  * period in milliseconds (1 to the whole period): the content script waits for the next code when
- * too little is left, and replaces a code it filled when its period ends. Does not count as
- * activity.
+ * too little is left, and replaces a code it filled when its period ends. Per tab and origin a code
+ * is given once: asked for again in its period → { code: null, validMs } (wait validMs for the
+ * next one); and MAX_SERVED codes in any SERVED_MS: then { code: null } (stop). Decided and
+ * recorded under the vault lock, so two frames asking at once get one code, and a lock removes
+ * the record with the key. Does not count as activity.
  */
 export async function handleMessage(message, sender) {
   rebuildMenu().catch(() => {});
@@ -180,23 +193,59 @@ export async function handleMessage(message, sender) {
   if (!sender || sender.id !== chrome.runtime.id) return { code: null };
   const origin = senderOrigin(sender);
   if (!origin) return { code: null };
-  const data = await session.readUnlocked({ touch: false });
-  if (!data) return { code: null };
-  const binding = bindingFor(data, origin);
-  if (!binding) return { code: null };
-  const account = accountsOf(data).find((a) => a.id === binding.accountId);
-  if (!account) return { code: null };
-  try {
+  // Every content script runs in a tab; a sender without one has a record of its own.
+  const tab = Number.isInteger(sender.tab?.id) ? sender.tab.id : -1;
+  return session.withVaultState(async ({ data }) => {
+    if (!data) return { code: null };
+    const binding = bindingFor(data, origin);
+    if (!binding) return { code: null };
+    const account = accountsOf(data).find((a) => a.id === binding.accountId);
+    if (!account) return { code: null };
     const now = Date.now();
-    const code = await totp(account, now);
-    if (!CODE.test(code)) return { code: null };
-    // totp() accepted the period (an integer number of seconds, 30 when missing).
-    const { period = 30 } = account;
-    const periodMs = period * 1000;
-    return { code, validMs: periodMs - (now % periodMs) };
-  } catch {
-    return { code: null };
-  }
+    let current;
+    try {
+      current = await codeAt(account, now);
+    } catch {
+      return { code: null }; // invalid stored key
+    }
+    if (!current) return { code: null };
+    const served = recent(await store.getServed(), now);
+    const here = served.filter((e) => e.tab === tab && e.origin === origin);
+    if (here.length >= MAX_SERVED) return { code: null };
+    if (here.some((e) => e.account === account.id && e.counter === current.counter)) return { code: null, validMs: current.validMs };
+    await store.setServed([...served, { tab, origin, account: account.id, counter: current.counter, at: now }]);
+    return { code: current.code, validMs: current.validMs };
+  });
+}
+
+// The account's code at `now`, its TOTP counter and the milliseconds left in its period (1 to the
+// whole period), or null when the code is not 6-8 digits. Throws for a key totp() cannot use.
+async function codeAt(account, now) {
+  const code = await totp(account, now);
+  if (!CODE.test(code)) return null;
+  // totp() accepted the period (an integer number of seconds, 30 when missing).
+  const { period = 30 } = account;
+  const periodMs = period * 1000;
+  return { code, counter: Math.floor(now / periodMs), validMs: periodMs - (now % periodMs) };
+}
+
+// The entries of the auto-fill record younger than SERVED_MS at `now` (one from a clock that has
+// since gone back counts until it is that old).
+function recent(served, now) {
+  return served.filter((e) => e.at > now - SERVED_MS);
+}
+
+// Drops what auto-fill was given in tab `tab` at `origin` (an https origin, or null: nothing to
+// drop), under the vault lock and only while unlocked.
+function forgetServed(tab, origin) {
+  if (origin === null) return Promise.resolve();
+  return session.withVaultState(async ({ data }) => {
+    if (!data) return;
+    const now = Date.now();
+    const served = await store.getServed();
+    if (!served.some((e) => e.tab === tab && e.origin === origin)) return;
+    await store.setServed(recent(served, now).filter((e) => !(e.tab === tab && e.origin === origin)));
+  });
 }
 
 // → new URL(url).origin (any scheme; 'null' for an opaque one), or null when url is not a URL.
