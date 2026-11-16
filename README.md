@@ -124,8 +124,14 @@ your accounts.
 the browser's storage for this extension, inside a vault encrypted with a key made from your
 passphrase. The passphrase is never stored. After you unlock, the key is held in the browser's
 session memory until you lock or the browser quits; after 15 minutes without use it is removed
-the next time anything asks for it (see the limits below). Nothing is sent to the developer or
-anyone else; there is no server.
+the next time anything asks for it (see the limits below). While it is unlocked, session memory
+also holds a small auto-fill record: for each tab and allowed site that got a code, the tab
+number, the site's address, the account's internal id, which code period it was (the TOTP
+counter) and when; never a code. It exists only so that a site gets at most 3 codes per tab
+in 5 minutes and never the same code twice. Entries older than 5 minutes no longer count and are
+dropped the next time the record changes; choosing an account from the right-click menu clears
+that tab and site; locking removes the whole record. Nothing is sent to the developer or anyone
+else; there is no server.
 
 **What it reads from web pages.** Only when you click the button to scan
 the current page, the extension takes one picture of the visible part of that tab (the browser
@@ -194,7 +200,7 @@ the release workflow runs the same job on the tagged commit before it publishes 
 | No network from the extension | The CSP of extension pages and the worker is exactly `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. The source has no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `RTCPeerConnection`, and the stylesheet no `@import` or remote `url(`. The content script runs inside web pages, where that CSP does not apply; it is held to a default-deny list instead: it reads fields, fills the code field, dispatches `input`/`change`, watches for changes, sets timers and asks the worker for a code, and creates no element, writes no `src`/`href`/style/markup, and uses no `postMessage`, worker, dynamic `import()` or `chrome` API beyond `runtime.sendMessage` and `runtime.id`. The function injected for a menu fill (`fillFocused`) is held to the same list and writes only if the frame is still on the origin the menu was opened on. | Read `content_security_policy` in `extension/manifest.json`. `npm run check` fails unless the CSP equals that policy, and on any of those APIs in any file, the content script included. `npm run e2e` calls `fetch()` from an extension page and from the worker, expects both blocked, and fails on any http(s) request during the run other than its own locally answered test pages. |
 | Opens only its own pages | CSP does not govern navigation, so the gate also bans URL strings and navigation sinks (`window.open`, assigning `location`, links or forms pointing outside, frames, meta refresh). Opening a tab or window is done only in `extension/lib/nav.js` (the extension's own views), which the gate pins by sha256; elsewhere `chrome.windows` and every `chrome.tabs` method but `getCurrent` and `captureVisibleTab` are refused. | `npm run check`. `npm run e2e` records every page opened during the run and fails on any URL other than the extension's own pages, `about:blank` and its own test pages. |
 | No remote or dynamic code | `script-src 'self'` without `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`; no `eval(`, `new Function`, `importScripts`, string timers, `javascript:` URLs, inline scripts or `on*=` handlers. | `npm run check` |
-| Encrypted at rest | AES-GCM-256 with a key from PBKDF2-SHA-256 (600,000 iterations) over the NFC-normalized passphrase. `chrome.storage.local` holds only `{ v, kdf, iv, ct }`; auto-fill sites are inside the vault. | `npm run e2e` reads storage and the exported backup, and fails if a test secret appears in base32, hex, base64(url), as a byte list or raw bytes, if storage holds any key besides `local.vault` and `session.vaultKey`/`lastActiveAt`/`pendingBind`, or if a lock leaves anything in session storage. |
+| Encrypted at rest | AES-GCM-256 with a key from PBKDF2-SHA-256 (600,000 iterations) over the NFC-normalized passphrase. `chrome.storage.local` holds only `{ v, kdf, iv, ct }`; auto-fill sites are inside the vault. | `npm run e2e` reads storage and the exported backup, and fails if a test secret appears in base32, hex, base64(url), as a byte list or raw bytes, if storage holds any key besides `local.vault` and `session.vaultKey`/`lastActiveAt`/`pendingBind`/`autofillServed`, or if a lock leaves anything in session storage. |
 | Minimal permissions | `storage`, `activeTab`, `contextMenus`, `scripting`, and optional `https://*/*` granted one site at a time. No `host_permissions`, no content scripts in the manifest, no web-accessible resources; the one content script (`content/autofill.js` with `lib/fieldfind.js`) is registered at run time for the allowed sites only. | `npm run check` fails on any other permission or host pattern, on those manifest keys, on a background other than the `background.js` module worker, on `chrome.scripting` outside `lib/autofill-worker.js`, and on `chrome.permissions` outside that file and `popup/popup.js`. |
 | Auto-fill only where you allowed it | Sites are bound by exact origin. The worker answers only this extension's own content script, from a frame whose origin is bound, while the vault is unlocked and not idle, and answers with the code and how long it stays valid, never account names or secrets. Auto-fill never submits a form and does not count as activity for the 15-minute lock. | `npm run e2e` part 3: a menu fill types the reference code; **Allow** stores the binding and registers the script for that origin only; a later visit is filled; another origin with the same page, a locked or idle vault, a removed site and a deleted account get nothing; no form is submitted. |
 | Pinned third-party code | The only third-party code is the QR decoder jsQR 1.4.0, vendored unmodified, pinned by sha256, with its license beside it. | `cd extension/vendor && shasum -a 256 -c SHA256SUMS`; `npm run check` verifies the same. See [Third-party code](#third-party-code). |
@@ -325,6 +331,11 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 
 ### 개인정보와 보안
 
+- 잠금이 풀려 있는 동안에는 브라우저 세션 메모리에 자동 입력 기록도 잠깐 둬요. 코드를 받은 탭과 허용한
+  사이트마다 탭 번호, 사이트 주소, 계정의 내부 ID, 몇 번째 코드 주기였는지와 그 시각을 적고, 코드 자체는 적지
+  않아요. 한 탭에서 한 사이트가 5분에 코드를 3개까지만 받고 같은 코드를 두 번 받지 않게 하려고만 써요. 5분이
+  지난 항목은 더 세지 않고 기록이 바뀔 때 지워지며, 오른쪽 클릭 메뉴로 계정을 고르면 그 탭과 사이트의 기록이
+  지워지고, 잠기면 기록 전체가 지워져요.
 - 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기의 브라우저 저장소에 암호화된 채로만 있어요. 개발자에게도,
   다른 누구에게도 보내지 않아요.
 - 브라우저는 확장 프로그램이 접근할 수 있는 사이트 목록과 자동 입력 스크립트가 등록된 사이트

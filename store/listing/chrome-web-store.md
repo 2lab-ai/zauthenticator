@@ -160,7 +160,7 @@ zauthenticator generates time-based one-time passwords (TOTP, RFC 6238) for the 
 **storage**
 
 ```text
-Stores the user's vault (TOTP secret keys, account names and the sites chosen for auto-fill) in local extension storage, encrypted with AES-256-GCM under a key derived from the user's passphrase, and keeps the unlocked key in session storage (in memory) until the user locks or the browser quits; after 15 minutes without use, the next read removes the key before any code is shown or filled. Nothing is sent anywhere.
+Stores the user's vault (TOTP secret keys, account names and the sites chosen for auto-fill) in local extension storage, encrypted with AES-256-GCM under a key derived from the user's passphrase, and keeps the unlocked key in session storage (in memory) until the user locks or the browser quits; after 15 minutes without use, the next read removes the key before any code is shown or filled. While unlocked, session storage also holds a small auto-fill record (per tab and allowed site: tab id, site origin, account id, TOTP period number and time; never a code) so that a site gets at most 3 codes per tab in 5 minutes and never the same code twice; entries older than 5 minutes are dropped on the next update and a lock removes the record. Nothing is sent anywhere.
 ```
 
 **activeTab**
@@ -229,13 +229,13 @@ meaning to what the dashboard shows.
 
 | Checkbox (label unverified) | Tick | Why |
 |---|---|---|
-| Authentication information | **yes** | TOTP secret keys and account names (logins) are stored in the encrypted vault on the device. Nothing is sent to the developer. |
+| Authentication information | **yes** | TOTP secret keys and account names (logins) are stored in the encrypted vault on the device. While unlocked, an auto-fill record in session memory (tab id, site origin, account id, TOTP period number, time; never a code) limits a site to 3 codes per tab in 5 minutes and no repeated code; a lock removes it. Nothing is sent to the developer. |
 | Personally identifiable information | no | Account names are covered above as logins; nothing else about the person is handled. |
 | Health information | no | |
 | Financial and payment information | no | |
 | Personal communications | no | |
 | Location | no | |
-| Web history | no (see Tensions) | The vault holds only the sites you chose for auto-fill; no list of pages visited, titles or visit times is kept. |
+| Web history | no (see Tensions) | The vault holds only the sites you chose for auto-fill. The session auto-fill record notes, for those sites only, when a code was given (to enforce the 5-minute limit) and is removed on lock. No list of pages visited and no page titles are kept. |
 | User activity | no | The extension does not monitor clicks, keystrokes, mouse movement or scrolling. The auto-fill script only compares the value of the field it filled with the code it put there, to stop when you change it. |
 | Website content | **yes** | When you click the scan button, a picture of the visible part of the current tab is decoded locally to read a QR code. On sites you allowed, the auto-fill script reads input-field attributes (and whether a field is empty) to find the code field. |
 
@@ -260,10 +260,13 @@ here, the Edge answers and PRIVACY.md together.
   What the extension does with site addresses: the vault holds the exact sites you yourself chose
   for auto-fill (a setting you made, shown and removable in Settings), and the worker looks at the
   origin of the page you right-clicked or of the frame whose auto-fill script asks for a code, only
-  to decide whether to fill there. It keeps no list of pages you visit, no page titles and no
-  visit times. Default: not ticked, because none of that is browsing history. Tick it if the
-  dashboard's description of this box covers any stored site address, or if a reviewer reads it
-  that way, and keep the Edge answer the same.
+  to decide whether to fill there. While unlocked, the session auto-fill record also notes, per
+  tab, which of those allowed sites got a code and when; entries older than 5 minutes stop
+  counting and are dropped on the next update, and a lock removes the record. It keeps no list of
+  pages you visit and no page titles, and nothing about sites you did not allow. Default: not
+  ticked, because this is a rate limit on sites you chose, not a record of browsing. Tick it if
+  the dashboard's description of this box covers any stored site address or visit time, or if a
+  reviewer reads it that way, and keep the Edge answer the same.
 
 ### Privacy policy URL
 

@@ -66,12 +66,15 @@ none of them names a browser:
 - **Data usage:** the same ticks and certifications as the other store, so both stores and
   PRIVACY.md describe the same handling:
   - **Authentication information**: ticked. TOTP secret keys and account names are kept in the
-    encrypted vault on the device.
+    encrypted vault on the device. While unlocked, an auto-fill record in session memory (tab id,
+    site origin, account id, TOTP period number and time; never a code) limits a site to 3 codes
+    per tab in 5 minutes and no repeated code; a lock removes it.
   - **Website content**: ticked. A picture of the visible part of the current tab is decoded on
     the device when you click the scan button, and on sites you allowed the auto-fill script reads
     input-field attributes to find the code field.
-  - **Web history**: not ticked. The vault holds only the sites you chose for auto-fill; the
-    extension keeps no list of pages visited, titles or visit times. What would change this is in
+  - **Web history**: not ticked. The vault holds only the sites you chose for auto-fill, and the
+    session auto-fill record notes, for those sites only, when a code was given (removed on
+    lock); the extension keeps no list of pages visited and no page titles. What would change this is in
     the [Tensions](chrome-web-store.md#tensions) of the other file; if you tick it there, tick it
     here too.
   - Everything else: not ticked. All certifications: ticked.

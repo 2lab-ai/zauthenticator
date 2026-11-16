@@ -26,6 +26,15 @@ PBKDF2-SHA-256 (600,000 iterations).
   session storage, in memory, until you lock or the browser quits. After 15 minutes without use,
   the next time the extension reads the key (opening the popup, a menu choice or an auto-fill
   request) it removes the key before any code is shown or filled.
+- **The auto-fill record.** While the extension is unlocked, the same session storage (in memory,
+  not encrypted) also holds a short record of what auto-fill was given: for each tab and allowed
+  site that received a code, the tab number, the site's address (origin), the account's internal
+  id, the number of the TOTP period the code belonged to, and the time. It never holds a code. It
+  exists only so that a site gets at most 3 codes per tab in 5 minutes and never the same code
+  twice. Entries older than 5 minutes no longer count and are dropped the next time the record
+  is updated; choosing an account from the right-click menu clears the entries for that tab and
+  site; every lock removes the whole record together with the key, and it is gone when the
+  browser quits.
 - **Backup files** that you export contain the vault exactly as stored, still encrypted with the
   same passphrase, so restoring one also needs that passphrase. They are saved where you choose,
   and the extension does not send them anywhere.
