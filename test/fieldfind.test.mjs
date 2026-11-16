@@ -259,13 +259,35 @@ function fakeTimers() {
 }
 
 // Runs lib/fieldfind.js then content/autofill.js in one fresh context, as the registered
-// content script does. `reply` is the worker's answer (or a function returning it).
-async function runContentScript(html, reply) {
+// content script does. `reply` is the worker's answer (or a function returning it). `setup`, if
+// given, gets the parsed page before the scripts run.
+async function runContentScript(html, reply, setup) {
   const doc = parse(html);
+  if (setup) setup(doc);
   const timers = fakeTimers();
   const messages = [];
   const observers = [];
+  // Event listeners on window and document: { target, type, fn }.
+  const listeners = [];
+  const eventTarget = (target) => ({
+    addEventListener(type, fn) {
+      listeners.push({ target, type, fn });
+    },
+    removeEventListener(type, fn) {
+      const i = listeners.findIndex((l) => l.target === target && l.type === type && l.fn === fn);
+      if (i !== -1) listeners.splice(i, 1);
+    },
+  });
+  Object.assign(doc, eventTarget('document'));
+  // One querySelectorAll on the document per look.
+  let looks = 0;
+  const query = doc.querySelectorAll.bind(doc);
+  doc.querySelectorAll = (selector) => {
+    looks += 1;
+    return query(selector);
+  };
   const context = vm.createContext({
+    window: eventTarget('window'),
     document: doc,
     setTimeout: timers.setTimeout,
     clearTimeout: timers.clearTimeout,
@@ -307,7 +329,24 @@ async function runContentScript(html, reply) {
     for (const o of observers) if (!o.disconnected) o.callback([]);
     await timers.advance(1000);
   };
-  return { doc, timers, messages, observers, mutate };
+  // Dispatches an event of `type` to the listeners on window and document; no time passes.
+  const fire = async (type) => {
+    for (const l of listeners.filter((x) => x.type === type)) l.fn({ type });
+    await flush();
+  };
+  return { doc, timers, messages, observers, mutate, fire, listeners, looks: () => looks };
+}
+
+// A page whose code field the browser does not show yet, and that does not change when it does
+// (an out-of-process iframe with no size yet when the script runs: nothing in it has a box).
+// → { html, setup } for runContentScript(), and show()
+function notShownYet(html = '<form><input name="otp" data-t="otp"></form>') {
+  let shown = false;
+  return {
+    html,
+    setup: (doc) => (byTag(doc, 'otp').checkVisibility = () => shown),
+    show: () => (shown = true),
+  };
 }
 
 test('content script: fills the code field once with input and change events, nothing else', async () => {
@@ -360,6 +399,25 @@ test('content script: a value typed while the worker answers is kept', async () 
   });
   assert.equal(byTag(run.doc, 'otp').value, '4');
   assert.deepEqual(byTag(run.doc, 'otp').events, []);
+  // Cleared again later: a code was asked for this field once already, so it is not asked again.
+  byTag(run.doc, 'otp').value = '';
+  await run.mutate();
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 1);
+  assert.equal(byTag(run.doc, 'otp').value, '');
+});
+
+test('content script: no code → no further looks, no timer and no listener left', async () => {
+  const run = await runContentScript('<input name="otp" data-t="otp">', { code: null });
+  assert.equal(run.messages.length, 1);
+  const looks = run.looks();
+  assert.equal(run.timers.pending(), 0);
+  assert.equal(run.listeners.length, 0);
+  for (const type of ['load', 'pageshow', 'resize', 'visibilitychange']) await run.fire(type);
+  await run.mutate();
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.looks(), looks);
+  assert.equal(run.messages.length, 1);
 });
 
 test('content script: a field added later is filled; after 60 s nothing is watched', async () => {
@@ -379,6 +437,62 @@ test('content script: a field added later is filled; after 60 s nothing is watch
   await idle.mutate();
   assert.equal(tooLate.value, '');
   assert.equal(idle.messages.length, 0);
+});
+
+// The frame is laid out only after the first look, and the DOM does not change when it is.
+test('content script: a field shown after the first look is filled once when the frame is resized, loaded or shown', async () => {
+  for (const type of ['resize', 'load', 'pageshow', 'visibilitychange']) {
+    const late = notShownYet();
+    const run = await runContentScript(late.html, { code: '246810' }, late.setup);
+    assert.equal(run.messages.length, 0, type);
+    late.show();
+    await run.fire(type);
+    // Less than the retry interval: the event, not the retry, found the field.
+    await run.timers.advance(200);
+    assert.equal(run.messages.length, 1, type);
+    assert.equal(byTag(run.doc, 'otp').value, '246810', type);
+    await run.fire(type);
+    await run.timers.advance(60 * 1000);
+    assert.equal(run.messages.length, 1, type);
+    assert.deepEqual(byTag(run.doc, 'otp').events, ['input', 'change'], type);
+  }
+});
+
+test('content script: a field shown after the first look, with no event and no DOM change, is filled once by a later look', async () => {
+  const late = notShownYet();
+  const run = await runContentScript(late.html, { code: '135790' }, late.setup);
+  assert.equal(run.messages.length, 0);
+  late.show();
+  await run.timers.advance(1000);
+  assert.equal(run.messages.length, 1);
+  assert.equal(byTag(run.doc, 'otp').value, '135790');
+  assert.deepEqual(byTag(run.doc, 'otp').events, ['input', 'change']);
+  // Once a field is filled the retries end; only DOM changes and events are looked at.
+  const looks = run.looks();
+  await run.timers.advance(10 * 1000);
+  assert.equal(run.looks(), looks);
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 1);
+  assert.equal(run.timers.pending(), 0);
+});
+
+test('content script: a field that never shows → no code asked for, and after 60 s nothing is left running', async () => {
+  const hidden = notShownYet();
+  const run = await runContentScript(hidden.html, { code: '112233' }, hidden.setup);
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 0);
+  assert.equal(run.timers.pending(), 0);
+  assert.equal(run.listeners.length, 0);
+  assert.ok(run.observers.every((o) => o.disconnected));
+  // Shown only after the watch: never filled.
+  hidden.show();
+  const looks = run.looks();
+  for (const type of ['load', 'pageshow', 'resize', 'visibilitychange']) await run.fire(type);
+  await run.mutate();
+  await run.timers.advance(5000);
+  assert.equal(run.looks(), looks);
+  assert.equal(run.messages.length, 0);
+  assert.equal(byTag(run.doc, 'otp').value, '');
 });
 
 test('content script: split boxes get one digit each', async () => {

@@ -6,9 +6,10 @@
 // comes in as the zauthFieldFind global rather than an import.
 //
 // Once a code field is found the service worker is asked for a code. It answers only for a bound
-// origin while the vault is unlocked, and only the digits reach this page. A field is filled only
-// while it is empty and at most once per page load, and nothing is ever submitted. Fields that
-// appear later are looked for during the first minute.
+// origin while the vault is unlocked, and only the digits reach this page. A code is asked for at
+// most once per field, a field is filled only while it is empty and at most once per page load,
+// and nothing is ever submitted. Fields that appear or become visible later are looked for during
+// the first minute.
 (() => {
   'use strict';
 
@@ -18,21 +19,34 @@
   const WATCH_MS = 60 * 1000;
   // Mutations come in bursts; one look per burst.
   const SETTLE_MS = 100;
+  // A field can become visible with no DOM change at all: an out-of-process iframe can still have
+  // no size when this script runs, and then nothing in it has a box yet. Until a field is filled
+  // the page is looked at again this often, besides the events below.
+  const RETRY_MS = 500;
   const CODE = /^\d{6,8}$/;
   // Attribute changes that can make a field appear, become usable or turn into a code field.
   const WATCHED_ATTRIBUTES = [
     'style', 'class', 'hidden', 'disabled', 'readonly', 'type',
     'autocomplete', 'name', 'id', 'aria-label', 'placeholder', 'inputmode', 'maxlength',
   ];
+  // Window events after which a field may be visible that was not: the frame got its size, the
+  // page finished loading, or it came back from the back/forward cache.
+  const WINDOW_EVENTS = ['resize', 'load', 'pageshow'];
 
-  const seen = new WeakSet(); // fields already filled (or found unfit to fill)
+  const seen = new WeakSet(); // fields a code was asked for, or filled, or found unfit to fill
   let stopped = false;
   let asking = false;
+  let filled = false;
   let settleTimer = 0;
+  let retryTimer = 0;
 
   const observer = new MutationObserver(schedule);
   observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: WATCHED_ATTRIBUTES });
+  for (const type of WINDOW_EVENTS) window.addEventListener(type, schedule);
+  // The tab was shown (or hidden: a look then is harmless).
+  document.addEventListener('visibilitychange', schedule);
   const deadline = setTimeout(stop, WATCH_MS);
+  retry();
   look();
 
   function schedule() {
@@ -43,6 +57,14 @@
     }, SETTLE_MS);
   }
 
+  function retry() {
+    if (stopped || filled) return;
+    retryTimer = setTimeout(() => {
+      look();
+      retry();
+    }, RETRY_MS);
+  }
+
   // The field(s) to fill now, or null when there is none or it was handled before.
   function target() {
     const fields = finder.findInDocument(document);
@@ -50,7 +72,12 @@
   }
 
   async function look() {
-    if (stopped || asking || !target()) return;
+    if (stopped || asking) return;
+    const asked = target();
+    if (!asked) return;
+    // A field whose code was asked for is never asked for again, even if it is not filled (the
+    // user typed into it while the worker answered).
+    for (const el of asked) seen.add(el);
     asking = true;
     let code = null;
     try {
@@ -67,8 +94,9 @@
       return;
     }
     // The page may have changed while the worker answered: find the field again before filling.
-    const fields = target();
-    if (fields) fill(fields, code);
+    // It is filled if it is the one just asked for, or one no code was asked for yet.
+    const fields = finder.findInDocument(document);
+    if (fields && fields.every((el) => asked.includes(el) || !seen.has(el))) fill(fields, code);
     // Mutations that arrived while asking were dropped by look(); check once more.
     schedule();
   }
@@ -79,11 +107,14 @@
       const [el] = fields;
       if (el.value !== '' || (el.maxLength >= 0 && el.maxLength < code.length)) return;
       put(el, code);
-      return;
+    } else {
+      // Split boxes: one digit each, only when there is exactly one box per digit.
+      if (fields.length !== code.length || fields.some((el) => el.value !== '')) return;
+      fields.forEach((el, i) => put(el, code[i]));
     }
-    // Split boxes: one digit each, only when there is exactly one box per digit.
-    if (fields.length !== code.length || fields.some((el) => el.value !== '')) return;
-    fields.forEach((el, i) => put(el, code[i]));
+    // A field is filled: no more retries; DOM changes and the events above are still looked at.
+    filled = true;
+    clearTimeout(retryTimer);
   }
 
   function put(el, value) {
@@ -95,7 +126,10 @@
   function stop() {
     stopped = true;
     observer.disconnect();
+    for (const type of WINDOW_EVENTS) window.removeEventListener(type, schedule);
+    document.removeEventListener('visibilitychange', schedule);
     clearTimeout(settleTimer);
+    clearTimeout(retryTimer);
     clearTimeout(deadline);
   }
 })();
