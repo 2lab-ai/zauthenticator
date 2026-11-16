@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDescription__",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "default_locale": "en",
   "minimum_chrome_version": "116",
   "homepage_url": "https://github.com/2lab-ai/zauthenticator",
@@ -12,7 +12,19 @@
     "48": "icons/48.png",
     "128": "icons/128.png"
   },
-  "permissions": ["storage", "activeTab"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "contextMenus",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "__MSG_actionTitle__",

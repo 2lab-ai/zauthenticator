@@ -1,6 +1,6 @@
 # 01 — Spec: zauthenticator v0.1
 
-Status: shipped (2026-11-16, v0.1.0) — this is the implemented contract, not a future target.
+Status: shipped (2026-11-16, v0.1.0) — this is the implemented v0.1 contract, not a future target. v0.2 widens permissions and adds a worker + content script for auto-fill: see 03-autofill.md.
 
 ## Problem
 

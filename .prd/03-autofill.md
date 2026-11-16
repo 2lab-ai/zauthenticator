@@ -107,3 +107,60 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
   `#bind` window → registration exists → routed `https://otp.test/login` gets the reference code;
   `https://evil.test/login` (same field) gets nothing; lock → reload → nothing; remove binding →
   reload → nothing; menu fill through the worker's click handler.
+
+## Cross-unit contract (binding for the v0-2-autofill work units)
+
+Committed on main before the units start: `extension/manifest.json` (v0.2.0: permissions
+`storage, activeTab, contextMenus, scripting`; `optional_host_permissions: ["https://*/*"]`;
+`background: {service_worker: "background.js", type: "module"}`) and `extension/lib/nav.js`
+(`openOwnView('add-file'|'settings')` tab, `openOwnWindow('bind'|'unlock')` popup window). No unit
+edits these two files.
+
+Session storage (amends 02-architecture Round 2): `chrome.storage.session` holds a subset of
+{`vaultKey`, `lastActiveAt`, `pendingBind`}. `pendingBind = {origin, accountId, at}` is written only
+by the worker after a menu fill. Every lock path (manual, propagated, idle, `lockIfIdle`, stale-key
+clearing) removes all three keys.
+
+`extension/lib/bindings.js` (pure, AF-A):
+- `normalizeOrigin(url)` → `'https://host[:port]'` or `null` (non-https, invalid, opaque → null).
+- `bindingsOf(data)` → array of `{origin, accountId, createdAt}` (malformed entries ignored).
+- `withBinding(data, origin, accountId, now)` → new data with that origin bound (replaces).
+- `withoutBinding(data, origin)` → new data. `withoutAccountBindings(data, accountId)` → new data.
+- `bindingFor(data, origin)` → binding or null. `boundOrigins(data)` → sorted unique origins whose
+  account exists.
+
+`extension/popup/session.js` (AF-A), usable from extension pages AND the worker:
+- `bindings()` → `bindingsOf(data)` while unlocked, `[]` while locked.
+- `addBinding(origin, accountId)` → mutate; throws `SessionError('bad-origin'|'no-account')`.
+- `removeBinding(origin)` → mutate → boolean.
+- `deleteAccount(id)` also removes that account's bindings in the same mutate.
+- `readUnlocked({ touch = false } = {})` → vault data or `null`; under the `zauthenticator-vault`
+  Web Lock re-reads key + `lastActiveAt`; stale → clears all session keys (incl. `pendingBind`) and
+  returns null; `touch: true` refreshes `lastActiveAt`. This is the worker's only read path.
+- `setPendingBind({origin, accountId})`, `takePendingBind(maxAgeMs = 120000)` (returns and keeps it
+  until `clearPendingBind()`), `clearPendingBind()` via `lib/store.js` (AF-A owns store.js).
+
+Worker (AF-B): `extension/background.js` only wires listeners to `extension/lib/autofill-worker.js`,
+which exports `handleMenuClick(info, tab)`, `handleMessage(message, sender)` (returns
+`{code}`/`{code:null}`), `rebuildMenu()`, `syncRegistrations()`, `onStorageChanged(changes, area)`.
+The shipped worker has no test hooks. The e2e (AF-C) runs a test copy whose manifest points at a
+test-only entry `e2e/fixtures/background.test.js` that imports the same module, wires the same
+listeners and exposes `globalThis.__zauthTest = { handleMenuClick }`; the test copy also adds
+`host_permissions` for the routed test origins.
+
+Reconciliation (AF-B): `syncRegistrations()` is the single reconciler, run on `onStartup`,
+`onInstalled`, and every vault change while unlocked: registered matches = `boundOrigins(data)`;
+granted optional origins not bound are removed with `permissions.remove`. Locked → no change.
+
+Menu lifetime (AF-B): `rebuildMenu()` runs on `onStartup`, `onInstalled`, session-key removal, vault
+change, and at the start of every worker event; locked → single "Unlock zauthenticator…" item.
+Documented limit: if the worker is asleep when the 15-minute idle time passes, account names stay
+in the menu until the next worker event or browser restart; choosing one then opens the unlock
+window instead of filling.
+
+Trust-claim updates (AF-C): README trust table and 01-spec carry the v0.2 permission set and the
+background/content-script facts; the gate policy widens exactly to the manifest above,
+`content_scripts`/`host_permissions`/`web_accessible_resources` stay forbidden, `chrome.scripting`
+calls are allowed only in `lib/autofill-worker.js`, tab/window opening only in the pinned `nav.js`.
+
+Manual checks (not automatable): the native permission prompt in S2; the browser context menu UI.
