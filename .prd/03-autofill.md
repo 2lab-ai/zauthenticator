@@ -179,3 +179,27 @@ background/content-script facts; the gate policy widens exactly to the manifest 
 calls are allowed only in `lib/autofill-worker.js`, tab/window opening only in the pinned `nav.js`.
 
 Manual checks (not automatable): the native permission prompt in S2; the browser context menu UI.
+
+## Fresh code and retry after a failed attempt (v0.2.0, from the user's hand test)
+
+User report (verbatim, 2026-11-16, cachy-z13 Edge, v0.2.0 = main e474db8): "잘 작동되는데, 첫번째 시도에서 시간 지난 2fa 입력해서 실패남 이거 한번 실패난경우 다시 입력하도록해줘"
+
+Cause (code at main 90ddb49): the code is computed once when the field is found (worker `handleMessage`,
+`totp(account, Date.now())`) and the content script stops after the first fill
+(`content/autofill.js:98-102`) and never asks again for a field it filled (`seen`, :36/:79/:110). A code
+filled late in its period, or submitted after the period ended, is expired; if the site rejects it and
+clears or re-renders the field, nothing fills it again. Clocks were checked: cachy-z13 within 1 s of the
+reference, NTP synchronized.
+
+Contract (S3 additions):
+- The worker answers `{code, validMs}` — `validMs` = milliseconds left in the code's period.
+- Fill late in a period is avoided: when `validMs < 3000` the script waits for the next period and asks again.
+- Keep fresh: after a fill, while the filled field(s) are still in the page and still hold exactly the
+  code the script put, the script asks for a new code when the period ends and replaces it.
+- Retry after a failure: if the filled field becomes empty again, or is removed and a code field is shown
+  again, the script fills it again with a current code.
+- Bounds: the follow window ends 5 minutes after the first fill; at most 1 + 3 fills per page load; a field
+  the user typed into (value differs from what the script put and is not empty) is never touched again;
+  still at most one filled field set at a time (no other candidate field is filled while the filled one
+  is present), still never submits, and auto-fill still never refreshes `lastActiveAt`.
+- Locked/idle/unbound reply (`{code: null}`) still ends the watch.

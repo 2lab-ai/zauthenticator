@@ -21,3 +21,10 @@ Status: done (2026-11-16) — closed rows and the review log are in [loop.done.m
   (e.g. 4 boxes + checkbox + 6 boxes); pin with fixtures and decide whether a group with more than 8 boxes
   is skipped outright. A group named for another number also blocks boxes marked one-time-code — document
   or let the box-level mark win (fable, post-approval confirm of 2387795, APPROVE).
+
+## Round 2 (2026-11-16) — user hand test
+
+- Manual checks done by the user on cachy-z13 Edge with v0.2.0 (main e474db8): "잘 작동되는데" — context
+  menu fill, bind window + native permission prompt and auto-fill on revisit observed working.
+- Open: first attempt submitted an expired code → fresh-code + retry contract in 03-autofill.md
+  ("Fresh code and retry after a failed attempt"). Tag v0.2.0 after this lands.
