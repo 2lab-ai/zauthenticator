@@ -126,10 +126,32 @@ const QR_SVG = {
 };
 
 // English UI text the A8 and A9 steps expect (extension/_locales/en/messages.json).
-const MSG = {
+const MSG_EN = {
   imageFormat: 'Use a PNG, JPEG, GIF, WebP or BMP image.',
   imported: (added, duplicates) => `Backup imported. Accounts added: ${added}. Duplicates skipped: ${duplicates}.`,
 };
+
+// The UI text the A8 and A9 steps expect in the message catalog chrome.i18n resolves in `page`
+// (launch() cannot pin it on macOS, where it follows the system language). With the en catalog
+// it is the literal MSG_EN text, so a changed English message fails; with another catalog the
+// same messages come from chrome.i18n.getMessage() in the page, composed as the import notice
+// is ("<importDone> <addedCount> <skippedCount>", the last only for duplicates).
+// → { catalog, imageFormat, imported(added, duplicates) → Promise<string> }
+async function expectedText(page) {
+  const catalog = await page.evaluate(() => chrome.i18n.getMessage('lang'));
+  if (catalog === 'en') return { catalog, imageFormat: MSG_EN.imageFormat, imported: async (a, d) => MSG_EN.imported(a, d) };
+  const imageFormat = await page.evaluate(() => chrome.i18n.getMessage('errImageFormat'));
+  const imported = (added, duplicates) =>
+    page.evaluate(
+      ([a, d]) => {
+        const parts = [chrome.i18n.getMessage('addedCount', [String(a)])];
+        if (d > 0) parts.push(chrome.i18n.getMessage('skippedCount', [String(d)]));
+        return `${chrome.i18n.getMessage('importDone')} ${parts.join(' ')}`;
+      },
+      [added, duplicates],
+    );
+  return { catalog, imageFormat, imported };
+}
 
 // ---- independent TOTP (RFC 4648 base32 + RFC 4226/6238 on node:crypto) ----------------------
 
@@ -369,7 +391,7 @@ async function unlock(page, timeout = 30000) {
 // Imports `file` (a setInputFiles payload) with PASSPHRASE from the settings view and waits for
 // the list to show `expectedNotice` in #list-notice. The notice clears itself after 5 s, so every
 // text it shows from the submit on is recorded by an observer. Never throws on the outcome.
-// → { listed, noticeOk, notices, importError, lang }
+// → { listed, noticeOk, notices, importError }
 async function importViaSettings(page, file, expectedNotice) {
   await page.click('#settings-btn');
   await waitState(page, 'settings');
@@ -402,7 +424,6 @@ async function importViaSettings(page, file, expectedNotice) {
     return {
       notices: globalThis.zauthE2eNotices,
       importError: document.querySelector('#import-error')?.textContent?.trim() ?? null,
-      lang: document.documentElement.lang,
     };
   });
   return { listed, noticeOk, ...seen };
@@ -680,6 +701,7 @@ try {
   const removed = ACCOUNTS[0];
   const kept = ACCOUNTS[1];
   const backupFile = { name: download.suggestedFilename(), mimeType: 'application/json', buffer: Buffer.from(exported, 'utf8') };
+  const ui = await expectedText(page);
   const backup = await openRecord(found?.record);
   const backupEntry = entriesFor(backup.accounts, removed)[0];
   rep.check(
@@ -718,13 +740,14 @@ try {
   );
 
   step = 'k-a8-import';
-  const imported = await importViaSettings(page, backupFile, MSG.imported(1, 1));
+  const wantImported = await ui.imported(1, 1);
+  const imported = await importViaSettings(page, backupFile, wantImported);
   const afterImport = await rows(page);
   const back = afterImport.rows.filter((r) => r.issuer === removed.issuer && r.label === removed.label);
   rep.check(
     'a8-import',
     imported.listed && imported.noticeOk && afterImport.rows.length === 2 && back.length === 1,
-    `${backupFile.name} with the passphrase: list ${imported.listed}, #list-notice showed ${JSON.stringify(imported.notices)} (expected "${MSG.imported(1, 1)}", lang ${imported.lang}), #import-error "${imported.importError}", rows [${afterImport.rows.map((r) => `${r.issuer}:${r.label}`).join(', ')}]`,
+    `${backupFile.name} with the passphrase: list ${imported.listed}, #list-notice showed ${JSON.stringify(imported.notices)} (expected "${wantImported}", catalog ${ui.catalog}), #import-error "${imported.importError}", rows [${afterImport.rows.map((r) => `${r.issuer}:${r.label}`).join(', ')}]`,
   );
   await checkCode(rep, page, removed, ':after-import');
   const storedAfterImport = await openRecord((await readStorage(page)).local.vault);
@@ -737,13 +760,14 @@ try {
   );
 
   step = 'l-a8-reimport';
-  const again = await importViaSettings(page, backupFile, MSG.imported(0, 2));
+  const wantAgain = await ui.imported(0, 2);
+  const again = await importViaSettings(page, backupFile, wantAgain);
   const afterAgain = await rows(page);
   const copies = afterAgain.rows.filter((r) => r.issuer === removed.issuer && r.label === removed.label).length;
   rep.check(
     'a8-reimport-duplicate',
     again.listed && again.noticeOk && afterAgain.rows.length === 2 && copies === 1,
-    `same file again: list ${again.listed}, #list-notice showed ${JSON.stringify(again.notices)} (expected "${MSG.imported(0, 2)}"), #import-error "${again.importError}", ${afterAgain.rows.length} rows, ${copies} of ${removed.label}`,
+    `same file again: list ${again.listed}, #list-notice showed ${JSON.stringify(again.notices)} (expected "${wantAgain}"), #import-error "${again.importError}", ${afterAgain.rows.length} rows, ${copies} of ${removed.label}`,
   );
   checkStorage(rep, 'storage-ciphertext-only:after-import', await readStorage(page));
   rep.check('no-egress:after-import', net2.egress().length === 0, `remote requests: ${JSON.stringify(net2.egress())}`);
@@ -941,6 +965,7 @@ try {
         await pageQ.click('#unlock-submit');
       }
       await waitState(pageQ, 'add', 30000);
+      const ui = await expectedText(pageQ);
       const fileMode = await pageQ.evaluate(() => document.body.classList.contains('file-mode'));
       await pageQ.setInputFiles('#scan-file-input', { name: path.basename(QR_PNG.file), mimeType: QR_PNG.mimeType, buffer: png });
       const listed = await waitState(pageQ, 'list', 15000).then(
@@ -977,8 +1002,8 @@ try {
       const after = (await rows(pageQ)).rows;
       rep.check(
         'qr-image-svg-refused',
-        svgError === MSG.imageFormat && svgState === 'add' && after.length === countBefore && !after.some((r) => r.issuer === QR_SVG.issuer),
-        `${path.basename(QR_SVG.file)} (${QR_SVG.mimeType}): #add-error "${svgError}" (expected "${MSG.imageFormat}"), state ${svgState}; then ${after.length} rows (before ${countBefore}), ${QR_SVG.issuer} row ${after.some((r) => r.issuer === QR_SVG.issuer)}`,
+        svgError === ui.imageFormat && svgState === 'add' && after.length === countBefore && !after.some((r) => r.issuer === QR_SVG.issuer),
+        `${path.basename(QR_SVG.file)} (${QR_SVG.mimeType}): #add-error "${svgError}" (expected "${ui.imageFormat}", catalog ${ui.catalog}), state ${svgState}; then ${after.length} rows (before ${countBefore}), ${QR_SVG.issuer} row ${after.some((r) => r.issuer === QR_SVG.issuer)}`,
       );
     } catch (err) {
       // stepRun describes the pages still open; this one is closed below.
