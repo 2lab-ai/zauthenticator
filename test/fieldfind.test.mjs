@@ -25,6 +25,7 @@ class El {
     this.children = [];
     this.parentElement = null;
     this.events = [];
+    this.listeners = [];
     this.submits = 0;
     this.currentValue = attrs.value ?? '';
   }
@@ -85,8 +86,17 @@ class El {
     }
     return true;
   }
+  // content/autofill.js listens on the fields it filled for the user's own edits.
+  addEventListener(type, fn) {
+    this.listeners.push({ type, fn });
+  }
+  removeEventListener(type, fn) {
+    const i = this.listeners.findIndex((l) => l.type === type && l.fn === fn);
+    if (i !== -1) this.listeners.splice(i, 1);
+  }
   dispatchEvent(event) {
     this.events.push(`${event.type}${event.bubbles ? '' : ' (not bubbling)'}`);
+    for (const l of this.listeners.filter((x) => x.type === event.type)) l.fn(event);
     return true;
   }
   submit() {
@@ -453,6 +463,8 @@ function fakeTimers() {
 // given, gets the parsed page before the scripts run.
 async function runContentScript(html, reply, setup) {
   const doc = parse(html);
+  // content/autofill.js follows a filled field only while the page stays at this path.
+  doc.URL = 'https://otp.test/login';
   if (setup) setup(doc);
   const timers = fakeTimers();
   const messages = [];
@@ -485,6 +497,7 @@ async function runContentScript(html, reply, setup) {
       constructor(type, init = {}) {
         this.type = type;
         this.bubbles = Boolean(init.bubbles);
+        this.isTrusted = false;
       }
     },
     MutationObserver: class {

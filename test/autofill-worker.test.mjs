@@ -394,6 +394,197 @@ test('auto-fill is not activity: lastActiveAt is not refreshed', async () => {
   assert.equal(areas.session.get('lastActiveAt'), last);
 });
 
+// ---- what each tab got (S3, "Fresh code and retry after a failed attempt") ---------------------
+// Per tab and origin the worker serves each code once, and at most 3 codes in any 5 minutes, in
+// one record in session storage (so a page that reloads itself, or a worker that was stopped and
+// started again, changes nothing). A menu fill there starts the count again.
+
+const SERVED = 'autofillServed';
+const WINDOW_MS = 5 * 60 * 1000;
+// A sender in tab `tab` (frame `frameId`) of `origin`.
+const inTab = (tab, origin = 'https://otp.test', frameId = 0) => sender(origin, { tab: { id: tab }, frameId });
+
+// Date.now() returns what the test sets; the session is unlocked and active at that time.
+function clock(t) {
+  const realNow = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  t.after(() => {
+    Date.now = realNow;
+  });
+  return {
+    set: (ms) => (now = ms),
+    async seed(data) {
+      await seed(data, { lastActive: now });
+    },
+  };
+}
+
+test('a code is served once per tab and origin: asked again in its period → { code: null, validMs } (wait for the next one); another tab or origin gets it', async (t) => {
+  const c = clock(t);
+  c.set(75 * 1000);
+  await c.seed(BOUND);
+  const first = await ask(inTab(1));
+  assert.deepEqual(first, { code: referenceTotp(A, 75 * 1000), validMs: 15 * 1000 });
+  // The same tab and origin, any frame: wait until the period ends.
+  assert.deepEqual(await ask(inTab(1)), { code: null, validMs: 15 * 1000 });
+  c.set(80 * 1000);
+  assert.deepEqual(await ask(inTab(1, 'https://otp.test', 4)), { code: null, validMs: 10 * 1000 });
+  // Another tab, or another bound origin in the same tab, gets its own.
+  assert.deepEqual(await ask(inTab(2)), { code: referenceTotp(A, 80 * 1000), validMs: 10 * 1000 });
+  assert.equal((await ask(inTab(1, 'https://eight.test'))).code, referenceTotp(B, 80 * 1000));
+  // The next period's code is served.
+  c.set(90 * 1000);
+  assert.deepEqual(await ask(inTab(1)), { code: referenceTotp(A, 90 * 1000), validMs: 30 * 1000 });
+  // A sender with no tab (none is expected from a content script) has a record of its own.
+  const noTab = { id: SELF_ID, origin: 'https://otp.test', url: 'https://otp.test/login' };
+  assert.equal((await ask(noTab)).code, referenceTotp(A, 90 * 1000));
+  assert.deepEqual(await ask(noTab), { code: null, validMs: 30 * 1000 });
+});
+
+test('at most 3 codes per tab and origin in any 5 minutes (refills and fresher codes alike) → then { code: null }', async (t) => {
+  const c = clock(t);
+  c.set(60 * 1000);
+  await c.seed(BOUND);
+  for (const ms of [60 * 1000, 90 * 1000, 120 * 1000]) {
+    c.set(ms);
+    assert.equal((await ask(inTab(1))).code, referenceTotp(A, ms), `at ${ms} ms`);
+  }
+  // A fourth code within 5 minutes of the first: refused outright (no wait).
+  c.set(150 * 1000);
+  assert.deepEqual(await ask(inTab(1)), { code: null });
+  c.set(60 * 1000 + WINDOW_MS - 1);
+  assert.deepEqual(await ask(inTab(1)), { code: null });
+  // Other tabs are counted apart.
+  assert.equal((await ask(inTab(2))).code, referenceTotp(A, 60 * 1000 + WINDOW_MS - 1));
+  // 5 minutes after the first code, one more: then 3 again in the window (90 s, 120 s, 361 s).
+  c.set(60 * 1000 + WINDOW_MS + 1000);
+  assert.equal((await ask(inTab(1))).code, referenceTotp(A, 60 * 1000 + WINDOW_MS + 1000));
+  c.set(380 * 1000);
+  assert.deepEqual(await ask(inTab(1)), { code: null });
+  // The window moves on: with the 90 s and 120 s codes out of it, another one.
+  c.set(420 * 1000 + 1);
+  assert.equal((await ask(inTab(1))).code, referenceTotp(A, 420 * 1000 + 1));
+});
+
+test('two frames of a tab asking at once: one gets the code, the other waits', async (t) => {
+  const c = clock(t);
+  c.set(75 * 1000);
+  await c.seed(BOUND);
+  const replies = await Promise.all([ask(inTab(1, 'https://otp.test', 0)), ask(inTab(1, 'https://otp.test', 3)), ask(inTab(1, 'https://otp.test', 5))]);
+  assert.equal(replies.filter((r) => r.code !== null).length, 1, JSON.stringify(replies));
+  assert.equal(replies.filter((r) => r.code === null && r.validMs === 15 * 1000).length, 2, JSON.stringify(replies));
+});
+
+test('the record is in session storage, not the worker: a restarted worker serves no code twice and counts on', async (t) => {
+  const c = clock(t);
+  c.set(75 * 1000);
+  await c.seed(BOUND);
+  assert.equal((await ask(inTab(1))).code, referenceTotp(A, 75 * 1000));
+  // The browser stops an idle service worker; the next message starts a new one. (Loading it
+  // pins session access again; that log belongs to the test of the first load.)
+  const pinned = accessLevels.length;
+  const restarted = await import('../extension/lib/autofill-worker.js?restarted');
+  assert.notEqual(restarted, worker);
+  accessLevels.length = pinned;
+  const again = (s) => restarted.handleMessage({ type: 'autofill-code' }, s);
+  assert.deepEqual(await again(inTab(1)), { code: null, validMs: 15 * 1000 });
+  c.set(90 * 1000);
+  assert.ok((await again(inTab(1))).code);
+  c.set(120 * 1000);
+  assert.ok((await again(inTab(1))).code);
+  c.set(150 * 1000);
+  assert.deepEqual(await again(inTab(1)), { code: null });
+});
+
+test('the record holds tabs, origins, account ids, counters and times only (never a code); entries older than 5 minutes are dropped when it is written', async (t) => {
+  const c = clock(t);
+  c.set(75 * 1000);
+  await c.seed(BOUND);
+  const { code } = await ask(inTab(1));
+  await ask(inTab(2, 'https://eight.test'));
+  const stored = areas.session.get(SERVED);
+  assert.deepEqual(stored, [
+    { tab: 1, origin: 'https://otp.test', account: 'acc-a', counter: 2, at: 75 * 1000 },
+    { tab: 2, origin: 'https://eight.test', account: 'acc-b', counter: 1, at: 75 * 1000 },
+  ]);
+  assert.ok(stored.every((e) => Object.values(e).every((v) => v !== code && String(v) !== code)));
+  // Refusals write nothing.
+  await ask(inTab(1));
+  assert.equal(areas.session.get(SERVED).length, 2);
+  // 5 minutes later the next write leaves only what is younger.
+  c.set(75 * 1000 + WINDOW_MS);
+  await ask(inTab(3));
+  assert.deepEqual(areas.session.get(SERVED), [{ tab: 3, origin: 'https://otp.test', account: 'acc-a', counter: 12, at: 75 * 1000 + WINDOW_MS }]);
+});
+
+test('locked, idle, unbound or an invalid sender: nothing is recorded', async (t) => {
+  const c = clock(t);
+  c.set(75 * 1000);
+  await seed(BOUND, { locked: true });
+  await ask(inTab(1));
+  assert.equal(areas.session.has(SERVED), false);
+  await seed(BOUND, { lastActive: 75 * 1000 - IDLE_MS });
+  await ask(inTab(1));
+  assert.equal(areas.session.has(SERVED), false);
+  await c.seed(BOUND);
+  await ask(inTab(1, 'https://evil.test'));
+  await ask({ ...inTab(1), id: 'another-extension' });
+  assert.equal(areas.session.has(SERVED), false);
+});
+
+test('a menu fill on a tab and origin starts its count again; one that filled nothing, or on another tab, does not', async (t) => {
+  // fillFocused() answers with the origin it checked when it filled.
+  const fills = async (options) => [{ frameId: options.target.frameIds[0], result: options.args[1] }];
+  executeScript = fills;
+  const c = clock(t);
+  c.set(60 * 1000);
+  await c.seed(BOUND);
+  for (const ms of [60 * 1000, 90 * 1000, 120 * 1000]) {
+    c.set(ms);
+    await ask(inTab(1));
+  }
+  c.set(150 * 1000);
+  assert.deepEqual(await ask(inTab(1)), { code: null });
+  // A menu fill in another tab, or one the page refused, changes nothing for tab 1.
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://otp.test/login' }, { id: 2 });
+  executeScript = async () => {
+    throw new Error('Cannot access contents of the page');
+  };
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://otp.test/login' }, { id: 1 });
+  assert.deepEqual(await ask(inTab(1)), { code: null });
+  // The user's own choice from the menu in tab 1: auto-fill there may serve codes again.
+  executeScript = fills;
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://otp.test/login' }, { id: 1 });
+  assert.equal((await ask(inTab(1))).code, referenceTotp(A, 150 * 1000));
+  // Only that tab and origin: eight.test in tab 1 keeps its own count.
+  for (const ms of [150 * 1000, 210 * 1000, 270 * 1000]) {
+    c.set(ms);
+    assert.ok((await ask(inTab(1, 'https://eight.test'))).code, `eight.test at ${ms}`);
+  }
+  c.set(330 * 1000);
+  assert.deepEqual(await ask(inTab(1, 'https://eight.test')), { code: null });
+  await click({ menuItemId: 'acct:acc-a', frameId: 0, pageUrl: 'https://otp.test/2fa' }, { id: 1 });
+  assert.deepEqual(await ask(inTab(1, 'https://eight.test')), { code: null });
+});
+
+test('every lock removes the record with the session key', async (t) => {
+  const c = clock(t);
+  c.set(75 * 1000);
+  await c.seed(BOUND);
+  await ask(inTab(1));
+  assert.equal(areas.session.has(SERVED), true);
+  await store.clearSessionKey();
+  assert.equal(areas.session.has(SERVED), false);
+  // Idle, found by the worker on the next request.
+  await c.seed(BOUND);
+  await ask(inTab(1));
+  assert.equal(areas.session.has(SERVED), true);
+  c.set(75 * 1000 + IDLE_MS);
+  assert.deepEqual(await ask(inTab(1)), { code: null });
+  assert.equal(areas.session.has(SERVED), false);
+});
+
 // ---- menu click (S1) ---------------------------------------------------------------------------
 
 const MENU_VAULT = { accounts: [A, B], bindings: [binding('https://bound.test', 'acc-a')] };
