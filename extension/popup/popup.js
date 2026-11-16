@@ -400,6 +400,10 @@ function createBindView() {
   const allowBtn = $('#bind-allow');
   const cancelBtn = $('#bind-cancel');
   let offer = null; // { origin, accountId, at } on display, while unlocked
+  // The stored offer this window read, usable or not: the only one its Close, Not now or a failed
+  // Allow removes. Another menu fill meanwhile stores a newer offer (for its own window), which
+  // stays.
+  let readOffer = null;
 
   allowBtn.addEventListener('click', allow);
   cancelBtn.addEventListener('click', cancel);
@@ -416,6 +420,7 @@ function createBindView() {
       pending = null;
     }
     if (!session.isUnlocked() || session.generation() !== gen) return false;
+    readOffer = pending;
     const origin = pending && typeof pending.origin === 'string' ? normalizeOrigin(pending.origin) : null;
     if (!origin || origin !== pending.origin) {
       unavailable(t('bindExpired'));
@@ -454,7 +459,7 @@ function createBindView() {
     const current = offer;
     if (!current || allowBtn.disabled) return;
     if (expired(current)) {
-      dropOffer(t('bindExpired'));
+      dropOffer(t('bindExpired'), current);
       return;
     }
     const asked = chrome.permissions.request({ origins: [`${current.origin}/*`] });
@@ -483,18 +488,20 @@ function createBindView() {
       const still = await session.takePendingBind();
       if (!live()) return;
       if (!still || still.origin !== current.origin || still.accountId !== current.accountId) {
-        dropOffer(t('bindExpired'));
+        dropOffer(t('bindExpired'), current);
         return;
       }
+      // The binding is stored before the offer is cleared: the service worker, which takes back
+      // site access nothing uses, then always finds this site offered or bound.
       try {
         await session.addBinding(current.origin, current.accountId);
       } catch (error) {
         if (!live() || error.code === 'locked') return;
-        if (error.code === 'no-account') dropOffer(t('bindNoAccount'));
+        if (error.code === 'no-account') dropOffer(t('bindNoAccount'), current);
         else setText(errorEl, t('bindFailed', reason(error)));
         return;
       }
-      await clearPending();
+      await clearPending(current);
       if (!live()) return;
       await finishWindow();
     } finally {
@@ -502,27 +509,29 @@ function createBindView() {
     }
   }
 
-  // The offer can no longer be stored: drop it (the service worker then takes back any site
-  // access it no longer needs) and leave the message with a Close button.
-  function dropOffer(message) {
+  // The offer `target` can no longer be stored: drop it (the service worker then takes back any
+  // site access it no longer needs) and leave the message with a Close button.
+  function dropOffer(message, target) {
     unavailable(message);
-    clearPending();
+    clearPending(target);
   }
 
-  async function clearPending() {
+  // Removes the stored offer only while it is still exactly `target`.
+  async function clearPending(target) {
+    if (!target) return;
     try {
-      await session.clearPendingBind();
+      await session.clearPendingBind(target);
     } catch {
       // nothing stored to clear
     }
   }
 
-  // Not now / Close / Escape: nothing is stored.
+  // Not now / Close / Escape: nothing is stored, and only the offer this window read is dropped.
   async function cancel() {
     if (cancelBtn.disabled) return;
     cancelBtn.disabled = true;
     try {
-      await clearPending();
+      await clearPending(readOffer);
     } finally {
       cancelBtn.disabled = false;
     }
@@ -532,6 +541,7 @@ function createBindView() {
   // Empties the view (on lock, and before every load).
   function clear() {
     offer = null;
+    readOffer = null;
     setText(originEl, '');
     setText(accountEl, '');
     setText(errorEl, '');

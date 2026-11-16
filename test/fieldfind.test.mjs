@@ -136,7 +136,89 @@ test('name, id, aria-label or placeholder that names a code is found', () => {
   assert.deepEqual(found('<input name="mfaToken" data-t="hit">'), ['hit']);
   assert.deepEqual(found('<input name="one_time_password" data-t="hit">'), ['hit']);
   assert.deepEqual(found('<input id="authentication-code" type="tel" data-t="hit">'), ['hit']);
-  assert.deepEqual(found('<input name="security code" type="number" data-t="hit">'), ['hit']);
+});
+
+// Rule 2 reads otp, totp, mfa and 2fa as whole words: names are split at anything that is not a
+// letter or digit, at camelCase humps and where letters meet digits.
+test('otp, totp, mfa and 2fa are found as whole words in any spelling of a name', () => {
+  for (const name of ['otp', 'OTP', 'otpCode', 'OTPCode', 'otp_code', 'otp-code', 'mfa-token', 'mfaCode', 'MFA', 'totp', 'userTotp', 'totp_value', '2fa', '2faCode', 'enter2FA', 'code-2fa', 'otp1', 'login.otp']) {
+    assert.deepEqual(found(`<input name="${name}" data-t="hit">`), ['hit'], name);
+  }
+  assert.deepEqual(found('<input placeholder="Enter your MFA code" data-t="hit">'), ['hit']);
+  assert.deepEqual(found('<input aria-label="TOTP" data-t="hit">'), ['hit']);
+});
+
+test('otp, totp, mfa and 2fa inside another word are not a code name', () => {
+  for (const name of ['footprint', 'hotpot', 'spotprice', 'notpaid', 'hotpink', 'Footprint', 'despotism', 'mfaq', 'sumfactor', 'b2far', 'otpx', 'xtotp']) {
+    assert.equal(found(`<input name="${name}">`), null, name);
+    assert.equal(found(`<input id="${name}" placeholder="${name}">`), null, name);
+  }
+});
+
+test('one-time is a code name only before code, pass, password or pin; verification only before code', () => {
+  for (const name of ['one_time_password', 'oneTimeCode', 'one-time-pin', 'One-time passcode', 'onetimepass', 'verificationCode', 'verification_code', 'Verification code', 'email-verification-code']) {
+    assert.deepEqual(found(`<input name="${name}" data-t="hit">`), ['hit'], name);
+  }
+  for (const name of ['oneTimeFee', 'one-time', 'one time donation', 'verification', 'verificationEmail', 'email-verification', 'verification-status']) {
+    assert.equal(found(`<input name="${name}">`), null, name);
+  }
+});
+
+test('security code is not a code name (it is what card forms call the CVV)', () => {
+  for (const name of ['security code', 'securityCode', 'security-code']) {
+    assert.equal(found(`<input name="${name}" type="number">`), null, name);
+    assert.equal(found(`<input aria-label="${name}" maxlength="4">`), null, name);
+  }
+});
+
+// Rules 2 to 4 skip a field whose name, id, label, placeholder or autocomplete names something else
+// a short number goes into, and a field whose autocomplete asks for any other kind of value.
+const EXCLUDED_WORDS = [
+  'zip', 'postal', 'phone', 'tel', 'mobile', 'amount', 'price', 'card', 'cc', 'cvv', 'cvc', 'csc', 'birth',
+  'bday', 'dob', 'date', 'year', 'month', 'day', 'search', 'account', 'qty', 'quantity', 'captcha',
+];
+
+test('rules 2 to 4 skip a field named for another number, in name, id, aria-label, placeholder or autocomplete', () => {
+  for (const word of EXCLUDED_WORDS) {
+    for (const attr of ['name', 'id', 'aria-label', 'placeholder', 'autocomplete']) {
+      // Rule 2: a code name with the word beside it.
+      assert.equal(found(`<input ${attr === 'name' ? '' : 'name="otp" '}${attr}="${attr === 'name' ? `otp-${word}` : word}">`), null, `rule 2, ${attr}=${word}`);
+      // Rule 3: a numeric field sized for a code.
+      assert.equal(found(`<input inputmode="numeric" maxlength="6" ${attr}="${word}">`), null, `rule 3, ${attr}=${word}`);
+    }
+    // Rule 4: split boxes, one of them so named.
+    const marked = boxes(6).replace('name="otp-3"', `name="${word}-3"`);
+    assert.equal(found(`<div>${marked}</div>`), null, `rule 4, ${word}`);
+  }
+  // camelCase and compounds.
+  for (const name of ['postalCode', 'zipCode', 'zipcode', 'postcode', 'phoneNumber', 'telephone', 'mobileNo', 'cardNumber', 'ccNumber', 'cvc2', 'birthYear', 'birthday', 'dateOfBirth', 'expiryMonth', 'accountNumber', 'captchaInput', 'searchQuery']) {
+    assert.equal(found(`<input type="tel" maxlength="6" name="${name}">`), null, name);
+  }
+  // The postal field next to a code field: the code field is the one found.
+  assert.deepEqual(found('<input inputmode="numeric" maxlength="6" name="postal"><input inputmode="numeric" maxlength="6" data-t="hit">'), ['hit']);
+});
+
+test('the excluded words count only as whole words: hotel, today, update, cardinal and the like are not', () => {
+  for (const name of ['hotelCode', 'today', 'updateCode', 'success', 'accepted', 'cardinal', 'research', 'holiday', 'zipper', 'spotprice']) {
+    assert.deepEqual(found(`<input inputmode="numeric" maxlength="6" name="${name}" data-t="hit">`), ['hit'], name);
+  }
+});
+
+test('rules 2 to 4 skip a field whose autocomplete is anything but one-time-code, off, on or empty', () => {
+  for (const value of ['', 'off', 'on', 'OFF', ' on ', 'one-time-code']) {
+    assert.deepEqual(found(`<input name="otp" autocomplete="${value}" data-t="hit">`), ['hit'], value);
+    assert.deepEqual(found(`<input inputmode="numeric" maxlength="6" autocomplete="${value}" data-t="hit">`), ['hit'], value);
+  }
+  for (const value of ['nope', 'new-password', 'username', 'email', 'transaction-amount', 'section-login otp']) {
+    assert.equal(found(`<input name="otp" autocomplete="${value}">`), null, value);
+    assert.equal(found(`<input inputmode="numeric" maxlength="6" autocomplete="${value}">`), null, value);
+    assert.equal(found(`<div>${boxes(6, ` autocomplete="${value}"`)}</div>`), null, value);
+  }
+});
+
+test('rule 1 (autocomplete one-time-code) is not narrowed: it wins whatever the field is named', () => {
+  assert.deepEqual(found('<input autocomplete="one-time-code" name="phone-code" placeholder="Code from your mobile" data-t="hit">'), ['hit']);
+  assert.deepEqual(found('<input autocomplete="section-sms one-time-code" id="zip" data-t="hit">'), ['hit']);
 });
 
 test('a numeric field sized for a code is found', () => {
@@ -364,6 +446,41 @@ test('content script: fills the code field once with input and change events, no
   await run.mutate();
   assert.equal(otp.value, '');
   assert.equal(run.messages.length, 1);
+});
+
+test('content script: one fill per page load: a second candidate is never asked for or filled, and the watch stops', async () => {
+  // The OTP field and, after it, a field rule 3 also takes (numeric, sized for a code).
+  const page = '<form><input name="otp" data-t="otp"><input inputmode="numeric" maxlength="6" data-t="second"></form>';
+  let n = 0;
+  const run = await runContentScript(page, () => ({ code: String(111111 * ++n).padStart(6, '0') }));
+  assert.equal(byTag(run.doc, 'otp').value, '111111');
+  await run.mutate();
+  for (const type of ['load', 'pageshow', 'resize', 'visibilitychange']) await run.fire(type);
+  await run.timers.advance(60 * 1000);
+  assert.deepEqual(run.messages, [{ type: 'autofill-code' }]);
+  assert.equal(byTag(run.doc, 'second').value, '');
+  assert.deepEqual(byTag(run.doc, 'second').events, []);
+  // Nothing is left running after the fill.
+  assert.ok(run.observers.every((o) => o.disconnected));
+  assert.equal(run.timers.pending(), 0);
+  assert.equal(run.listeners.length, 0);
+  // A field that appears later is not filled either.
+  const late = new El('input', { autocomplete: 'one-time-code' });
+  run.doc.children[0].append(late);
+  await run.mutate();
+  assert.equal(late.value, '');
+  assert.equal(run.messages.length, 1);
+});
+
+test('content script: split boxes filled → the watch stops too (a second run of boxes stays empty)', async () => {
+  const second = Array.from({ length: 6 }, (_, i) => `<input maxlength="1" data-t="c${i + 1}">`).join('');
+  const run = await runContentScript(`<div>${boxes(6)}</div><div>${second}</div>`, { code: '102938' });
+  assert.deepEqual(labels(6).map((t) => byTag(run.doc, t).value), ['1', '0', '2', '9', '3', '8']);
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 1);
+  assert.ok(['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].every((t) => byTag(run.doc, t).value === ''));
+  assert.equal(run.timers.pending(), 0);
+  assert.equal(run.listeners.length, 0);
 });
 
 test('content script: no code (locked, idle, unbound) → nothing filled and the watch stops', async () => {

@@ -9,8 +9,9 @@
 // result (the in-memory key and data, the session key) only if neither changed meanwhile.
 //
 // The service worker imports this module too, so it imports nothing that needs a document or
-// a window. The worker never unlocks its instance: it reads with readUnlocked(), which goes to
-// storage every time, and writes only the auto-fill offer (setPendingBind()).
+// a window. The worker never unlocks its instance: it reads with readUnlocked() and
+// withVaultState(), which go to storage every time, and writes only the auto-fill offer
+// (setPendingBind()).
 import * as vault from '../lib/vault.js';
 import * as store from '../lib/store.js';
 import { normalize } from '../lib/otpauth.js';
@@ -27,7 +28,7 @@ const CLOCK_SLACK_MS = 60 * 1000;
 export const PENDING_BIND_MS = 2 * 60 * 1000;
 
 let rawKey = null;   // Uint8Array while unlocked
-let data = null;     // { accounts: [...], bindings?: [...] } as stored plus the ids withIds() gave, while unlocked
+let data = null;     // { accounts: [...], bindings?: [...] } as stored plus the ids withIds() gives, while unlocked
 let recordCt = null; // ciphertext of the record `data` was read from or sealed into
 let epoch = 0;       // the generation; forget() bumps it
 
@@ -83,7 +84,7 @@ export function resume() {
     }
     let current;
     try {
-      current = loaded(record, await vault.open(key, record));
+      current = loaded(await vault.open(key, record));
     } catch {
       // The session key does not open the stored record; ask for the passphrase again.
       drop();
@@ -122,7 +123,7 @@ export function unlock(passphrase) {
     const record = await store.getRecord();
     if (!record) throw new SessionError('no-vault');
     const opened = await vault.unlock(record, passphrase);
-    const current = loaded(record, opened.data);
+    const current = loaded(opened.data);
     if (epoch !== gen) throw new SessionError('locked');
     await store.setSessionKey(opened.rawKey);
     if (epoch !== gen) throw new SessionError('locked');
@@ -176,7 +177,7 @@ export function refresh() {
     if (record.ct === recordCt) return 'unchanged';
     let current;
     try {
-      current = loaded(record, await vault.open(key, record));
+      current = loaded(await vault.open(key, record));
     } catch {
       if (!live()) return 'stale';
       forget();
@@ -223,40 +224,68 @@ export function lockIfIdle() {
 }
 
 // The vault data, read from storage under the vault lock, or null while locked. This is the
-// service worker's only read path, and it publishes nothing into this instance (no key, no data):
-// every call reads the stored record, key and activity time again, so a lock in any page is seen
-// by the next call. Like resume(), an idle session and a key that does not open the record are
-// locked here: every session key is removed (the pending offer too), and this page, if it holds
-// a key, drops it. accounts are what accounts() would show (an entry that is not an object, or
-// is an array, is left out; nothing seals this result), with the ids loaded() gives them: the ids
-// this page shows while it holds the same record. touch: true records activity (a menu fill);
-// auto-fill reads without. A lock in this page while the call waits or reads makes it return null.
+// service worker's read path (with withVaultState()), and it publishes nothing into this instance
+// (no key, no data): every call reads the stored record, key and activity time again, so a lock
+// in any page is seen by the next call. Like resume(), an idle session and a key that does not
+// open the record are locked here: every session key is removed (the pending offer too), and this
+// page, if it holds a key, drops it. accounts are what accounts() would show (an entry that is not
+// an object, or is an array, is left out; nothing seals this result), with the ids withIds() gives
+// them, the same in every page and every read of the same record. touch: true records activity (a
+// menu fill); auto-fill reads without. A lock in this page while the call waits or reads makes it
+// return null.
 export function readUnlocked({ touch: active = false } = {}) {
   const gen = epoch;
   return exclusive(async () => {
-    if (epoch !== gen) return null;
-    const [record, key, last] = await Promise.all([store.getRecord(), store.getSessionKey(), store.getLastActive()]);
-    if (epoch !== gen || !record || !key) return null;
-    if (isStale(last)) {
-      drop();
-      await store.clearSessionKey();
-      return null;
-    }
-    let current;
-    try {
-      current = loaded(record, await vault.open(key, record));
-    } catch {
-      drop();
-      await store.clearSessionKey();
-      return null;
-    }
-    if (epoch !== gen) return null;
+    const { data: current } = await openStored(gen);
+    if (!current || epoch !== gen) return null;
     if (active) {
       await store.touch();
       if (epoch !== gen) return null;
     }
-    return { ...current, accounts: current.accounts.filter(isEntry) };
+    return current;
   });
+}
+
+// Reads the stored record, session key, activity time and auto-fill offer and calls
+// fn({ data, pending }) while still holding the vault lock, so nothing another page stores (a
+// binding, a cleared offer) lands between this read and what fn does with it. data is what
+// readUnlocked() returns, null while locked or idle (and an idle session, or a key that does not
+// open the record, is locked here as readUnlocked() locks it, which removes the offer too);
+// pending is the stored offer { origin, accountId, at } at any age, or null. fn must not call
+// anything in this module: the lock is held. → what fn returns
+export function withVaultState(fn) {
+  const gen = epoch;
+  return exclusive(async () => {
+    const state = await openStored(gen);
+    return fn(epoch === gen ? state : { data: null, pending: state.pending });
+  });
+}
+
+// The vault-lock body of readUnlocked() and withVaultState(); call only while holding the lock.
+// → { data: vault data | null, pending: offer | null }
+async function openStored(gen) {
+  if (epoch !== gen) return { data: null, pending: null };
+  const [record, key, last, pending] = await Promise.all([
+    store.getRecord(),
+    store.getSessionKey(),
+    store.getLastActive(),
+    store.getPendingBind(),
+  ]);
+  if (epoch !== gen || !record || !key) return { data: null, pending };
+  if (isStale(last)) {
+    drop();
+    await store.clearSessionKey();
+    return { data: null, pending: null };
+  }
+  let current;
+  try {
+    current = loaded(await vault.open(key, record));
+  } catch {
+    drop();
+    await store.clearSessionKey();
+    return { data: null, pending: null };
+  }
+  return { data: { ...current, accounts: current.accounts.filter(isEntry) }, pending };
 }
 
 // Leaves the auto-fill offer { origin, accountId } for the bind window, after a menu fill on
@@ -292,8 +321,23 @@ export function takePendingBind(maxAgeMs = PENDING_BIND_MS) {
   });
 }
 
-export function clearPendingBind() {
-  return exclusive(() => store.clearPendingBind());
+// Removes the stored offer. With expected ({ origin, accountId, at }, the offer a bind window
+// shows), only when the stored offer is exactly that one: a newer menu fill's offer stays.
+// → true when an offer was removed (without expected: always true)
+export function clearPendingBind(expected) {
+  return exclusive(async () => {
+    if (expected !== undefined) {
+      const offer = await store.getPendingBind();
+      if (!offer || !sameOffer(offer, expected)) return false;
+    }
+    await store.clearPendingBind();
+    return true;
+  });
+}
+
+function sameOffer(offer, expected) {
+  return Boolean(expected) && typeof expected === 'object' &&
+    offer.origin === expected.origin && offer.accountId === expected.accountId && offer.at === expected.at;
 }
 
 // Decrypts another vault record (an imported backup) with its own passphrase. → its raw
@@ -414,8 +458,8 @@ function mutate(change) {
     check();
     if (!stored || !sameBytes(stored, key)) throw new SessionError('locked');
     if (!record) throw new SessionError('no-vault');
-    // While the stored record is the one this page shows, the ids it showed carry over.
-    const current = loaded(record, await vault.open(key, record));
+    // withIds() gives the same ids this page showed for the same record.
+    const current = loaded(await vault.open(key, record));
     check();
     const result = change(current);
     const sealed = await vault.seal(key, record, current);
@@ -433,13 +477,9 @@ function remember(key, record, current) {
   recordCt = record.ct ?? null;
 }
 
-// The decrypted data of `record`, ready to show: normalizeData(), then withIds(). When `record`
-// is the one this page already holds, the ids this page gave its entries are given again, so an
-// id this page showed still finds its entry in a later read → change → seal.
-function loaded(record, value) {
-  const current = normalizeData(value);
-  const previous = data !== null && record.ct === recordCt ? data.accounts : [];
-  return withIds(current, previous);
+// The decrypted data of a record, ready to show: normalizeData(), then withIds().
+function loaded(value) {
+  return withIds(normalizeData(value));
 }
 
 // The decrypted data as stored. Entries are kept as they are (withIds() may add an id): one
@@ -454,23 +494,54 @@ function normalizeData(value) {
 }
 
 // Gives each entry whose id is not a non-empty string, or repeats an earlier entry's id, a new
-// one: the id at the same place in `previous` (this page's read of the same record) if no
-// earlier entry has it, else crypto.randomUUID(). Only a hand-edited vault needs this, since
-// the app writes every entry with crypto.randomUUID(). The id lives in memory until the next
-// seal stores it; nothing else in an entry changes, and an entry that is not an object, or is an
-// array, is left alone (JSON would drop an id on an array, so it could never be stored).
-function withIds(current, previous) {
-  const seen = new Set();
-  const usable = (id) => typeof id === 'string' && id !== '' && !seen.has(id);
-  current.accounts.forEach((entry, i) => {
-    if (!isEntry(entry)) return;
-    if (!usable(entry.id)) {
-      const before = previous[i]?.id;
-      entry.id = usable(before) ? before : crypto.randomUUID();
-    }
-    seen.add(entry.id);
-  });
+// one. Only a hand-edited vault needs this, since the app writes every entry with
+// crypto.randomUUID(). The new id depends on the stored record alone, so every page and the
+// service worker give the same one in every read (a menu item or a row found again by its id):
+// 'h' + the FNV-1a 64-bit hash (hex) of the entry's JSON with sorted keys and without its id, then
+// '-' and the count of identical entries before it, skipping any id an entry stores. Entries that
+// store a usable id keep it, first come first. It is not a secret and needs no crypto. The id
+// lives in memory until the next seal stores it; nothing else in an entry changes, and an entry
+// that is not an object, or is an array, is left alone (JSON would drop an id on an array, so it
+// could never be stored).
+function withIds(current) {
+  const taken = new Set();
+  const repair = [];
+  for (const entry of current.accounts) {
+    if (!isEntry(entry)) continue;
+    if (typeof entry.id === 'string' && entry.id !== '' && !taken.has(entry.id)) taken.add(entry.id);
+    else repair.push(entry);
+  }
+  for (const entry of repair) {
+    const { id: _id, ...rest } = entry;
+    const base = `h${fnv1a64(canonicalJson(rest))}`;
+    let n = 0;
+    while (taken.has(`${base}-${n}`)) n++;
+    entry.id = `${base}-${n}`;
+    taken.add(entry.id);
+  }
   return current;
+}
+
+// JSON with every object's keys in sorted order (decrypted vault data holds JSON values only).
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+const FNV_OFFSET = 0xcbf29ce484222325n;
+const FNV_PRIME = 0x100000001b3n;
+const MASK_64 = (1n << 64n) - 1n;
+
+// FNV-1a, 64 bits, over the UTF-8 bytes of text. → 16 hex digits
+function fnv1a64(text) {
+  let hash = FNV_OFFSET;
+  for (const byte of new TextEncoder().encode(text)) {
+    hash = ((hash ^ BigInt(byte)) * FNV_PRIME) & MASK_64;
+  }
+  return hash.toString(16).padStart(16, '0');
 }
 
 // → true for a stored entry that can be an account: an object that is not an array.

@@ -281,22 +281,47 @@ test('a repeated or empty id is replaced; the first entry with an id keeps it', 
   assert.deepEqual(reopened.accounts.map((x) => x.id), ['dup', ids[2]]);
 });
 
-test("an id another page has not stored yet deletes nothing; the stored one works", async () => {
-  await seed({ accounts: [named('A'), named('B')] });
+test('an id given to an entry without one is the same in every page and every read, and deletes it from any page', async () => {
+  await seed({ accounts: idLessVault() });
+  const stored = (await reopen()).accounts;
+  // The service worker reads without ever holding the record: two reads, the same ids.
+  const w = await page();
+  const first = (await w.readUnlocked()).accounts.map((x) => x.id);
+  const second = (await w.readUnlocked()).accounts.map((x) => x.id);
+  assert.deepEqual(second, first);
+  assert.ok(first.every((id) => /^h[0-9a-f]{16}-\d+$/.test(id)), JSON.stringify(first));
+  assert.equal(new Set(first).size, 3);
+  // Pages that unlock by session key or by passphrase show the same ones.
   const a = await page();
-  const b = await page();
   assert.equal(await a.resume(), 'list');
-  assert.equal(await b.resume(), 'list');
-  const fromA = a.accounts().map((x) => x.id);
-  const fromB = b.accounts().map((x) => x.id);
-  // Page a deletes first and so stores its ids; page b's ids for the same entries never were.
-  assert.equal(await a.deleteAccount(fromA[0]), true);
-  assert.equal(await b.deleteAccount(fromB[1]), false);
-  assert.deepEqual((await reopen()).accounts.map((x) => [x.issuer, x.id]), [['B', fromA[1]]]);
-  // Page b now holds the stored record and shows the stored id.
-  assert.deepEqual(b.accounts().map((x) => x.id), [fromA[1]]);
-  assert.equal(await b.deleteAccount(fromA[1]), true);
-  assert.deepEqual((await reopen()).accounts, []);
+  assert.deepEqual(a.accounts().map((x) => x.id), first);
+  const b = await page();
+  await b.unlock(PASS);
+  assert.deepEqual(b.accounts().map((x) => x.id), first);
+  // Nothing is stored by reading.
+  assert.deepEqual((await reopen()).accounts, stored);
+  // Another page deletes by the id the worker read; the others keep theirs, now stored.
+  assert.equal(await b.deleteAccount(first[1]), true);
+  assert.deepEqual((await reopen()).accounts.map((x) => [x.issuer, x.id]), [['A', first[0]], ['C', first[2]]]);
+  assert.equal(await a.deleteAccount(first[0]), true);
+  assert.deepEqual((await reopen()).accounts.map((x) => x.id), [first[2]]);
+});
+
+test('identical entries without ids get distinct ids by their order; a stored id is never taken from its entry', async () => {
+  const twin = named('Twin');
+  await seed({ accounts: [twin, structuredClone(twin), named('Other')] });
+  const ids = (await (await page()).readUnlocked()).accounts.map((x) => x.id);
+  const base = ids[0].slice(0, -2);
+  assert.deepEqual(ids.slice(0, 2), [`${base}-0`, `${base}-1`]);
+  assert.notEqual(ids[2].slice(0, -2), base);
+  // A later entry that already stores the id the first twin would get keeps it; the twin moves on.
+  await seed({ accounts: [twin, named('Later', { id: `${base}-0` })] });
+  const again = (await (await page()).readUnlocked()).accounts.map((x) => x.id);
+  assert.deepEqual(again, [`${base}-1`, `${base}-0`]);
+  // Key order in the stored entry does not change its id.
+  const reordered = Object.fromEntries(Object.entries(twin).reverse());
+  await seed({ accounts: [reordered] });
+  assert.deepEqual((await (await page()).readUnlocked()).accounts.map((x) => x.id), [`${base}-0`]);
 });
 
 test('deleting an entry another page already deleted returns false and changes nothing', async () => {
@@ -318,8 +343,8 @@ test('deleting an entry another page already deleted returns false and changes n
 });
 
 test('an array entry is never an account and every seal keeps it as stored', async () => {
-  // Only a hand-edited vault holds one. Between id-less entries, so ids carried over by
-  // position from this page's earlier read pass it by.
+  // Only a hand-edited vault holds one. Between id-less entries, which get ids from their
+  // content, so an array never gets or shifts one.
   const arrays = [['x', 1], [], [{ id: 'inner', ...ACC }]];
   const stored = [named('A'), arrays[0], named('B'), arrays[1], named('C', { id: 'c' }), arrays[2]];
   const json = arrays.map((x) => JSON.stringify(x));
@@ -700,4 +725,78 @@ test('every lock path removes pendingBind with the key', async () => {
   await store.setPendingBind(offer);
   await store.clearSessionKey();
   for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+});
+
+test('clearPendingBind(offer) removes only that exact offer: a window showing an older one leaves a newer one', async () => {
+  await seed(twoAccounts());
+  const shown = await page();
+  await store.setPendingBind({ origin: OTP, accountId: 'a' }, Date.now() - 5000);
+  const older = await shown.takePendingBind();
+  // A newer menu fill replaces the offer while the older window is still open.
+  await store.setPendingBind({ origin: 'https://newer.test', accountId: 'b' });
+  const newer = areas.session.get('pendingBind');
+  const result = await shown.clearPendingBind(older);
+  assert.deepEqual(areas.session.get('pendingBind'), newer, 'the newer offer stays');
+  assert.equal(result, false);
+  // Every field must match.
+  for (const near of [{ ...newer, at: newer.at + 1 }, { ...newer, accountId: 'a' }, { ...newer, origin: OTP }, { origin: newer.origin }, {}]) {
+    assert.equal(await shown.clearPendingBind(near), false, JSON.stringify(near));
+    assert.deepEqual(areas.session.get('pendingBind'), newer);
+  }
+  assert.equal(await shown.clearPendingBind({ ...newer }), true);
+  assert.equal(areas.session.has('pendingBind'), false);
+  assert.ok(areas.session.has('vaultKey'), 'clearing the offer keeps the session');
+  assert.equal(await shown.clearPendingBind(newer), false);
+});
+
+test('withVaultState hands fresh data and the stored offer (any age) to fn while holding the vault lock', async () => {
+  await seed({ ...twoAccounts(), bindings: [{ origin: OTP, accountId: 'a', createdAt: 1 }] });
+  await store.setPendingBind({ origin: 'https://old-offer.test', accountId: 'b' }, Date.now() - 60 * 60 * 1000);
+  const w = await page();
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const order = [];
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const running = w.withVaultState(async (state) => {
+    order.push('fn');
+    await held;
+    order.push('fn done');
+    return state;
+  });
+  // A page's change queued behind fn waits for it.
+  while (!order.includes('fn')) await hop();
+  const adding = a.addBinding('https://other.test', 'b').then(() => order.push('addBinding'));
+  await hop(); await hop(); await hop();
+  assert.deepEqual(order, ['fn']);
+  release();
+  const { data, pending } = await running;
+  await adding;
+  assert.deepEqual(order, ['fn', 'fn done', 'addBinding']);
+  assert.deepEqual(data.accounts.map((x) => x.id), ['a', 'b']);
+  assert.deepEqual(pairs(data.bindings), [[OTP, 'a']]);
+  assert.deepEqual([pending.origin, pending.accountId], ['https://old-offer.test', 'b']);
+  assert.equal(w.isUnlocked(), false, 'the worker instance publishes nothing');
+  // The next call sees the binding the page stored.
+  const next = await w.withVaultState(async (state) => state);
+  assert.deepEqual(pairs(next.data.bindings), [[OTP, 'a'], ['https://other.test', 'b']]);
+});
+
+test('withVaultState: locked → data null; idle or a key that does not open the record → keys cleared, data and pending null', async () => {
+  await seed(twoAccounts());
+  const w = await page();
+  await store.setPendingBind({ origin: OTP, accountId: 'a' });
+  areas.session.delete('vaultKey');
+  assert.equal((await w.withVaultState(async (state) => state)).data, null);
+  for (const spoil of [() => areas.session.set('lastActiveAt', STALE()), () => areas.session.set('vaultKey', btoa('x'.repeat(32)))]) {
+    await seed(twoAccounts());
+    await store.setPendingBind({ origin: OTP, accountId: 'a' });
+    spoil();
+    assert.deepEqual(await w.withVaultState(async (state) => state), { data: null, pending: null });
+    for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+  }
+  // fn's result and error pass through.
+  await seed(twoAccounts());
+  assert.equal(await w.withVaultState(async () => 42), 42);
+  await assert.rejects(w.withVaultState(async () => { throw new Error('boom'); }), /boom/);
 });
