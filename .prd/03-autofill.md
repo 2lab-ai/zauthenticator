@@ -100,7 +100,7 @@ Status: shipped (2026-11-16, v0.2.0) — the implemented auto-fill contract, not
    another number (zip, postal, phone, tel, mobile, amount, price, card, cc, cvv, cvc, csc, birth,
    bday, dob, date, year, month, day, search, account, qty, quantity, captcha, …) or whose
    `autocomplete` is anything but empty/on/off/one-time-code. After a fill the script follows only the
-   filled field(s) (see "Fresh code and retry after a failed attempt": keep-fresh ≤ 2 replacements, ≤ 2 fills,
+   filled field(s) (see "Fresh code and retry after a failed attempt": keep-fresh ≤ 1 replacement, ≤ 2 fills,
    never the same code twice, 5-minute window, same path, a user edit ends it; the worker's per-tab limits
    hold across page loads); no other field is filled while they are present. Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); one request in flight at a time.
 3. Flow: script → `chrome.runtime.sendMessage({type:'autofill-code'})` → worker validates sender
@@ -226,8 +226,12 @@ Owner's words "한번 실패난경우 다시 입력하도록" = one retry. Conte
   seconds).
 - Never the same code twice: after any fill, a reply whose code equals the code the script last put is not
   written to any field (the old set emptied, or a new field put in its place) — wait for the next period.
-- At most 2 fills (first + one retry); at most 2 keep-fresh replacements per filled field set (a refill of
-  the same set does not start a new count).
+- At most 2 fills (first + one retry); at most 1 keep-fresh replacement per filled field set (a refill of
+  the same set does not start a new count). Round 5 (2026-11-17, fable SHOULD adopted by the dispatcher):
+  1, not 2, so the first fill, one replacement and the one retry fit in the worker's 3 codes per tab — with
+  2, a fill and two replacements used all 3 within 60–90 s and the owner's one retry
+  ("한번 실패난경우 다시 입력하도록") got `{code: null}`. After the replacement the code is left as is; a
+  rejection then gets the current code as the retry.
 - A user edit ends the watch: an `input` event with `isTrusted` on a followed field (typing, deleting,
   pasting). The page setting `value` fires none; the script's own and a page's events are untrusted.
 - The follow ends when the page's path (`document.URL` up to `?`/`#`; read-only, unlike
