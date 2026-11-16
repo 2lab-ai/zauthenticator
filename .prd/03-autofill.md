@@ -74,8 +74,10 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
    `{origin, accountId, createdAt}`) → worker sync (`storage.onChanged` on the vault) →
    `registerAutofill(origins)` = `chrome.scripting.registerContentScripts` /
    `updateContentScripts` id `autofill`, `matches: origins.map(o => o + '/*')`, `allFrames: true`,
-   `runAt: 'document_idle'`, `js: ['lib/fieldfind.js', 'content/autofill.js']` (one field-finder source shared with the unit tests) → session `pendingBind` removed → window
-   closes.
+   `runAt: 'document_idle'`, `persistAcrossSessions: false`, `js: ['lib/fieldfind.js', 'content/autofill.js']` (one field-finder source shared with the unit tests) → session `pendingBind` removed (only the offer this window showed) → window
+   closes. The binding is stored before the offer is cleared, and the reconciler decides which
+   grants to remove inside `session.withVaultState` (vault Web Lock held), so a just-granted origin is
+   never revoked from a stale snapshot.
 4. Side effects: vault record (bindings), host permission granted, script registration.
 5. Errors: prompt denied → no binding, `#bind-error`; pending expired/missing → message, nothing
    stored; locked meanwhile → nothing stored.
@@ -84,10 +86,15 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
 ### S3 — Auto-fill on revisit
 1. Entry: `content/autofill.js` runs in a frame of a bound origin.
 2. Input: an OTP field = first visible, enabled, empty `<input>` matching (in order):
-   `autocomplete="one-time-code"`; or name/id/aria-label/placeholder matching
-   `/(otp|totp|2fa|mfa|one.?time|verification|auth(entication)?.?code|security.?code)/i`; or
+   `autocomplete="one-time-code"`; or name/id/aria-label/placeholder containing the whole word
+   `otp|totp|mfa|2fa` (names split on non-alphanumerics, camelCase and letter→digit) or the phrase
+   `one.?time.?(code|pass|password|pin)`, `verification.?code`, `auth(entication)?.?code`; or
    `inputmode="numeric"`/`type="tel"|"number"` with `maxlength` 6–8; or a run of 6–8 sibling
-   single-character inputs (split boxes). Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); asks once per field.
+   single-character inputs (split boxes). Rules 2–4 skip a field whose names contain a whole word for
+   another number (zip, postal, phone, tel, mobile, amount, price, card, cc, cvv, cvc, csc, birth,
+   bday, dob, date, year, month, day, search, account, qty, quantity, captcha, …) or whose
+   `autocomplete` is anything but empty/on/off/one-time-code. One fill per page load: after the first
+   fill the script stops. Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); asks once per field.
 3. Flow: script → `chrome.runtime.sendMessage({type:'autofill-code'})` → worker validates sender
    (rules above) → `vault.open` → binding → account → `totp` → `{code}` → script sets value(s) +
    `input`/`change` events, once per field per page load.
@@ -151,7 +158,9 @@ listeners and exposes `globalThis.__zauthTest = { handleMenuClick }`; the test c
 
 Reconciliation (AF-B): `syncRegistrations()` is the single reconciler, run on `onStartup`,
 `onInstalled`, and every vault change while unlocked: registered matches = `boundOrigins(data)`;
-granted optional origins not bound are removed with `permissions.remove`. Locked → no change.
+granted optional origins not bound (and not a stored offer, of any age) are removed with
+`permissions.remove`, decided under the vault Web Lock. Locked or idle → the `autofill` script is
+unregistered (registrations are not persisted across sessions); permissions are left as they are.
 
 Menu lifetime (AF-B): `rebuildMenu()` runs on `onStartup`, `onInstalled`, session-key removal, vault
 change, and at the start of every worker event; locked → single "Unlock zauthenticator…" item.
