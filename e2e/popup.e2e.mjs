@@ -7,18 +7,21 @@
 //   E2E_ARTIFACTS=<dir> npm run e2e      # screenshots go here (default test-results/)
 //   E2E_EXTENSION=<dir> npm run e2e      # another unpacked copy, e.g. an unzipped release
 //
-// Part 1 is the single-page flow (setup, add, codes, lock, export, browser restart). Part 2 runs
-// in a fresh profile with clipboard access: copy, two pages adding at once, lock from another
-// page, idle auto-lock, copy after the period changed. Each part-2 step sets up its own
-// preconditions and reports its own failure, so one broken behaviour does not hide the rest.
+// Part 1 is the single-page flow (setup, add, codes, lock, export, browser restart), ending with
+// spec A8: delete an account and get it back by importing the backup exported before the
+// restart. Part 2 runs in a fresh profile with clipboard access: copy, two pages adding at once,
+// lock from another page, idle auto-lock, spec A9 (QR from an image file), copy after the period
+// changed. Each part-2 step sets up its own preconditions and reports its own failure, so one
+// broken behaviour does not hide the rest.
 // The copy steps write TOTP codes of test secrets to the clipboard (the system one when headed).
 //
 // Prints `PASS|FAIL <name> <detail>` per assertion and exits 1 on any failure.
 
-import { createHmac } from 'node:crypto';
+import { createDecipheriv, createHash, createHmac, pbkdf2 } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import {
   ARTIFACTS,
   HEADLESS,
@@ -88,6 +91,46 @@ const TYPED = {
   secret: 'PJQXK5DIFVSTEZJNOR4XAZLEFUYDAMBT',
 };
 
+// Part 2 (A9): the account in the QR of e2e/fixtures/qr-otpauth-qrtest.png. Its label is not
+// carol@example.net, so the label lookup in checkCode() cannot pick the part-2 Example512 row.
+const QR_ACCOUNT = {
+  name: 'qr-image',
+  uri: 'otpauth://totp/QRTest:carol@qrtest.example?secret=GEZDGNBVGY3TQOJQ&issuer=QRTest',
+  issuer: 'QRTest',
+  label: 'carol@qrtest.example',
+  secret: 'GEZDGNBVGY3TQOJQ',
+  algorithm: 'sha1',
+  digits: 6,
+  period: 30,
+};
+
+// QR fixtures, generated once outside the repository with segno 1.6.6 (error level M, scale 4,
+// border 4) and pinned here by sha256; a fixture with another hash fails the step.
+//   qr-otpauth-qrtest.png  180x180 PNG, 430 bytes,
+//     sha256 ed49e703f3c6a33cb7e459ba59fd33c9299328fd0674ed04ea15eba9d53406f9
+//     `zbarimg --raw` (0.23.93) -> otpauth://totp/QRTest:carol@qrtest.example?secret=GEZDGNBVGY3TQOJQ&issuer=QRTest
+//   qr-otpauth-svgtest.svg a QR as SVG, which the extension must refuse without decoding it,
+//     sha256 41452449aa53cfbabdb5a1b0c8ccc02700e39d836ef8137ea5ab46b02eff913a
+//     `zbarimg --raw` of a Chromium render -> otpauth://totp/SVGTest:svg@svgtest.example?secret=ON3GOLLGNF4HI5LSMUWWWZLZ&issuer=SVGTest
+const FIXTURES = path.join(REPO_ROOT, 'e2e', 'fixtures');
+const QR_PNG = {
+  file: path.join(FIXTURES, 'qr-otpauth-qrtest.png'),
+  mimeType: 'image/png',
+  sha256: 'ed49e703f3c6a33cb7e459ba59fd33c9299328fd0674ed04ea15eba9d53406f9',
+};
+const QR_SVG = {
+  file: path.join(FIXTURES, 'qr-otpauth-svgtest.svg'),
+  mimeType: 'image/svg+xml',
+  sha256: '41452449aa53cfbabdb5a1b0c8ccc02700e39d836ef8137ea5ab46b02eff913a',
+  issuer: 'SVGTest',
+};
+
+// English UI text the A8 and A9 steps expect (extension/_locales/en/messages.json).
+const MSG = {
+  imageFormat: 'Use a PNG, JPEG, GIF, WebP or BMP image.',
+  imported: (added, duplicates) => `Backup imported. Accounts added: ${added}. Duplicates skipped: ${duplicates}.`,
+};
+
 // ---- independent TOTP (RFC 4648 base32 + RFC 4226/6238 on node:crypto) ----------------------
 
 function base32ToBytes(input) {
@@ -136,6 +179,50 @@ function checkReference(rep) {
   rep.check('reference-base32', decoded === '12345678901234567890123456789012', `${ACCOUNTS[1].secret} -> ${decoded}`);
 }
 
+// ---- independent vault decryption (node:crypto, record format of the extension/lib/vault.js
+// header comment) --------------------------------------------------------------------------------
+
+const pbkdf2Async = promisify(pbkdf2);
+const GCM_TAG_BYTES = 16;
+
+// Key = PBKDF2-SHA-256(UTF-8(NFC(passphrase)), salt, iterations, 32 bytes); AES-256-GCM with the
+// 12-byte iv; additional data = the header JSON in exactly the documented key order; ct ends
+// with the 16-byte tag. → the decrypted data object; throws when the record does not open.
+async function decryptRecord(record, passphrase) {
+  const { v, kdf, iv, ct } = record ?? {};
+  if (v !== 1 || kdf?.name !== 'PBKDF2' || kdf?.hash !== 'SHA-256' || !Number.isInteger(kdf?.iterations) || typeof kdf?.salt !== 'string') {
+    throw new Error(`not a v1 PBKDF2/SHA-256 record: ${JSON.stringify({ v, kdf })}`);
+  }
+  const key = await pbkdf2Async(Buffer.from(passphrase.normalize('NFC'), 'utf8'), Buffer.from(kdf.salt, 'base64'), kdf.iterations, 32, 'sha256');
+  const aad = `{"v":1,"kdf":{"name":"PBKDF2","hash":"SHA-256","iterations":${kdf.iterations},"salt":${JSON.stringify(kdf.salt)}}}`;
+  const sealed = Buffer.from(ct, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
+  decipher.setAAD(Buffer.from(aad, 'utf8'));
+  decipher.setAuthTag(sealed.subarray(sealed.length - GCM_TAG_BYTES));
+  const plain = Buffer.concat([decipher.update(sealed.subarray(0, sealed.length - GCM_TAG_BYTES)), decipher.final()]);
+  return JSON.parse(plain.toString('utf8'));
+}
+
+// → { accounts: [...] } or { error } for a record opened with PASSPHRASE.
+async function openRecord(record) {
+  try {
+    const data = await decryptRecord(record, PASSPHRASE);
+    if (!Array.isArray(data?.accounts)) return { error: `no accounts array in ${Object.keys(data ?? {})}` };
+    return { accounts: data.accounts };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+// Stored entries for `account` (same issuer, label and secret).
+function entriesFor(accounts, account) {
+  return (accounts ?? []).filter((a) => a?.issuer === account.issuer && a?.label === account.label && a?.secret === account.secret);
+}
+
+function describeEntries(opened) {
+  return opened.accounts ? `[${opened.accounts.map((a) => `${a?.issuer}:${a?.label}`).join(', ')}]` : `does not open: ${opened.error}`;
+}
+
 // ---- page helpers -----------------------------------------------------------------------------
 
 async function waitState(page, state, timeout = 30000) {
@@ -156,7 +243,7 @@ async function readStorage(page) {
 
 // Every encoding of each secret that plaintext storage could plausibly use.
 function secretForms() {
-  return [...ACCOUNTS, ...CONCURRENT_ACCOUNTS, TYPED].flatMap(({ secret }) => {
+  return [...ACCOUNTS, ...CONCURRENT_ACCOUNTS, TYPED, QR_ACCOUNT].flatMap(({ secret }) => {
     const raw = base32ToBytes(secret);
     return [
       secret,
@@ -277,6 +364,56 @@ async function unlock(page, timeout = 30000) {
   await page.fill('#unlock-pass', PASSPHRASE);
   await page.click('#unlock-submit');
   await waitState(page, 'list', timeout);
+}
+
+// Imports `file` (a setInputFiles payload) with PASSPHRASE from the settings view and waits for
+// the list to show `expectedNotice` in #list-notice. The notice clears itself after 5 s, so every
+// text it shows from the submit on is recorded by an observer. Never throws on the outcome.
+// → { listed, noticeOk, notices, importError, lang }
+async function importViaSettings(page, file, expectedNotice) {
+  await page.click('#settings-btn');
+  await waitState(page, 'settings');
+  // Opening settings resets the import form, so the file and passphrase go in afterwards.
+  await page.setInputFiles('#import-file', file);
+  await page.fill('#import-pass', PASSPHRASE);
+  await page.evaluate(() => {
+    const el = document.querySelector('#list-notice');
+    globalThis.zauthE2eNoticeObserver?.disconnect();
+    globalThis.zauthE2eNotices = [];
+    globalThis.zauthE2eNoticeObserver = new MutationObserver(() => {
+      const text = el.textContent.trim();
+      if (text) globalThis.zauthE2eNotices.push(text);
+    });
+    globalThis.zauthE2eNoticeObserver.observe(el, { childList: true, characterData: true, subtree: true });
+  });
+  await page.click('#import-submit');
+  const listed = await waitState(page, 'list', 30000).then(
+    () => true,
+    () => false,
+  );
+  const noticeOk = await page
+    .waitForFunction((want) => globalThis.zauthE2eNotices.includes(want), expectedNotice, { timeout: 10000, polling: 100 })
+    .then(
+      () => true,
+      () => false,
+    );
+  const seen = await page.evaluate(() => {
+    globalThis.zauthE2eNoticeObserver.disconnect();
+    return {
+      notices: globalThis.zauthE2eNotices,
+      importError: document.querySelector('#import-error')?.textContent?.trim() ?? null,
+      lang: document.documentElement.lang,
+    };
+  });
+  return { listed, noticeOk, ...seen };
+}
+
+// The bytes of a pinned fixture; throws when its sha256 is not the recorded one.
+function fixtureBytes(fixture) {
+  const bytes = fs.readFileSync(fixture.file);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== fixture.sha256) throw new Error(`${path.basename(fixture.file)} sha256 ${sha256}, expected ${fixture.sha256}`);
+  return bytes;
 }
 
 function findRecord(parsed) {
@@ -401,8 +538,8 @@ const profile = freshProfileDir();
 // The extension's origin as openExtensionPage resolved it (computed id or the chrome://extensions
 // fallback), for the no-navigation check.
 const ownOrigins = new Set();
-const opens = async (ctx, p) => {
-  const result = await openExtensionPage(ctx, p, extDir, POPUP);
+const opens = async (ctx, p, pagePath = POPUP) => {
+  const result = await openExtensionPage(ctx, p, extDir, pagePath);
   ownOrigins.add(`chrome-extension://${result.id}`);
   return result;
 };
@@ -530,6 +667,84 @@ try {
   rep.pass('session-restart-unlock', '2 accounts after unlock');
   rep.check('no-egress:restart', net2.egress().length === 0, `remote requests: ${JSON.stringify(net2.egress())}`);
   checkStorageKeys(rep, 'storage-keys:after-restart', await readStorage(page));
+
+  // A8: the backup exported in the previous browser session -> delete an account in the list
+  // -> import that backup in settings: the account is back with the same code, and importing
+  // the same file again only skips duplicates. Last in part 1, so nothing above depends on it.
+  step = 'i-a8-backup';
+  const a8Console = watchConsole(page);
+  const removed = ACCOUNTS[0];
+  const kept = ACCOUNTS[1];
+  const backupFile = { name: download.suggestedFilename(), mimeType: 'application/json', buffer: Buffer.from(exported, 'utf8') };
+  const backup = await openRecord(found?.record);
+  const backupEntry = entriesFor(backup.accounts, removed)[0];
+  rep.check(
+    'a8-export-decrypts',
+    Boolean(backupEntry) && entriesFor(backup.accounts, kept).length === 1,
+    `exported record, opened here with the passphrase (node:crypto PBKDF2-SHA-256 + AES-256-GCM): ${describeEntries(backup)}`,
+  );
+
+  step = 'j-a8-delete';
+  await page.click('#edit-btn');
+  const removedRow = page.locator('.account', { hasText: removed.label });
+  await removedRow.locator('.delete').click();
+  // Nothing slow before the second click: the armed state times out after 4 s.
+  const armed = await removedRow.evaluate((el) => el.classList.contains('confirming'));
+  const armedCount = (await rows(page)).rows.length;
+  await removedRow.locator('.delete').click();
+  rep.check('a8-delete-armed', armed && armedCount === 2, `first click on ${removed.label}'s .delete: .confirming ${armed}, ${armedCount} rows (still 2)`);
+  const gone = await page
+    .waitForFunction((label) => !Array.from(document.querySelectorAll('.account .label'), (el) => el.textContent).some((t) => t.includes(label)), removed.label, { timeout: 15000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  const afterDelete = await rows(page);
+  rep.check(
+    'a8-delete-row',
+    gone && afterDelete.rows.length === 1 && afterDelete.rows[0].label === kept.label,
+    `rows after the second click: [${afterDelete.rows.map((r) => `${r.issuer}:${r.label}`).join(', ')}] (expected only ${kept.issuer}:${kept.label})`,
+  );
+  await page.click('#edit-btn');
+  const storedAfterDelete = await openRecord((await readStorage(page)).local.vault);
+  rep.check(
+    'a8-delete-stored',
+    Boolean(storedAfterDelete.accounts) && entriesFor(storedAfterDelete.accounts, removed).length === 0 && entriesFor(storedAfterDelete.accounts, kept).length === 1,
+    `chrome.storage.local.vault, opened here: ${describeEntries(storedAfterDelete)} (no ${removed.label})`,
+  );
+
+  step = 'k-a8-import';
+  const imported = await importViaSettings(page, backupFile, MSG.imported(1, 1));
+  const afterImport = await rows(page);
+  const back = afterImport.rows.filter((r) => r.issuer === removed.issuer && r.label === removed.label);
+  rep.check(
+    'a8-import',
+    imported.listed && imported.noticeOk && afterImport.rows.length === 2 && back.length === 1,
+    `${backupFile.name} with the passphrase: list ${imported.listed}, #list-notice showed ${JSON.stringify(imported.notices)} (expected "${MSG.imported(1, 1)}", lang ${imported.lang}), #import-error "${imported.importError}", rows [${afterImport.rows.map((r) => `${r.issuer}:${r.label}`).join(', ')}]`,
+  );
+  await checkCode(rep, page, removed, ':after-import');
+  const storedAfterImport = await openRecord((await readStorage(page)).local.vault);
+  const restored = entriesFor(storedAfterImport.accounts, removed);
+  const sameFields = (a, b) => Boolean(a && b) && ['issuer', 'label', 'secret', 'algorithm', 'digits', 'period'].every((k) => a[k] === b[k]);
+  rep.check(
+    'a8-import-stored',
+    restored.length === 1 && sameFields(restored[0], backupEntry) && entriesFor(storedAfterImport.accounts, kept).length === 1,
+    `chrome.storage.local.vault, opened here: ${describeEntries(storedAfterImport)}; ${removed.label} ${restored.length === 1 ? `${restored[0].algorithm}/${restored[0].digits}/${restored[0].period}s, id ${restored[0].id} (backup ${backupEntry?.id})` : `${restored.length} entries`}`,
+  );
+
+  step = 'l-a8-reimport';
+  const again = await importViaSettings(page, backupFile, MSG.imported(0, 2));
+  const afterAgain = await rows(page);
+  const copies = afterAgain.rows.filter((r) => r.issuer === removed.issuer && r.label === removed.label).length;
+  rep.check(
+    'a8-reimport-duplicate',
+    again.listed && again.noticeOk && afterAgain.rows.length === 2 && copies === 1,
+    `same file again: list ${again.listed}, #list-notice showed ${JSON.stringify(again.notices)} (expected "${MSG.imported(0, 2)}"), #import-error "${again.importError}", ${afterAgain.rows.length} rows, ${copies} of ${removed.label}`,
+  );
+  checkStorage(rep, 'storage-ciphertext-only:after-import', await readStorage(page));
+  rep.check('no-egress:after-import', net2.egress().length === 0, `remote requests: ${JSON.stringify(net2.egress())}`);
+  const a8Errors = a8Console.filter((l) => l.startsWith('pageerror:'));
+  rep.check('no-uncaught-errors:after-import', a8Errors.length === 0, a8Errors.join(' | ') || 'none');
 } catch (err) {
   const where = page ? await describePage(page) : 'no page';
   rep.fail(step, `${err.message.split('\n')[0]} [${where}]`);
@@ -562,12 +777,12 @@ async function stepRun(name, fn) {
   }
 }
 
-async function newPopupPage(ctx) {
+async function newPopupPage(ctx, pagePath = POPUP) {
   const p = await ctx.newPage();
   livePages.add(p);
   p.on('close', () => livePages.delete(p));
   consoles.push(watchConsole(p));
-  await opens(ctx, p);
+  await opens(ctx, p, pagePath);
   return p;
 }
 
@@ -701,6 +916,73 @@ try {
       state === 'locked',
       `lastActiveAt set to ${new Date(stale).toISOString()} (16 min ago), reload -> state ${state}; session keys [${session}]`,
     );
+  });
+
+  // A9, decode path: an image with an otpauth QR, chosen in the full-tab view the "QR from an
+  // image" button opens (popup.html#add-file), adds the account named by the QR; an SVG is
+  // refused before any decoder runs. "Scan QR on this page" needs the activeTab grant that only
+  // a real click on the toolbar icon gives, which automation cannot make. That capture path is
+  // covered by this decode-path test plus the chrome.tabs.captureVisibleTab() call in
+  // popup/add.js (scanTab), which hands its image to the same decodeQR(); the toolbar grant
+  // itself is a manual check.
+  await stepRun('qr-image', async () => {
+    const png = fixtureBytes(QR_PNG);
+    const svg = fixtureBytes(QR_SVG);
+    const pageQ = await newPopupPage(context, `${POPUP}#add-file`);
+    try {
+      await pageQ.waitForSelector('body[data-state="locked"], body[data-state="add"]', { timeout: 10000 });
+      // The idle lock above left the session locked; unlocking continues to the add view.
+      if ((await stateOf(pageQ)) === 'locked') {
+        await pageQ.fill('#unlock-pass', PASSPHRASE);
+        await pageQ.click('#unlock-submit');
+      }
+      await waitState(pageQ, 'add', 30000);
+      const fileMode = await pageQ.evaluate(() => document.body.classList.contains('file-mode'));
+      await pageQ.setInputFiles('#scan-file-input', { name: path.basename(QR_PNG.file), mimeType: QR_PNG.mimeType, buffer: png });
+      const listed = await waitState(pageQ, 'list', 15000).then(
+        () => true,
+        () => false,
+      );
+      const addError = await pageQ.evaluate(() => document.querySelector('#add-error')?.textContent?.trim() ?? null);
+      const snap = await rows(pageQ);
+      const match = snap.rows.filter((r) => r.issuer === QR_ACCOUNT.issuer && r.label === QR_ACCOUNT.label);
+      rep.check(
+        'qr-image-add',
+        fileMode && listed && match.length === 1,
+        `${path.basename(QR_PNG.file)} (sha256 ${QR_PNG.sha256.slice(0, 12)}…) on #scan-file-input of ${POPUP}#add-file (file mode ${fileMode}): list ${listed}, #add-error "${addError}", rows [${snap.rows.map((r) => `${r.issuer}:${r.label}`).join(', ')}] (expected one ${QR_ACCOUNT.issuer}:${QR_ACCOUNT.label})`,
+      );
+      await checkCode(rep, pageQ, QR_ACCOUNT, '');
+      checkStorage(rep, 'storage-ciphertext-only:after-qr', await readStorage(pageQ));
+
+      // The SVG check starts from the list whatever the PNG did (a refused PNG stays in add).
+      if ((await stateOf(pageQ)) === 'add') await pageQ.click('#add-cancel');
+      await waitState(pageQ, 'list', 10000);
+      const countBefore = (await rows(pageQ)).rows.length;
+      await pageQ.click('#add-btn');
+      await waitState(pageQ, 'add', 10000);
+      await pageQ.setInputFiles('#scan-file-input', { name: path.basename(QR_SVG.file), mimeType: QR_SVG.mimeType, buffer: svg });
+      const svgError = await pageQ
+        .waitForFunction(() => document.querySelector('#add-error')?.textContent?.trim() || false, null, { timeout: 10000, polling: 100 })
+        .then(
+          (handle) => handle.jsonValue(),
+          () => '',
+        );
+      const svgState = await stateOf(pageQ);
+      if (svgState === 'add') await pageQ.click('#add-cancel');
+      await waitState(pageQ, 'list', 10000);
+      const after = (await rows(pageQ)).rows;
+      rep.check(
+        'qr-image-svg-refused',
+        svgError === MSG.imageFormat && svgState === 'add' && after.length === countBefore && !after.some((r) => r.issuer === QR_SVG.issuer),
+        `${path.basename(QR_SVG.file)} (${QR_SVG.mimeType}): #add-error "${svgError}" (expected "${MSG.imageFormat}"), state ${svgState}; then ${after.length} rows (before ${countBefore}), ${QR_SVG.issuer} row ${after.some((r) => r.issuer === QR_SVG.issuer)}`,
+      );
+    } catch (err) {
+      // stepRun describes the pages still open; this one is closed below.
+      err.message = `${err.message.split('\n')[0]} [QR page: ${await describePage(pageQ)}]`;
+      throw err;
+    } finally {
+      await pageQ.close();
+    }
   });
 
   // Copy must compute the code at click time. The page clock is moved into the next period
