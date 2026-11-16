@@ -39,11 +39,11 @@ export function generation() {
 }
 
 // The stored entries, for display; empty while locked. Each has an id no other entry has (a
-// non-empty string). A non-object entry (only a hand-made vault could hold one) stays stored but
-// is not shown.
+// non-empty string). An entry that is not an object, or is an array (only a hand-made vault could
+// hold one), stays stored but is not shown.
 export function accounts() {
   if (rawKey === null || data === null) return [];
-  return data.accounts.filter((a) => a !== null && typeof a === 'object');
+  return data.accounts.filter(isEntry);
 }
 
 // → 'setup' | 'locked' | 'list'. Locks first when the session sat idle too long.
@@ -228,8 +228,8 @@ export function addAccounts(incoming) {
   const entries = Array.isArray(incoming) ? incoming : [];
   return mutate((current) => {
     // A malformed stored entry (only a hand-made vault could hold one) stays stored and never
-    // blocks adding: non-objects are left out, and duplicateKey() never throws.
-    const stored = current.accounts.filter((a) => a !== null && typeof a === 'object');
+    // blocks adding: non-objects and arrays are left out, and duplicateKey() never throws.
+    const stored = current.accounts.filter(isEntry);
     const seenKeys = new Set(stored.map((a) => duplicateKey(a)));
     const seenIds = new Set(stored.map((a) => a.id));
     let added = 0;
@@ -269,7 +269,7 @@ export function deleteAccount(id) {
   return mutate((current) => {
     if (typeof id !== 'string' || id === '') return false;
     const before = current.accounts.length;
-    current.accounts = current.accounts.filter((a) => !(a !== null && typeof a === 'object' && a.id === id));
+    current.accounts = current.accounts.filter((a) => !(isEntry(a) && a.id === id));
     return before !== current.accounts.length;
   });
 }
@@ -334,12 +334,13 @@ function normalizeData(value) {
 // one: the id at the same place in `previous` (this page's read of the same record) if no
 // earlier entry has it, else crypto.randomUUID(). Only a hand-edited vault needs this, since
 // the app writes every entry with crypto.randomUUID(). The id lives in memory until the next
-// seal stores it; nothing else in an entry changes, and a non-object entry is left alone.
+// seal stores it; nothing else in an entry changes, and an entry that is not an object, or is an
+// array, is left alone (JSON would drop an id on an array, so it could never be stored).
 function withIds(current, previous) {
   const seen = new Set();
   const usable = (id) => typeof id === 'string' && id !== '' && !seen.has(id);
   current.accounts.forEach((entry, i) => {
-    if (entry === null || typeof entry !== 'object') return;
+    if (!isEntry(entry)) return;
     if (!usable(entry.id)) {
       const before = previous[i]?.id;
       entry.id = usable(before) ? before : crypto.randomUUID();
@@ -347,6 +348,11 @@ function withIds(current, previous) {
     seen.add(entry.id);
   });
   return current;
+}
+
+// → true for a stored entry that can be an account: an object that is not an array.
+function isEntry(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isStale(lastActiveAt, now = Date.now()) {

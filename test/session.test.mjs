@@ -154,6 +154,7 @@ for (const [name, bad] of [
   ['null', null],
   ['number', 5],
   ['string', 'x'],
+  ['array', ['x', { secret: 'JBSWY3DPEHPK3PXP' }]],
   ['object secret without toString', { id: 'bad', issuer: 'Bad', secret: { toString: 1 } }],
 ]) {
   test(`a malformed stored entry (${name}) does not block adding`, async () => {
@@ -296,6 +297,70 @@ test("an id another page has not stored yet deletes nothing; the stored one work
   assert.deepEqual(b.accounts().map((x) => x.id), [fromA[1]]);
   assert.equal(await b.deleteAccount(fromA[1]), true);
   assert.deepEqual((await reopen()).accounts, []);
+});
+
+test('deleting an entry another page already deleted returns false and changes nothing', async () => {
+  // Stored ids throughout: an entry without one would get it stored by this seal too.
+  await seed({ accounts: [named('A', { id: 'a' }), named('B', { id: 'b' })] });
+  const a = await page();
+  const b = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await b.resume(), 'list');
+  assert.equal(await b.deleteAccount('a'), true);
+  const before = await reopen();
+  // Page a still shows 'a'; its delete finds nothing to remove.
+  assert.equal(await a.deleteAccount('a'), false);
+  assert.deepEqual(await reopen(), before);
+  // Page a now shows the stored list, which is what the list re-renders.
+  assert.deepEqual(a.accounts().map((x) => x.id), ['b']);
+  for (const id of ['', 7, undefined]) assert.equal(await a.deleteAccount(id), false);
+  assert.deepEqual(await reopen(), before);
+});
+
+test('an array entry is never an account and every seal keeps it as stored', async () => {
+  // Only a hand-edited vault holds one. Between id-less entries, so ids carried over by
+  // position from this page's earlier read pass it by.
+  const arrays = [['x', 1], [], [{ id: 'inner', ...ACC }]];
+  const stored = [named('A'), arrays[0], named('B'), arrays[1], named('C', { id: 'c' }), arrays[2]];
+  const json = arrays.map((x) => JSON.stringify(x));
+  // Each array is where it was, with the same JSON; the objects around it are the same entries.
+  const keptAsStored = (accounts) => {
+    assert.equal(accounts.length, stored.length);
+    stored.forEach((x, i) => {
+      if (Array.isArray(x)) assert.equal(JSON.stringify(accounts[i]), JSON.stringify(x));
+      else assert.equal(accounts[i].issuer, x.issuer);
+    });
+  };
+  await seed({ accounts: stored });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.deepEqual(a.accounts().map((x) => x.issuer), ['A', 'B', 'C']);
+  assert.ok(a.accounts().every((x) => !Array.isArray(x)));
+  const shown = a.accounts().map((x) => x.id);
+  assert.ok(shown.every(isId), JSON.stringify(shown));
+
+  // A delete that finds nothing, an add, a delete that removes A: each one seals.
+  assert.equal(await a.deleteAccount('no such id'), false);
+  keptAsStored((await reopen()).accounts);
+  assert.deepEqual(await a.addAccounts([named('D')]), { added: 1, duplicates: 0, invalid: 0 });
+  // An incoming array is not an account either.
+  assert.deepEqual(await a.addAccounts([['x', 1]]), { added: 0, duplicates: 0, invalid: 1 });
+  let reopened = await reopen();
+  assert.equal(reopened.accounts.length, stored.length + 1);
+  keptAsStored(reopened.accounts.slice(0, stored.length));
+  assert.equal(await a.deleteAccount(shown[0]), true);
+  reopened = await reopen();
+  assert.deepEqual(reopened.accounts.filter((x) => !Array.isArray(x)).map((x) => x.issuer), ['B', 'C', 'D']);
+  assert.deepEqual(reopened.accounts.filter((x) => Array.isArray(x)).map((x) => JSON.stringify(x)), json);
+  assert.deepEqual(a.accounts().map((x) => x.issuer), ['B', 'C', 'D']);
+
+  // Another page, by session key or passphrase, does not show them either.
+  const b = await page();
+  assert.equal(await b.resume(), 'list');
+  assert.deepEqual(b.accounts().map((x) => x.issuer), ['B', 'C', 'D']);
+  const c = await page();
+  await c.unlock(PASS);
+  assert.deepEqual(c.accounts().map((x) => x.issuer), ['B', 'C', 'D']);
 });
 
 test('readBackup that finishes after a lock hands nothing back', async () => {

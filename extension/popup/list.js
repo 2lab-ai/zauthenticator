@@ -211,11 +211,13 @@ export function createListView() {
     row.deleteEl.disabled = true;
     const gen = session.generation();
     try {
-      await session.deleteAccount(row.account.id);
+      const deleted = await session.deleteAccount(row.account.id);
       // Locked meanwhile (the delete may or may not be stored): the page is already wiped,
       // and no name, list or error goes back on it.
       if (session.generation() !== gen) return;
-      announce(t('deletedLive', displayName(row.account)));
+      // false: the stored list has no entry with this id (another page changed it meanwhile).
+      // Nothing was deleted, so nothing is announced; the list shows what is stored now.
+      if (deleted) announce(t('deletedLive', displayName(row.account)));
       await render();
       if (session.generation() !== gen) return;
       const first = listEl.querySelector('.account:not([hidden]) .delete');
