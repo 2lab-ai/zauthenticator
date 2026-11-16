@@ -1,15 +1,19 @@
-// chrome.storage glue. Exactly three keys exist, and nothing else is ever written:
+// chrome.storage glue. Exactly four keys exist, and nothing else is ever written:
 //   chrome.storage.local.vault           the encrypted vault record (ciphertext + KDF params)
 //   chrome.storage.session.vaultKey      the unlocked raw AES key, base64
 //   chrome.storage.session.lastActiveAt  last user activity while unlocked (ms since the epoch)
+//   chrome.storage.session.pendingBind   { origin, accountId, at }: the auto-fill offer the
+//                                        service worker makes after a menu fill (lib/bindings.js)
 // Session storage lives in memory only, is cleared when the browser session ends, and by
-// default is readable from trusted extension contexts only (never from content scripts).
-// The two session keys are written together and removed together, so a key is never stored
-// without its activity time.
+// default is readable from trusted extension contexts only (never from content scripts). It
+// holds a subset of its three keys: the key and its activity time are written together, an
+// offer is written only while a key is stored (popup/session.js checks under the vault lock),
+// and clearSessionKey() removes all three in one call, so none of them outlives a lock.
 
 export const RECORD_KEY = 'vault';
 export const SESSION_KEY = 'vaultKey';
 export const ACTIVE_KEY = 'lastActiveAt';
+export const PENDING_KEY = 'pendingBind';
 
 export async function getRecord() {
   const items = await chrome.storage.local.get(RECORD_KEY);
@@ -40,8 +44,9 @@ export async function setSessionKey(bytes, activeAt = Date.now()) {
   await chrome.storage.session.set({ [SESSION_KEY]: base64FromBytes(bytes), [ACTIVE_KEY]: activeAt });
 }
 
+// Every lock goes through here: the key, its activity time and any pending offer go together.
 export async function clearSessionKey() {
-  await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY]);
+  await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, PENDING_KEY]);
 }
 
 // → ms timestamp of the last recorded activity, or null when none is stored.
@@ -53,6 +58,31 @@ export async function getLastActive() {
 
 export async function touch(now = Date.now()) {
   await chrome.storage.session.set({ [ACTIVE_KEY]: now });
+}
+
+// Stores the auto-fill offer { origin, accountId } with its time. Writes whatever it is given
+// (strings only); popup/session.js validates the origin and that a key is stored.
+export async function setPendingBind({ origin, accountId } = {}, at = Date.now()) {
+  if (typeof origin !== 'string' || origin === '' || typeof accountId !== 'string' || accountId === '') {
+    throw new TypeError('setPendingBind: origin and accountId must be non-empty strings');
+  }
+  if (!Number.isFinite(at)) throw new TypeError('setPendingBind: at must be a finite number');
+  await chrome.storage.session.set({ [PENDING_KEY]: { origin, accountId, at } });
+}
+
+// → { origin, accountId, at } as stored, or null when none (or something malformed) is stored.
+export async function getPendingBind() {
+  const items = await chrome.storage.session.get(PENDING_KEY);
+  const value = items[PENDING_KEY];
+  if (!value || typeof value !== 'object') return null;
+  const { origin, accountId, at } = value;
+  if (typeof origin !== 'string' || origin === '' || typeof accountId !== 'string' || accountId === '') return null;
+  if (!Number.isFinite(at)) return null;
+  return { origin, accountId, at };
+}
+
+export async function clearPendingBind() {
+  await chrome.storage.session.remove(PENDING_KEY);
 }
 
 // Calls back with { record?, locked? } when another extension page (popup or tab) changes

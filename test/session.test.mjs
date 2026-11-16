@@ -381,3 +381,323 @@ test('readBackup while unlocked still returns the entries', async () => {
   const list = await a.readBackup(backup, 'backup pass 123');
   assert.equal(list.length, 1);
 });
+
+// Auto-fill: bindings in the vault data, the worker's read path, the pending bind offer.
+const OTP = 'https://otp.test';
+const SESSION_KEYS = ['vaultKey', 'lastActiveAt', 'pendingBind'];
+const twoAccounts = () => ({ accounts: [named('A', { id: 'a' }), named('B', { id: 'b' })] });
+const storedBindings = async () => (await reopen()).bindings;
+const pairs = (list) => list.map((x) => [x.origin, x.accountId]);
+
+test('addBinding persists, survives later seals and shows in another page', async () => {
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const before = Date.now();
+  await a.addBinding(OTP, 'a');
+  const [shown] = a.bindings();
+  assert.deepEqual([shown.origin, shown.accountId], [OTP, 'a']);
+  assert.ok(shown.createdAt >= before && shown.createdAt <= Date.now());
+  assert.deepEqual(await storedBindings(), [shown]);
+  // Another page reads it from the sealed record.
+  const b = await page();
+  assert.equal(await b.resume(), 'list');
+  assert.deepEqual(b.bindings(), [shown]);
+  // Seals that change accounts keep it.
+  assert.deepEqual(await b.addAccounts([named('C')]), { added: 1, duplicates: 0, invalid: 0 });
+  assert.equal(await b.deleteAccount('b'), true);
+  assert.deepEqual(await storedBindings(), [shown]);
+  assert.equal(await a.refresh(), 'changed');
+  assert.deepEqual(a.bindings(), [shown]);
+});
+
+test('addBinding replaces the binding of the same origin and leaves other origins alone', async () => {
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  await a.addBinding(OTP, 'a');
+  await a.addBinding('https://other.test', 'a');
+  await a.addBinding(OTP, 'b');
+  // The replacement goes to the end of the list.
+  assert.deepEqual(pairs(await storedBindings()), [['https://other.test', 'a'], [OTP, 'b']]);
+  assert.deepEqual(pairs(a.bindings()), [['https://other.test', 'a'], [OTP, 'b']]);
+});
+
+test('addBinding accepts what new URL(..).origin gives, refuses anything else, stores nothing on refusal', async () => {
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const ct = (await store.getRecord()).ct;
+  for (const origin of ['http://otp.test', 'https://otp.test/', 'https://otp.test/login', 'https://OTP.test', 'data:text/html,x', '', null]) {
+    await assert.rejects(a.addBinding(origin, 'a'), (e) => e instanceof a.SessionError && e.code === 'bad-origin', String(origin));
+  }
+  for (const id of ['nope', '', 7, undefined]) {
+    await assert.rejects(a.addBinding(OTP, id), (e) => e instanceof a.SessionError && e.code === 'no-account', String(id));
+  }
+  assert.equal((await store.getRecord()).ct, ct);
+  for (const url of ['https://otp.test:8443/login', 'https://[::1]/x', 'https://bücher.example/']) {
+    await a.addBinding(new URL(url).origin, 'a');
+  }
+  assert.deepEqual(pairs(await storedBindings()).map(([o]) => o).sort(), ['https://[::1]', 'https://otp.test:8443', 'https://xn--bcher-kva.example']);
+});
+
+test('addBinding while locked is refused', async () => {
+  await seed(twoAccounts());
+  const ct = (await store.getRecord()).ct;
+  const a = await page();
+  await assert.rejects(a.addBinding(OTP, 'a'), (e) => e.code === 'locked');
+  assert.equal(await a.resume(), 'list');
+  await a.lock();
+  await assert.rejects(a.addBinding(OTP, 'a'), (e) => e.code === 'locked');
+  assert.equal((await store.getRecord()).ct, ct);
+});
+
+test('removeBinding removes that origin only and reports whether it found one', async () => {
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  await a.addBinding(OTP, 'a');
+  await a.addBinding('https://other.test', 'b');
+  assert.equal(await a.removeBinding(OTP), true);
+  assert.deepEqual(pairs(await storedBindings()), [['https://other.test', 'b']]);
+  assert.deepEqual(pairs(a.bindings()), [['https://other.test', 'b']]);
+  assert.equal(await a.removeBinding(OTP), false);
+  assert.equal(await a.removeBinding('https://sub.other.test'), false);
+  assert.equal(await a.removeBinding('nonsense'), false);
+  assert.deepEqual(pairs(await storedBindings()), [['https://other.test', 'b']]);
+  // Another page removes the last one.
+  const b = await page();
+  assert.equal(await b.resume(), 'list');
+  assert.equal(await b.removeBinding('https://other.test'), true);
+  assert.deepEqual(await storedBindings(), []);
+});
+
+test("deleteAccount removes that account's bindings in the same seal", async () => {
+  await seed({
+    accounts: [named('A', { id: 'a' }), named('B', { id: 'b' })],
+    bindings: [
+      { origin: OTP, accountId: 'a', createdAt: 1 },
+      { origin: 'https://b.test', accountId: 'b', createdAt: 2 },
+      'kept as stored',
+      { origin: 'https://a2.test', accountId: 'a', createdAt: 3 },
+    ],
+  });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await a.deleteAccount('a'), true);
+  const reopened = await reopen();
+  assert.deepEqual(reopened.accounts.map((x) => x.id), ['b']);
+  assert.deepEqual(reopened.bindings, [{ origin: 'https://b.test', accountId: 'b', createdAt: 2 }, 'kept as stored']);
+  assert.deepEqual(pairs(a.bindings()), [['https://b.test', 'b']]);
+});
+
+test('deleteAccount on a vault without bindings stores no bindings key', async () => {
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await a.deleteAccount('a'), true);
+  assert.equal('bindings' in (await reopen()), false);
+});
+
+test('a malformed stored bindings value does not block the vault and reads as none', async () => {
+  await seed({ ...twoAccounts(), bindings: { not: 'a list' } });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.deepEqual(a.bindings(), []);
+  assert.equal(a.accounts().length, 2);
+  assert.deepEqual(await a.addAccounts([named('C')]), { added: 1, duplicates: 0, invalid: 0 });
+  assert.deepEqual((await reopen()).bindings, { not: 'a list' });
+  assert.equal(await a.removeBinding(OTP), false);
+  assert.deepEqual((await reopen()).bindings, { not: 'a list' });
+});
+
+test('bindings() is empty while locked', async () => {
+  await seed({ ...twoAccounts(), bindings: [{ origin: OTP, accountId: 'a', createdAt: 1 }] });
+  const a = await page();
+  assert.deepEqual(a.bindings(), []);
+  assert.equal(await a.resume(), 'list');
+  assert.equal(a.bindings().length, 1);
+  await a.lock();
+  assert.deepEqual(a.bindings(), []);
+});
+
+test('readUnlocked in an instance that never unlocked (the worker) reads storage and publishes nothing', async () => {
+  await seed({ ...twoAccounts(), bindings: [{ origin: OTP, accountId: 'a', createdAt: 1 }] });
+  const w = await page();
+  const data = await w.readUnlocked();
+  assert.deepEqual(data.accounts.map((x) => x.id), ['a', 'b']);
+  assert.deepEqual(data.bindings, [{ origin: OTP, accountId: 'a', createdAt: 1 }]);
+  assert.equal(w.isUnlocked(), false);
+  assert.deepEqual(w.accounts(), []);
+  assert.deepEqual(w.bindings(), []);
+  // Each call reads storage again: a binding another page added shows at once.
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  await a.addBinding('https://other.test', 'b');
+  assert.deepEqual(pairs((await w.readUnlocked()).bindings), [[OTP, 'a'], ['https://other.test', 'b']]);
+  // A lock elsewhere: nothing to read.
+  await a.lock();
+  assert.equal(await w.readUnlocked(), null);
+});
+
+test('readUnlocked gives entries ids, the same ones a page holding that record shows', async () => {
+  await seed({ accounts: idLessVault() });
+  const w = await page();
+  const ids = (await w.readUnlocked()).accounts.map((x) => x.id);
+  assert.ok(ids.every(isId), JSON.stringify(ids));
+  assert.equal(new Set(ids).size, 3);
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.deepEqual((await a.readUnlocked()).accounts.map((x) => x.id), a.accounts().map((x) => x.id));
+});
+
+test('readUnlocked leaves out stored entries that are not accounts, as accounts() does', async () => {
+  const stored = [null, 'x', ['arr', 1], named('A', { id: 'a' }), 5, named('B', { id: 'b' })];
+  await seed({ accounts: stored, bindings: [{ origin: OTP, accountId: 'a', createdAt: 1 }] });
+  const w = await page();
+  assert.deepEqual((await w.readUnlocked()).accounts.map((x) => x.id), ['a', 'b']);
+  // Nothing stored changes.
+  assert.deepEqual((await reopen()).accounts, stored);
+});
+
+test('readUnlocked does not touch lastActiveAt unless asked', async () => {
+  await seed(twoAccounts());
+  const w = await page();
+  const known = Date.now() - 60 * 1000;
+  areas.session.set('lastActiveAt', known);
+  assert.ok(await w.readUnlocked());
+  assert.equal(areas.session.get('lastActiveAt'), known);
+  assert.ok(await w.readUnlocked({ touch: false }));
+  assert.equal(areas.session.get('lastActiveAt'), known);
+  assert.ok(await w.readUnlocked({ touch: true }));
+  assert.ok(areas.session.get('lastActiveAt') > known);
+});
+
+test('readUnlocked on a stale session clears all three session keys and returns null', async () => {
+  await seed(twoAccounts());
+  await store.setPendingBind({ origin: OTP, accountId: 'a' });
+  areas.session.set('lastActiveAt', STALE());
+  const w = await page();
+  assert.equal(await w.readUnlocked({ touch: true }), null);
+  for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+  // A page holding the key drops it too.
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.readUnlocked(), null);
+  assert.equal(a.isUnlocked(), false);
+  assert.equal(areas.session.has('vaultKey'), false);
+});
+
+test('readUnlocked: no vault, no key, or a key that does not open the record → null', async () => {
+  await seed(twoAccounts());
+  const w = await page();
+  // A key that does not open the stored record is cleared, like resume() does.
+  areas.session.set('vaultKey', btoa('x'.repeat(32)));
+  await store.setPendingBind({ origin: OTP, accountId: 'a' });
+  assert.equal(await w.readUnlocked(), null);
+  for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+  assert.equal(await w.readUnlocked(), null);
+  areas.local.clear();
+  assert.equal(await w.readUnlocked(), null);
+});
+
+test('readUnlocked that finishes after a lock in this page hands nothing back', async () => {
+  await seed(twoAccounts());
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const h = holdLock();
+  await h.ready;
+  let reading;
+  let locking;
+  try {
+    reading = a.readUnlocked();
+    locking = a.lock();
+  } finally {
+    // Released even when a call throws, so later cases do not wait on a held lock.
+    h.release();
+  }
+  assert.equal(await reading, null);
+  await locking;
+});
+
+test('pendingBind: set while unlocked, taken (and kept) until cleared', async () => {
+  await seed(twoAccounts());
+  const w = await page();
+  const before = Date.now();
+  assert.equal(await w.setPendingBind({ origin: OTP, accountId: 'a' }), true);
+  const stored = areas.session.get('pendingBind');
+  assert.deepEqual(Object.keys(stored).sort(), ['accountId', 'at', 'origin']);
+  assert.deepEqual([stored.origin, stored.accountId], [OTP, 'a']);
+  assert.ok(stored.at >= before && stored.at <= Date.now());
+  // The bind window is another page.
+  const p = await page();
+  assert.deepEqual(await p.takePendingBind(), stored);
+  assert.deepEqual(await p.takePendingBind(), stored);
+  await p.clearPendingBind();
+  assert.equal(await p.takePendingBind(), null);
+  assert.equal(areas.session.has('pendingBind'), false);
+  assert.ok(areas.session.has('vaultKey'), 'clearing the offer keeps the session');
+});
+
+test('pendingBind: an old or future offer is expired', async () => {
+  await seed(twoAccounts());
+  const p = await page();
+  await store.setPendingBind({ origin: OTP, accountId: 'a' }, Date.now() - 121 * 1000);
+  assert.equal((await p.takePendingBind(300 * 1000)).origin, OTP);
+  assert.equal(await p.takePendingBind(), null);
+  assert.equal(areas.session.has('pendingBind'), false);
+  await store.setPendingBind({ origin: OTP, accountId: 'a' }, Date.now() - 30 * 1000);
+  assert.equal(await p.takePendingBind(10 * 1000), null);
+  await store.setPendingBind({ origin: OTP, accountId: 'a' }, Date.now() + 10 * 60 * 1000);
+  assert.equal(await p.takePendingBind(), null);
+  areas.session.set('pendingBind', { origin: OTP, accountId: 7, at: Date.now() });
+  assert.equal(await p.takePendingBind(), null);
+});
+
+test('pendingBind is not written while locked, idle, or with a bad origin', async () => {
+  await seed(twoAccounts());
+  const w = await page();
+  assert.equal(await w.setPendingBind({ origin: 'http://otp.test', accountId: 'a' }), false);
+  assert.equal(await w.setPendingBind({ origin: 'https://otp.test/login', accountId: 'a' }), false);
+  assert.equal(await w.setPendingBind({ origin: OTP, accountId: '' }), false);
+  assert.equal(await w.setPendingBind(), false);
+  assert.equal(areas.session.has('pendingBind'), false);
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await w.setPendingBind({ origin: OTP, accountId: 'a' }), false);
+  await store.clearSessionKey();
+  assert.equal(await w.setPendingBind({ origin: OTP, accountId: 'a' }), false);
+  assert.equal(areas.session.has('pendingBind'), false);
+});
+
+test('every lock path removes pendingBind with the key', async () => {
+  const offer = { origin: OTP, accountId: 'a' };
+  // Manual lock.
+  await seed(twoAccounts());
+  let a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await a.setPendingBind(offer), true);
+  await a.lock();
+  for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+  // Idle lock decided under the vault lock.
+  await seed(twoAccounts());
+  a = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await a.setPendingBind(offer), true);
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), true);
+  for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+  // A page opening on an idle session.
+  await seed(twoAccounts());
+  await store.setPendingBind(offer);
+  areas.session.set('lastActiveAt', STALE());
+  a = await page();
+  assert.equal(await a.resume(), 'locked');
+  for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+  // store.clearSessionKey() itself.
+  await seed(twoAccounts());
+  await store.setPendingBind(offer);
+  await store.clearSessionKey();
+  for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
+});
