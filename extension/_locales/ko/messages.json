@@ -384,19 +384,6 @@
       }
     }
   },
-  "importedCount": {
-    "message": "백업을 가져왔어요. 추가 $ADDED$개, 중복으로 건너뜀 $SKIPPED$개.",
-    "placeholders": {
-      "added": {
-        "content": "$1",
-        "example": "2"
-      },
-      "skipped": {
-        "content": "$2",
-        "example": "1"
-      }
-    }
-  },
   "settingsTitle": {
     "message": "설정"
   },
@@ -454,6 +441,24 @@
       }
     }
   },
+  "errImportTooLarge": {
+    "message": "1MiB보다 큰 파일이라 zauthenticator 백업일 수 없어요."
+  },
+  "invalidCount": {
+    "message": "올바르지 않은 항목 $COUNT$개는 건너뛰었어요.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "importDone": {
+    "message": "백업을 가져왔어요."
+  },
+  "autoLockHint": {
+    "message": "15분 동안 사용하지 않거나 브라우저를 종료하면 잠겨요."
+  },
   "openTabHint": {
     "message": "파일 선택 창 때문에 팝업이 닫히면 설정을 새 탭에서 여세요."
   },
@@ -477,8 +482,5 @@
         "example": "0.1.0"
       }
     }
-  },
-  "sourceBtn": {
-    "message": "소스 코드"
   }
 }

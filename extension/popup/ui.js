@@ -6,14 +6,23 @@ export function $(selector, root = document) {
   return el;
 }
 
+let announceTimer = 0;
+
 // Polite screen-reader announcement (copy confirmations, results).
 export function announce(message) {
   const live = $('#live');
+  clearTimeout(announceTimer);
   live.textContent = '';
   // A separate task so repeated identical messages are announced again.
-  setTimeout(() => {
+  announceTimer = setTimeout(() => {
     live.textContent = message;
   }, 30);
+}
+
+// Drops the current and any pending announcement (they can name an account; used on lock).
+export function clearAnnouncement() {
+  clearTimeout(announceTimer);
+  $('#live').textContent = '';
 }
 
 export function setText(el, message) {

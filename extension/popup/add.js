@@ -26,6 +26,9 @@ export function createAddView({ isTab, done }) {
   const advancedEl = manualForm.querySelector('details');
 
   const isActive = () => document.body.dataset.state === 'add';
+  // Work started while unlocked writes nothing back into the view once the vault locks
+  // (lock clears these fields; a pending scan or save must not refill them).
+  const live = (gen) => session.isUnlocked() && session.generation() === gen;
 
   scanTabBtn.addEventListener('click', scanTab);
   scanFileBtn.addEventListener('click', scanFile);
@@ -70,6 +73,7 @@ export function createAddView({ isTab, done }) {
   });
 
   async function scanTab() {
+    const gen = session.generation();
     clearMessages();
     if (isTab) {
       // Opened as a full tab (not from the toolbar icon): there is no web page to capture.
@@ -80,22 +84,26 @@ export function createAddView({ isTab, done }) {
       setText(statusEl, t('scanning'));
       let image;
       try {
-        // activeTab grants this after the user clicked the toolbar icon.
-        image = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
+        // activeTab grants this after the user clicked the toolbar icon. JPEG keeps a capture of
+        // a photo-heavy 5K/6K screen well under the decoder's byte cap (lib/qr.js).
+        image = await chrome.tabs.captureVisibleTab(undefined, { format: 'jpeg', quality: 92 });
       } catch (error) {
+        if (!live(gen)) return;
         // No activeTab grant for this tab (e.g. it navigated since the popup opened) versus a
         // page Chrome never lets extensions capture (browser pages, extension stores).
         fail(t(/activeTab/.test(reason(error)) ? 'errCaptureNoAccess' : 'errCaptureFailed'));
         return;
       }
+      if (!live(gen)) return;
       let account;
       try {
         account = parseOtpauth(await decodeQR(image), 'qr');
       } catch (error) {
-        fail(messageFor(error, 'tab'));
+        if (live(gen)) fail(messageFor(error, 'tab'));
         return;
       }
-      await commit([account]);
+      if (!live(gen)) return;
+      await commit(gen, [account]);
     });
   }
 
@@ -111,6 +119,7 @@ export function createAddView({ isTab, done }) {
   }
 
   async function addFromImages(files) {
+    const gen = session.generation();
     clearMessages();
     const images = files.filter(isImage);
     if (images.length === 0) {
@@ -127,15 +136,17 @@ export function createAddView({ isTab, done }) {
         const message = messageFor(error, 'image');
         problems.push(images.length > 1 && file.name ? `${file.name}: ${message}` : message);
       }
+      if (!live(gen)) return;
     }
     if (found.length === 0) {
       fail(problems.join('\n'));
       return;
     }
-    await commit(found, problems);
+    await commit(gen, found, problems);
   }
 
   async function addFromLinks() {
+    const gen = session.generation();
     clearMessages();
     const found = [];
     const problems = [];
@@ -161,11 +172,12 @@ export function createAddView({ isTab, done }) {
     }
     await withBusy(uriSubmit, t('adding'), async () => {
       // Keep only the lines that still need fixing.
-      if (await commit(found, problems)) uriEl.value = failedLines.join('\n');
+      if ((await commit(gen, found, problems)) && live(gen)) uriEl.value = failedLines.join('\n');
     });
   }
 
   async function addManual() {
+    const gen = session.generation();
     clearMessages();
     if (!issuerEl.value.trim() && !labelEl.value.trim()) {
       fail(t('errNameRequired'));
@@ -192,22 +204,27 @@ export function createAddView({ isTab, done }) {
       return;
     }
     await withBusy(manualSubmit, t('adding'), async () => {
-      if (await commit([account])) resetManual();
+      if (await commit(gen, [account])) resetManual();
     });
   }
 
   // Saves the accounts. Navigates back to the list when everything was added; stays here
   // (showing what was added and what failed) otherwise. → true when anything was added.
-  async function commit(accounts, problems = []) {
+  // `gen` is the session generation the user action started in; a lock since then makes
+  // this a silent no-op (the lock already reset the view).
+  async function commit(gen, accounts, problems = []) {
+    if (!live(gen)) return false;
     let result;
     try {
       result = await session.addAccounts(accounts);
     } catch (error) {
-      fail(t('errSaveFailed', reason(error)));
+      if (live(gen) && error.code !== 'locked') fail(t('errSaveFailed', reason(error)));
       return false;
     }
+    if (!live(gen)) return false;
     if (result.added === 0) {
-      fail([t('errAllDuplicates'), ...problems].join('\n'));
+      const onlyDuplicates = result.duplicates > 0 && result.invalid === 0;
+      fail([onlyDuplicates ? t('errAllDuplicates') : summary(result), ...problems].join('\n'));
       return false;
     }
     if (problems.length > 0) {
@@ -237,6 +254,7 @@ export function createAddView({ isTab, done }) {
     if (error instanceof QRError) {
       if (error.code === 'no-qr') return t(source === 'tab' ? 'errNoQrTab' : 'errNoQrImage');
       if (error.code === 'bad-image') return t('errBadImage');
+      if (error.code === 'too-large') return t('errImageTooLarge');
       return t('errDecoderMissing');
     }
     return reason(error);
@@ -258,20 +276,29 @@ export function createAddView({ isTab, done }) {
     advancedEl.open = false;
   }
 
-  function open({ fileMode = false } = {}) {
+  // Empties every field and message that can hold a secret or an account name.
+  function clearSensitive() {
     clearMessages();
     uriEl.value = '';
+    fileInput.value = '';
     resetManual();
+    dropZone.classList.remove('dragover');
+  }
+
+  function open({ fileMode = false } = {}) {
+    clearSensitive();
     document.body.classList.toggle('file-mode', fileMode);
     (fileMode ? fileInput : isTab ? uriEl : scanTabBtn).focus();
   }
 
-  return { open };
+  return { open, clearSensitive };
 }
 
-export function summary({ added, skipped }) {
+// result = session.addAccounts() → { added, duplicates, invalid }
+export function summary({ added, duplicates = 0, invalid = 0 }) {
   const parts = [t('addedCount', added)];
-  if (skipped > 0) parts.push(t('skippedCount', skipped));
+  if (duplicates > 0) parts.push(t('skippedCount', duplicates));
+  if (invalid > 0) parts.push(t('invalidCount', invalid));
   return parts.join(' ');
 }
 
