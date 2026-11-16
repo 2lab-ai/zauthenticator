@@ -302,6 +302,9 @@
   "errImageTooLarge": {
     "message": "이미지가 너무 커서 스캔할 수 없어요(최대 20MB, 5000만 화소)."
   },
+  "errImageFormat": {
+    "message": "PNG, JPEG, GIF, WebP, BMP 이미지를 사용해 주세요."
+  },
   "errNotImage": {
     "message": "이미지 파일(PNG, JPEG 등)을 선택하세요."
   },
