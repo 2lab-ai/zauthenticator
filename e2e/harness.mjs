@@ -31,11 +31,19 @@ export function freshProfileDir(prefix = 'zauth-e2e-profile-') {
 
 // headless: false by default (CI runs it under xvfb). E2E_HEADLESS=1 selects the full Chromium
 // build in new-headless mode via channel 'chromium'; the headless shell cannot load extensions.
+//
+// UI language: --lang=en-US asks Chromium for an English UI, which Chromium reads on Linux and
+// Windows. macOS Chromium ignores --lang and follows the system language list (AppleLanguages);
+// Playwright refuses the -AppleLanguages argument for a persistent context. locale: 'en-US' only
+// emulates navigator.language, Accept-Language and chrome.i18n.getUILanguage(): measured on
+// macOS, it does not change the catalog chrome.i18n.getMessage() reads (--lang=ko with
+// locale ko-KR still gave English messages). popup.e2e.mjs prints the catalog language.
 export async function launch(extDir, userDataDir) {
   const options = {
     headless: HEADLESS,
     acceptDownloads: true,
-    args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`],
+    locale: 'en-US',
+    args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, '--lang=en-US'],
   };
   if (HEADLESS) options.channel = 'chromium';
   return chromium.launchPersistentContext(userDataDir, options);
