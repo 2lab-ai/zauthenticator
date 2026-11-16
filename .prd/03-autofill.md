@@ -88,9 +88,11 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
 2. Input: an OTP field = first visible, enabled, empty `<input>` matching (in order):
    `autocomplete="one-time-code"`; or name/id/aria-label/placeholder containing the whole word
    `otp|totp|mfa|2fa` (names split on non-alphanumerics, camelCase and letter→digit) or the phrase
-   `one.?time.?(code|pass|password|pin)`, `verification.?code`, `auth(entication)?.?code`; or
-   `inputmode="numeric"`/`type="tel"|"number"` with `maxlength` 6–8; or a run of 6–8 sibling
-   single-character inputs (split boxes). Rules 2–4 skip a field whose names contain a whole word for
+   `one.?time.?(code|pass|password|pin)`, `verification.?code`, `auth(entication)?.?code`; or a run
+   of 6–8 sibling single-character inputs (split boxes) that carries a code sign (a box marked
+   one-time-code or named for a code, or a group element whose aria-label/id names a code). A field
+   that is only sized like a code (numeric, maxlength 6–8) has no sign and is never filled
+   unattended — the right-click menu still fills it. Rules 2–3 skip a field whose names contain a whole word for
    another number (zip, postal, phone, tel, mobile, amount, price, card, cc, cvv, cvc, csc, birth,
    bday, dob, date, year, month, day, search, account, qty, quantity, captcha, …) or whose
    `autocomplete` is anything but empty/on/off/one-time-code. One fill per page load: after the first

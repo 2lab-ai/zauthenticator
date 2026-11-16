@@ -94,9 +94,11 @@ its storage. Export a backup first if you may want your accounts back.
 - **Later visits.** On a bound site (the top page or any frame of that exact origin) the code
   field is filled once per page load while the vault is unlocked. The extension looks for, in
   order, a field marked `autocomplete="one-time-code"`, a field whose name, id, label or
-  placeholder looks like a code field (OTP, 2FA, verification code, …), a short numeric field of 6–8
-  characters, or a row of 6–8 one-character boxes. That is a heuristic: on an unusual page it may
-  find nothing or the wrong field. It fills only an empty field and never submits a form.
+  placeholder looks like a code field (OTP, 2FA, verification code, …), or a row of 6–8
+  one-character boxes labelled as a code. A field that is only sized like a code (a PIN, a postal
+  code) is never filled on its own; use the right-click menu for it. That is a heuristic: on an
+  unusual page it may find nothing or the wrong field. It fills only an empty field, once per page
+  load, and never submits a form.
 - **What the site gets.** The code, typed into its page, exactly as if you had typed it. The
   page's own scripts can read it, as they could if you typed it. The secret, the account name
   and the vault key never reach the page.
@@ -226,7 +228,7 @@ zauthenticator는 Chrome, Edge 같은 Chromium 브라우저용 오픈소스 TOTP
 - **원격·동적 코드 없음**: `script-src 'self'`를 쓰고 `eval`, `new Function`, 인라인 스크립트가 없습니다. 콘텐츠 스크립트도 같은 규칙으로 검사합니다.
 - **저장 시 암호화**: 비밀값은 패스프레이즈에서 PBKDF2-SHA-256(600,000회)으로 만든 키를 쓰는 AES-GCM-256 금고 안에만 저장됩니다. 패스프레이즈는 NFC로 정규화한 뒤 키를 만듭니다. 어느 사이트에 어느 계정을 자동 입력할지(바인딩)도 금고 안에 저장됩니다. 다만 브라우저 자체가 확장이 접근할 수 있는 사이트 목록과 등록된 콘텐츠 스크립트의 대상 목록을 금고 밖에 기록합니다.
 - **최소 권한**: `storage`, `activeTab`, `contextMenus`, `scripting`과, 사이트 하나씩 부여되는 선택적 `https://*/*` 접근 권한만 씁니다. 설치 시에는 어떤 사이트 권한도 없고, 자동 입력을 허용한 그 사이트(정확한 출처)에 대해서만 브라우저의 권한 창에서 동의할 때 부여됩니다. 백그라운드 서비스 워커(오른쪽 클릭 메뉴, 바인딩된 사이트용 코드)와 콘텐츠 스크립트 하나(`content/autofill.js`와 입력란 찾기 `lib/fieldfind.js`)가 있으며, 콘텐츠 스크립트는 바인딩된 출처에만 실행 중에 등록됩니다. 매니페스트에는 콘텐츠 스크립트도, 웹 접근 리소스도 없습니다.
-- **허용한 사이트에만 자동 입력**: 사이트는 정확한 출처(`https:`, 호스트, 포트)로 묶이므로 비슷한 도메인이나 하위 도메인에는 아무것도 가지 않습니다. 서비스 워커는 금고가 열려 있고 15분 미사용 상태가 아니며 요청한 프레임의 출처가 바인딩되어 있을 때만 답합니다. 페이지로 가는 것은 6–8자리 코드뿐이고 비밀값·계정 이름·키는 가지 않습니다. 비어 있는 입력란만 채우고, 폼을 제출하지 않으며, 입력란 찾기는 추정(휴리스틱)입니다.
+- **허용한 사이트에만 자동 입력**: 사이트는 정확한 출처(`https:`, 호스트, 포트)로 묶이므로 비슷한 도메인이나 하위 도메인에는 아무것도 가지 않습니다. 서비스 워커는 금고가 열려 있고 15분 미사용 상태가 아니며 요청한 프레임의 출처가 바인딩되어 있을 때만 답합니다. 페이지로 가는 것은 6–8자리 코드뿐이고 비밀값·계정 이름·키는 가지 않습니다. 코드 입력란이라는 표시(one-time-code, OTP·2FA·인증 코드 같은 이름, 코드로 표시된 한 칸짜리 입력란 묶음)가 있는 입력란만, 비어 있을 때, 페이지당 한 번 채우고 폼을 제출하지 않습니다. 길이만 코드처럼 생긴 입력란(PIN, 우편번호)은 자동으로 채우지 않으니 오른쪽 클릭 메뉴로 넣으세요. 입력란 찾기는 추정(휴리스틱)입니다.
 - **외부 코드 고정**: QR 디코더는 npm 패키지 `jsqr@1.4.0`의 `dist/jsQR.js`를 수정 없이 함께 배포하며 sha256으로 고정합니다(`bc40c8a1...`). `extension/vendor`에서 `sha256sum -c SHA256SUMS`로 확인하고, 출처는 `npm pack jsqr@1.4.0`으로 받은 파일과 해시를 비교해 확인합니다(위 "Third-party code" 참고).
 
 **설치**: 릴리스에서 zip을 받아 sha256을 확인한 뒤 압축을 풉니다. `chrome://extensions`(또는
