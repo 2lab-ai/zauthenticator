@@ -493,16 +493,21 @@ function normalizeData(value) {
   return value;
 }
 
+// The fields of an entry a repaired id is made from: what the menu shows and the code parameters.
+const ID_FIELDS = ['issuer', 'label', 'algorithm', 'digits', 'period', 'createdAt'];
+
 // Gives each entry whose id is not a non-empty string, or repeats an earlier entry's id, a new
 // one. Only a hand-edited vault needs this, since the app writes every entry with
 // crypto.randomUUID(). The new id depends on the stored record alone, so every page and the
 // service worker give the same one in every read (a menu item or a row found again by its id):
-// 'h' + the FNV-1a 64-bit hash (hex) of the entry's JSON with sorted keys and without its id, then
-// '-' and the count of identical entries before it, skipping any id an entry stores. Entries that
-// store a usable id keep it, first come first. It is not a secret and needs no crypto. The id
-// lives in memory until the next seal stores it; nothing else in an entry changes, and an entry
-// that is not an object, or is an array, is left alone (JSON would drop an id on an array, so it
-// could never be stored).
+// 'h' + the FNV-1a 64-bit hash (hex) of the JSON, with sorted keys, of the entry's ID_FIELDS, then
+// '-' and the count of entries before it with the same hash, skipping any id an entry stores.
+// Entries that store a usable id keep it, first come first. The id is no secret and needs no
+// crypto; it leaves the encrypted record (menu item ids, the bind offer in session storage), and
+// FNV-1a can be run backwards, so the secret and any field the app does not know stay out of it.
+// The id lives in memory until the next seal stores it; nothing else in an entry changes, and an
+// entry that is not an object, or is an array, is left alone (JSON would drop an id on an array,
+// so it could never be stored).
 function withIds(current) {
   const taken = new Set();
   const repair = [];
@@ -512,8 +517,9 @@ function withIds(current) {
     else repair.push(entry);
   }
   for (const entry of repair) {
-    const { id: _id, ...rest } = entry;
-    const base = `h${fnv1a64(canonicalJson(rest))}`;
+    const shown = {};
+    for (const field of ID_FIELDS) if (Object.hasOwn(entry, field)) shown[field] = entry[field];
+    const base = `h${fnv1a64(canonicalJson(shown))}`;
     let n = 0;
     while (taken.has(`${base}-${n}`)) n++;
     entry.id = `${base}-${n}`;

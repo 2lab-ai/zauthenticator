@@ -727,6 +727,23 @@ test('every lock path removes pendingBind with the key', async () => {
   for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
 });
 
+test('the id given to an entry without one says nothing about its secret or fields the app does not know', async () => {
+  // The id leaves the encrypted record (menu item ids, the session's bind offer): only the fields
+  // the menu already shows or that are no secret go into it.
+  const one = named('Same', { notes: 'backup codes 1111 2222' });
+  const other = { ...named('Same', { notes: 'something else' }), secret: 'GEZDGNBVGY3TQOJQ' };
+  await seed({ accounts: [one, other] });
+  const ids = (await (await page()).readUnlocked()).accounts.map((x) => x.id);
+  const base = ids[0].slice(0, -2);
+  assert.deepEqual(ids, [`${base}-0`, `${base}-1`]);
+  // A different issuer, label or code parameter does give another id.
+  for (const change of [{ issuer: 'Else' }, { label: 'else@b' }, { digits: 8 }, { period: 60 }, { algorithm: 'SHA256' }]) {
+    await seed({ accounts: [{ ...one, ...change }] });
+    const [id] = (await (await page()).readUnlocked()).accounts.map((x) => x.id);
+    assert.notEqual(id.slice(0, -2), base, JSON.stringify(change));
+  }
+});
+
 test('clearPendingBind(offer) removes only that exact offer: a window showing an older one leaves a newer one', async () => {
   await seed(twoAccounts());
   const shown = await page();
