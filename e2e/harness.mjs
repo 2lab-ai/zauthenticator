@@ -1,8 +1,8 @@
 // Shared Playwright harness for e2e/popup.e2e.mjs and e2e/fixture-smoke.mjs.
 //
 // Launches the Playwright-bundled Chromium with one unpacked extension, finds the extension id
-// without a background service worker, watches every remote request in the context, and prints
-// one `PASS|FAIL <name> <detail>` line per assertion.
+// without a background service worker, watches every remote request and every opened page in the
+// context, and prints one `PASS|FAIL <name> <detail>` line per assertion.
 
 import { chromium } from 'playwright';
 import { createHash } from 'node:crypto';
@@ -41,10 +41,15 @@ export async function launch(extDir, userDataDir) {
   return chromium.launchPersistentContext(userDataDir, options);
 }
 
+// Pages the harness itself opens for its own bookkeeping (the chrome://extensions lookup).
+// watchPages() exempts exactly these Page objects, never a URL.
+const harnessPages = new WeakSet();
+
 // Fallback id lookup: chrome://extensions renders one <extensions-item id="<extension id>"> per
 // installed extension, two shadow roots deep.
 export async function readIdsFromExtensionsPage(context) {
   const page = await context.newPage();
+  harnessPages.add(page);
   try {
     await page.goto('chrome://extensions/');
     const handle = await page.waitForFunction(
@@ -131,6 +136,33 @@ export function watchNetwork(context) {
     // requests issued by extension pages at all.
     extensionUrls,
     egress: () => records.filter((r) => !BLOCKED_BEFORE_NETWORK.test(r.outcome)),
+  };
+}
+
+// Records every page (tab or popup window) in the context and every main-frame URL it shows,
+// including pages the extension opens itself (chrome.tabs.create, window.open). CSP does not
+// govern top-level navigation, so this is the runtime check behind the gate's navigation rule.
+export function watchPages(context) {
+  const pages = [];
+  const track = (page) => {
+    const rec = { page, urls: [page.url()] };
+    pages.push(rec);
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) rec.urls.push(frame.url());
+    });
+  };
+  context.pages().forEach(track);
+  context.on('page', track);
+  return {
+    count: () => pages.length,
+    // URLs outside the extension's own origins (chrome-extension://<id>, as resolved by
+    // openExtensionPage) other than about:blank, on any page the harness did not open for itself.
+    offenders(ownOrigins) {
+      return pages
+        .filter((rec) => !harnessPages.has(rec.page))
+        .flatMap((rec) => rec.urls)
+        .filter((url) => url !== 'about:blank' && url !== '' && !ownOrigins.some((origin) => url.startsWith(`${origin}/`)));
+    },
   };
 }
 

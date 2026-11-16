@@ -1,6 +1,6 @@
 {
   "name": "zauthenticator",
-  "description": "Open-source, zero-network TOTP authenticator for Chromium browsers (Manifest V3).",
+  "description": "Open-source TOTP authenticator for Chromium browsers (Manifest V3): no network connections from its pages, secrets encrypted at rest.",
   "private": true,
   "type": "module",
   "license": "MIT",
