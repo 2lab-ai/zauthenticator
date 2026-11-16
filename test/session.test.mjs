@@ -154,7 +154,7 @@ for (const [name, bad] of [
   ['null', null],
   ['number', 5],
   ['string', 'x'],
-  ['object secret without toString', { issuer: 'Bad', secret: { toString: 1 } }],
+  ['object secret without toString', { id: 'bad', issuer: 'Bad', secret: { toString: 1 } }],
 ]) {
   test(`a malformed stored entry (${name}) does not block adding`, async () => {
     await seed({ accounts: [bad, { id: 'keep', ...ACC, issuer: 'Other' }] });
@@ -205,6 +205,97 @@ test('stored entries with object-valued fields show, search and survive without 
   assert.equal(reopened.accounts.length, 4);
   assert.deepEqual(reopened.accounts.slice(0, 3), odd);
   assert.deepEqual(a.accounts().map((x) => x.id).slice(0, 3), ['odd-1', 'odd-2', 'odd-3']);
+});
+
+// Only a hand-edited vault holds an entry without a usable id: the app writes crypto.randomUUID().
+const named = (issuer, extra = {}) => ({ ...extra, ...ACC, issuer });
+const withoutId = (entry) => {
+  if (entry === null || typeof entry !== 'object') return entry;
+  const { id, ...rest } = entry;
+  return rest;
+};
+const isId = (id) => typeof id === 'string' && id !== '';
+const idLessVault = () => [named('A'), named('B'), named('C', { id: 7 })];
+
+test('entries without a usable id are shown with distinct string ids', async () => {
+  await seed({ accounts: idLessVault() });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const ids = a.accounts().map((x) => x.id);
+  assert.deepEqual(a.accounts().map((x) => x.issuer), ['A', 'B', 'C']);
+  assert.ok(ids.every(isId), JSON.stringify(ids));
+  assert.equal(new Set(ids).size, 3);
+  // A passphrase unlock shows them the same way.
+  const b = await page();
+  await b.unlock(PASS);
+  const unlocked = b.accounts().map((x) => x.id);
+  assert.ok(unlocked.every(isId), JSON.stringify(unlocked));
+  assert.equal(new Set(unlocked).size, 3);
+});
+
+test('an entry without a stored id is deleted by the id it was shown with, and only it', async () => {
+  await seed({ accounts: idLessVault() });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const shown = a.accounts().map((x) => x.id);
+  assert.equal(await a.deleteAccount(shown[0]), true);
+  assert.deepEqual(a.accounts().map((x) => x.issuer), ['B', 'C']);
+  const reopened = await reopen();
+  assert.deepEqual(reopened.accounts.map((x) => x.issuer), ['B', 'C']);
+  // The other two keep the ids they were shown with, now stored.
+  assert.deepEqual(reopened.accounts.map((x) => x.id), shown.slice(1));
+  assert.deepEqual(a.accounts().map((x) => x.id), shown.slice(1));
+});
+
+test('the next seal stores the assigned ids and leaves everything else as it was', async () => {
+  const stored = [...idLessVault(), 'not an entry'];
+  await seed({ accounts: stored });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const shown = a.accounts().map((x) => x.id);
+  assert.deepEqual(await a.addAccounts([named('D')]), { added: 1, duplicates: 0, invalid: 0 });
+  const reopened = await reopen();
+  assert.equal(reopened.accounts.length, 5);
+  assert.deepEqual(reopened.accounts.slice(0, 4).map(withoutId), stored.map(withoutId));
+  const kept = reopened.accounts.slice(0, 3).map((x) => x.id);
+  assert.ok(kept.every(isId), JSON.stringify(kept));
+  assert.deepEqual(kept, shown);
+  // Every later open shows the stored ids.
+  const b = await page();
+  assert.equal(await b.resume(), 'list');
+  assert.deepEqual(b.accounts().map((x) => x.id).slice(0, 3), shown);
+});
+
+test('a repeated or empty id is replaced; the first entry with an id keeps it', async () => {
+  await seed({ accounts: [named('A', { id: 'dup' }), named('B', { id: 'dup' }), named('C', { id: '' })] });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const ids = a.accounts().map((x) => x.id);
+  assert.equal(ids[0], 'dup');
+  assert.ok(ids.every(isId), JSON.stringify(ids));
+  assert.equal(new Set(ids).size, 3);
+  assert.equal(await a.deleteAccount(ids[1]), true);
+  const reopened = await reopen();
+  assert.deepEqual(reopened.accounts.map((x) => x.issuer), ['A', 'C']);
+  assert.deepEqual(reopened.accounts.map((x) => x.id), ['dup', ids[2]]);
+});
+
+test("an id another page has not stored yet deletes nothing; the stored one works", async () => {
+  await seed({ accounts: [named('A'), named('B')] });
+  const a = await page();
+  const b = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await b.resume(), 'list');
+  const fromA = a.accounts().map((x) => x.id);
+  const fromB = b.accounts().map((x) => x.id);
+  // Page a deletes first and so stores its ids; page b's ids for the same entries never were.
+  assert.equal(await a.deleteAccount(fromA[0]), true);
+  assert.equal(await b.deleteAccount(fromB[1]), false);
+  assert.deepEqual((await reopen()).accounts.map((x) => [x.issuer, x.id]), [['B', fromA[1]]]);
+  // Page b now holds the stored record and shows the stored id.
+  assert.deepEqual(b.accounts().map((x) => x.id), [fromA[1]]);
+  assert.equal(await b.deleteAccount(fromA[1]), true);
+  assert.deepEqual((await reopen()).accounts, []);
 });
 
 test('readBackup that finishes after a lock hands nothing back', async () => {
