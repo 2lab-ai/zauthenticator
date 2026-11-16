@@ -727,6 +727,45 @@ test('every lock path removes pendingBind with the key', async () => {
   for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
 });
 
+// The worker's auto-fill record (lib/autofill-worker.js: which tab got which code counter, never a
+// code) goes with every lock, like the offer.
+test('every lock path removes the auto-fill record with the key', async () => {
+  const record = () => areas.session.set('autofillServed', [{ tab: 1, origin: OTP, account: 'a', counter: 1, at: Date.now() }]);
+  // Manual lock.
+  await seed(twoAccounts());
+  let a = await page();
+  assert.equal(await a.resume(), 'list');
+  record();
+  await a.lock();
+  assert.equal(areas.session.has('autofillServed'), false, 'manual lock');
+  // Idle lock decided under the vault lock.
+  await seed(twoAccounts());
+  a = await page();
+  assert.equal(await a.resume(), 'list');
+  record();
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), true);
+  assert.equal(areas.session.has('autofillServed'), false, 'lockIfIdle');
+  // A page opening on an idle session.
+  await seed(twoAccounts());
+  record();
+  areas.session.set('lastActiveAt', STALE());
+  a = await page();
+  assert.equal(await a.resume(), 'locked');
+  assert.equal(areas.session.has('autofillServed'), false, 'resume on an idle session');
+  // The worker's read on an idle session.
+  await seed(twoAccounts());
+  record();
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await (await page()).readUnlocked(), null);
+  assert.equal(areas.session.has('autofillServed'), false, 'readUnlocked on an idle session');
+  // store.clearSessionKey() itself.
+  await seed(twoAccounts());
+  record();
+  await store.clearSessionKey();
+  assert.equal(areas.session.has('autofillServed'), false, 'clearSessionKey');
+});
+
 test('the id given to an entry without one says nothing about its secret or fields the app does not know', async () => {
   // The id leaves the encrypted record (menu item ids, the session's bind offer): only the fields
   // the menu already shows or that are no secret go into it.

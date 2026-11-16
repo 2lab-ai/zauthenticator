@@ -1,11 +1,13 @@
 // content/autofill.js (.prd/03-autofill.md S3 and "Fresh code and retry after a failed attempt"):
 // while the worker is answering a request for one field, no other look on the page sends a
-// request; a code with under 3 s left is not filled, the next one is; a filled code is replaced
-// when its period ends while the field still holds it; a field the page empties or replaces is
-// filled again, at most 4 fills in the 5 minutes after the first; a value the user typed is never
-// touched. The script runs after lib/fieldfind.js in a fresh context, as the registered content
-// script does, over the same tiny element shim as test/fieldfind.test.mjs (copied here: that file
-// belongs to the field-detection tests).
+// request; a code with under 3 s left is not filled, the next one is (3 such waits in a row end
+// the watch), and so is a code this script filled before; a filled code is replaced when its
+// period ends while the field still holds it (twice at most); a field the page empties or replaces
+// is filled again once (2 fills in the 5 minutes after the first); a value the user typed, or a
+// user edit of the filled field, ends the watch, and so does the page moving to another path. The
+// script runs after lib/fieldfind.js in a fresh context, as the registered content script does,
+// over the same tiny element shim as test/fieldfind.test.mjs (copied here: that file belongs to
+// the field-detection tests).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,6 +20,10 @@ const AUTOFILL_SOURCE = read('content/autofill.js');
 // ---- element shim ------------------------------------------------------------------------------
 
 const VOID = new Set(['input', 'br', 'img']);
+
+// Listeners the script added to elements and has not removed: { el, type, fn }. Emptied when a
+// run starts.
+const elementListeners = [];
 
 class El {
   constructor(tag, attrs = {}) {
@@ -91,9 +97,27 @@ class El {
     }
     return true;
   }
+  addEventListener(type, fn) {
+    elementListeners.push({ el: this, type, fn });
+  }
+  removeEventListener(type, fn) {
+    const i = elementListeners.findIndex((l) => l.el === this && l.type === type && l.fn === fn);
+    if (i !== -1) elementListeners.splice(i, 1);
+  }
   dispatchEvent(event) {
     this.events.push(`${event.type}${event.bubbles ? '' : ' (not bubbling)'}`);
+    for (const l of elementListeners.filter((x) => x.el === this && x.type === event.type)) l.fn(event);
     return true;
+  }
+  // The user edits the field: its value changes and a trusted input event follows (only the
+  // browser makes those; the script's own events and a page's are untrusted).
+  userTypes(value) {
+    this.value = value;
+    for (const l of elementListeners.filter((x) => x.el === this && x.type === 'input')) l.fn({ type: 'input', isTrusted: true });
+  }
+  // The page's own script dispatches an input event (untrusted, as every event a script makes).
+  pageDispatchesInput() {
+    for (const l of elementListeners.filter((x) => x.el === this && x.type === 'input')) l.fn({ type: 'input', isTrusted: false });
   }
 }
 
@@ -131,6 +155,8 @@ const MARGIN_MS = 250;
 // The longest a code stays valid (a 300-second period): with it, no keep-fresh request comes
 // before the follow window ends.
 const LONGEST_VALID_MS = 300 * 1000;
+// The page's address while the script runs, unless a test moves it.
+const PAGE_URL = 'https://otp.test/login';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -198,17 +224,21 @@ function countingWorker(validMs) {
   };
 }
 
-// The script has stopped and left nothing behind: no timer, no listener, no observer.
+// The script has stopped and left nothing behind: no timer, no listener (on window, document or a
+// field), no observer.
 function assertStopped(run, what) {
   assert.equal(run.timers.pending(), 0, `${what}: timers left`);
   assert.equal(run.listeners.length, 0, `${what}: listeners left`);
+  assert.equal(elementListeners.length, 0, `${what}: field listeners left`);
   assert.ok(run.observers.every((o) => o.disconnected), `${what}: observer still connected`);
 }
 
 // Runs lib/fieldfind.js then content/autofill.js in one fresh context. `reply` is the worker's
 // answer (or a function returning it, or a promise of it).
 async function runContentScript(html, reply) {
+  elementListeners.length = 0;
   const doc = parse(html);
+  doc.URL = PAGE_URL;
   const timers = fakeTimers();
   const messages = [];
   const observers = [];
@@ -233,6 +263,7 @@ async function runContentScript(html, reply) {
       constructor(type, init = {}) {
         this.type = type;
         this.bubbles = Boolean(init.bubbles);
+        this.isTrusted = false;
       }
     },
     MutationObserver: class {
@@ -369,6 +400,30 @@ test('content script: no code in the delayed answer → still one request, nothi
   assertStopped(run, 'after { code: null }');
 });
 
+test('content script: the worker says wait ({ code: null, validMs }) → nothing filled, the watch goes on; asked again validMs + 250 ms later', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: null, validMs: 12 * 1000 });
+  assert.equal(one.value, '');
+  assert.ok(run.observers.some((o) => !o.disconnected), 'still watching');
+  // Looks during the wait ask for nothing.
+  await run.mutate();
+  await run.timers.advance(12 * 1000 + MARGIN_MS - SETTLE_MS - 1);
+  assert.equal(run.messages.length, 1);
+  await run.timers.advance(1);
+  assert.equal(run.messages.length, 2);
+  await worker.answer({ code: '222222', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(one.value, '222222');
+  // A wait reply with no usable validMs is a refusal: the watch ends.
+  for (const reply of [{ code: null }, { code: null, validMs: 0 }, { code: null, validMs: 300 * 1000 + 1 }, { code: null, validMs: '5000' }]) {
+    const other = await runContentScript(ONE_CODE_FIELD, reply);
+    await other.timers.advance(RETRY_MS * 4);
+    assert.equal(other.messages.length, 1, JSON.stringify(reply));
+    assertStopped(other, JSON.stringify(reply));
+  }
+});
+
 test('content script: an answer without a usable validMs is no answer → nothing filled, the watch stops', async () => {
   for (const reply of [
     { code: '123456' },
@@ -430,18 +485,54 @@ test('content script: the field leaves the page during the wait for the next per
   assert.equal(one.value, '');
 });
 
-test('content script: every code has under 3 s left (a 2-second period) → filled after one wait, and the watch still ends', async () => {
-  const run = await runContentScript(ONE_CODE_FIELD, countingWorker(2000));
+test('content script: a wait that ends late (its answer has 100 ms left) → nothing filled, it waits again', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
   const one = byTag(run.doc, 'one');
-  assert.equal(one.value, '');
-  await run.timers.advance(2000 + MARGIN_MS);
+  await worker.answer({ code: '111111', validMs: 1500 });
+  // The wait's timer runs late (a throttled background tab): the next answer is late too.
+  await run.timers.advance(1500 + MARGIN_MS);
   assert.equal(run.messages.length, 2);
-  assert.equal(one.value, '100002');
-  // Kept current every period until the follow window ends.
-  await run.timers.advance(FOLLOW_MS);
-  // Far fewer requests than one per look (one per 500 ms): one or two per period.
-  assert.ok(run.messages.length <= 2 + FOLLOW_MS / 2000, `${run.messages.length} requests`);
-  assertStopped(run, 'after the follow window');
+  await worker.answer({ code: '222222', validMs: 100 });
+  assert.equal(one.value, '');
+  await run.timers.advance(100 + MARGIN_MS - 1);
+  assert.equal(run.messages.length, 2);
+  await run.timers.advance(1);
+  assert.equal(run.messages.length, 3);
+  await worker.answer({ code: '333333', validMs: 29 * 1000 });
+  assert.equal(one.value, '333333');
+});
+
+test('content script: 3 waits in a row without a fill (every answer late, or the worker saying wait) → the watch ends', async () => {
+  // A 2-second period: every code has under 3 s left.
+  const late = await runContentScript(ONE_CODE_FIELD, countingWorker(2000));
+  await late.timers.advance(3 * (2000 + MARGIN_MS));
+  assert.equal(late.messages.length, 4);
+  assert.equal(byTag(late.doc, 'one').value, '');
+  assertStopped(late, 'after 3 late answers');
+  // The worker saying wait, and late codes, count alike.
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  for (const reply of [{ code: null, validMs: 5000 }, { code: '111111', validMs: 1000 }, { code: null, validMs: 5000 }, { code: null, validMs: 5000 }]) {
+    await worker.answer(reply);
+    await run.timers.advance(reply.validMs + MARGIN_MS);
+  }
+  assert.equal(run.messages.length, 4);
+  assert.equal(byTag(run.doc, 'one').value, '');
+  assertStopped(run, 'after 3 waits');
+  // A fill starts the count again.
+  const again = manualWorker();
+  const filled = await runContentScript(ONE_CODE_FIELD, again.reply);
+  for (const reply of [{ code: null, validMs: 5000 }, { code: null, validMs: 5000 }, { code: '111111', validMs: 10 * 1000 }]) {
+    await again.answer(reply);
+    await filled.timers.advance(reply.validMs + MARGIN_MS);
+  }
+  assert.equal(byTag(filled.doc, 'one').value, '111111');
+  for (const reply of [{ code: null, validMs: 5000 }, { code: null, validMs: 5000 }, { code: '222222', validMs: 20 * 1000 }]) {
+    await again.answer(reply);
+    await filled.timers.advance(reply.validMs + MARGIN_MS);
+  }
+  assert.equal(byTag(filled.doc, 'one').value, '222222');
 });
 
 test('content script: the filled code is replaced by the next one when its period ends, while the field still holds it', async () => {
@@ -464,45 +555,55 @@ test('content script: the filled code is replaced by the next one when its perio
   assert.equal(one.value, '333333');
 });
 
-test('content script: a filled field set is kept current 3 times at most, refills of it included; a new field set gets its own 3', async () => {
+test('content script: a filled field set is kept current twice at most, its refill included; a new field set gets its own 2', async () => {
   const worker = manualWorker();
   const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
   const one = byTag(run.doc, 'one');
   await worker.answer({ code: '100001', validMs: 10 * 1000 });
   await run.timers.advance(10 * 1000 + MARGIN_MS);
-  for (const code of ['100002', '100003', '100004']) {
+  for (const code of ['100002', '100003']) {
     assert.equal(worker.open(), 1, `a request for the code after ${one.value}`);
     await worker.answer({ code, validMs: 30 * 1000 - MARGIN_MS });
     assert.equal(one.value, code);
     await run.timers.advance(30 * 1000);
   }
-  // Three replacements: the fourth code is left in the field.
+  // Two replacements: the third code is left in the field.
   await run.timers.advance(60 * 1000);
-  assert.equal(run.messages.length, 4);
-  assert.equal(one.value, '100004');
+  assert.equal(run.messages.length, 3);
+  assert.equal(one.value, '100003');
   // Still followed: the page empties it and it is filled again (a fill, not a replacement), but
   // the same field is not kept current any more.
   assert.ok(run.timers.pending() > 0, 'still following the filled field');
   one.value = '';
   await run.timers.advance(RETRY_MS);
-  assert.equal(run.messages.length, 5);
-  await worker.answer({ code: '100005', validMs: 10 * 1000 });
-  assert.equal(one.value, '100005');
+  assert.equal(run.messages.length, 4);
+  await worker.answer({ code: '100004', validMs: 10 * 1000 });
+  assert.equal(one.value, '100004');
   await run.timers.advance(60 * 1000);
-  assert.equal(run.messages.length, 5);
-  assert.equal(one.value, '100005');
-  // The page puts a new field in its place: a new field set, kept current again.
-  one.detach();
+  assert.equal(run.messages.length, 4);
+  assert.equal(one.value, '100004');
+
+  // A new field set in place of the filled one is kept current again.
+  const other = manualWorker();
+  const swap = await runContentScript(ONE_CODE_FIELD, other.reply);
+  const first = byTag(swap.doc, 'one');
+  await other.answer({ code: '200001', validMs: 10 * 1000 });
+  await swap.timers.advance(10 * 1000 + MARGIN_MS);
+  for (const code of ['200002', '200003']) {
+    await other.answer({ code, validMs: 30 * 1000 - MARGIN_MS });
+    await swap.timers.advance(30 * 1000);
+  }
+  assert.equal(first.value, '200003');
+  first.detach();
   const fresh = new El('input', { autocomplete: 'one-time-code', 'data-t': 'fresh' });
-  formOf(run.doc).append(fresh);
-  await run.mutate();
-  assert.equal(run.messages.length, 6);
-  await worker.answer({ code: '100006', validMs: 10 * 1000 });
-  assert.equal(fresh.value, '100006');
-  await run.timers.advance(10 * 1000 + MARGIN_MS);
-  assert.equal(run.messages.length, 7);
-  await worker.answer({ code: '100007', validMs: 30 * 1000 - MARGIN_MS });
-  assert.equal(fresh.value, '100007');
+  formOf(swap.doc).append(fresh);
+  await swap.mutate();
+  await other.answer({ code: '200004', validMs: 10 * 1000 });
+  assert.equal(fresh.value, '200004');
+  await swap.timers.advance(10 * 1000 + MARGIN_MS);
+  assert.equal(swap.messages.length, 5);
+  await other.answer({ code: '200005', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(fresh.value, '200005');
 });
 
 test('content script: { code: null } for a fresher code → the filled code stays, the watch stops', async () => {
@@ -530,6 +631,55 @@ test('content script: the user typed over the filled code → it is never replac
   assert.equal(run.messages.length, 1);
   assert.equal(one.value, '999999');
   assertStopped(run, 'after the user typed');
+});
+
+test('content script: the user deletes the filled code (a trusted input event) → it is not filled again, the watch stops', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '111111', validMs: 10 * 1000 });
+  // Select-all and Delete: the field goes straight to empty, as the page emptying it would, but
+  // the browser reports a trusted input event.
+  one.userTypes('');
+  await run.timers.advance(10 * 1000 + MARGIN_MS + 60 * 1000);
+  assert.equal(run.messages.length, 1);
+  assert.equal(one.value, '');
+  assert.deepEqual(one.events, ['input', 'change']);
+  assertStopped(run, 'after the user deleted the code');
+});
+
+test('content script: untrusted input events (the script\'s own, the page\'s) do not end the watch', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '111111', validMs: 10 * 1000 });
+  // The page re-dispatches an input event and then empties the field (a rejected code).
+  one.pageDispatchesInput();
+  one.value = '';
+  one.pageDispatchesInput();
+  await run.timers.advance(RETRY_MS);
+  assert.equal(run.messages.length, 2);
+  await worker.answer({ code: '222222', validMs: 9 * 1000 });
+  assert.equal(one.value, '222222');
+  // The script's own input events on the refill did not end it either: kept current.
+  await run.timers.advance(9 * 1000 + MARGIN_MS);
+  assert.equal(run.messages.length, 3);
+  await worker.answer({ code: '333333', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(one.value, '333333');
+});
+
+test('content script: a user edit of one box of filled split boxes ends the watch', async () => {
+  const boxes = Array.from({ length: 6 }, (_, i) => `<input maxlength="1" data-t="b${i + 1}">`).join('');
+  const worker = manualWorker();
+  const run = await runContentScript(`<div aria-label="Verification code">${boxes}</div>`, worker.reply);
+  const box = (i) => byTag(run.doc, `b${i + 1}`);
+  await worker.answer({ code: '123456', validMs: 10 * 1000 });
+  // Backspace in the last box.
+  box(5).userTypes('');
+  await run.timers.advance(10 * 1000 + MARGIN_MS);
+  assert.equal(run.messages.length, 1);
+  assert.equal(Array.from({ length: 6 }, (_, i) => box(i).value).join(''), '12345');
+  assertStopped(run, 'after the user edited a box');
 });
 
 test('content script: the user types while a fresher code or a refill is being asked for → the answer is not written', async () => {
@@ -634,17 +784,12 @@ test('content script: the page empties the filled field while its period still r
   await worker.answer({ code: '222222', validMs: 30 * 1000 - MARGIN_MS });
   assert.equal(one.value, '222222');
   assert.deepEqual(one.events, ['input', 'change', 'input', 'change']);
-  // That was the second fill of four: two more refills are left.
-  for (const code of ['333333', '444444']) {
-    one.value = '';
-    await run.timers.advance(RETRY_MS);
-    await worker.answer({ code, validMs: 20 * 1000 });
-    assert.equal(one.value, code);
-  }
+  // That was the second and last fill: emptied again, the watch ends.
   one.value = '';
   await run.timers.advance(RETRY_MS * 4);
-  assert.equal(run.messages.length, 5);
-  assertStopped(run, 'after the fourth fill was emptied');
+  assert.equal(run.messages.length, 3);
+  assert.equal(one.value, '');
+  assertStopped(run, 'after the second fill was emptied');
 });
 
 test('content script: the page replaces the filled field with a new one → the new one is filled; the old one is left alone', async () => {
@@ -660,6 +805,32 @@ test('content script: the page replaces the filled field with a new one → the 
   await worker.answer({ code: '222222', validMs: 19 * 1000 });
   assert.equal(fresh.value, '222222');
   assert.equal(one.value, '111111');
+  assert.deepEqual(one.events, ['input', 'change']);
+});
+
+test('content script: a new field in place of the filled one never gets the code just turned down; the next period\'s code goes in', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '111111', validMs: 20 * 1000 });
+  // Rejected: the page re-renders the form step with a new field.
+  one.detach();
+  const fresh = new El('input', { autocomplete: 'one-time-code', 'data-t': 'fresh' });
+  formOf(run.doc).append(fresh);
+  await run.mutate();
+  assert.equal(run.messages.length, 2);
+  // Still the same period: the same code.
+  await worker.answer({ code: '111111', validMs: 19 * 1000 });
+  assert.equal(fresh.value, '');
+  assert.deepEqual(fresh.events, []);
+  await run.timers.advance(19 * 1000 + MARGIN_MS - 1);
+  assert.equal(run.messages.length, 2);
+  await run.timers.advance(1);
+  assert.equal(run.messages.length, 3);
+  await worker.answer({ code: '222222', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(fresh.value, '222222');
+  assert.deepEqual(fresh.events, ['input', 'change']);
+  // A code is never written twice: the turned-down one went into one field, once.
   assert.deepEqual(one.events, ['input', 'change']);
 });
 
@@ -717,7 +888,7 @@ test('content script: split boxes are kept current and filled again like one fie
   assertStopped(run, 'after the user typed into a box');
 });
 
-test('content script: at most 4 fills (1 + 3 refills); keeping a code current is not one of them', async () => {
+test('content script: at most 2 fills (the first and one refill); keeping a code current is not one of them', async () => {
   const worker = manualWorker();
   const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
   const one = byTag(run.doc, 'one');
@@ -726,25 +897,73 @@ test('content script: at most 4 fills (1 + 3 refills); keeping a code current is
   await run.timers.advance(10 * 1000 + MARGIN_MS);
   await worker.answer({ code: '100002', validMs: 20 * 1000 });
   assert.equal(one.value, '100002');
-  // Three refills of an emptied field, with one more keep-fresh replacement between them.
-  for (const code of ['100003', '100004', '100005']) {
-    one.value = '';
-    await run.timers.advance(RETRY_MS);
-    await worker.answer({ code, validMs: 20 * 1000 });
-    assert.equal(one.value, code);
-    if (code === '100003') {
-      await run.timers.advance(20 * 1000 + MARGIN_MS);
-      await worker.answer({ code: '100006', validMs: 20 * 1000 });
-      assert.equal(one.value, '100006');
-    }
-  }
-  assert.equal(run.messages.length, 6);
-  // A fifth fill is not made: the watch ends.
+  // One refill of the emptied field, then one more keep-fresh replacement.
+  one.value = '';
+  await run.timers.advance(RETRY_MS);
+  await worker.answer({ code: '100003', validMs: 20 * 1000 });
+  assert.equal(one.value, '100003');
+  await run.timers.advance(20 * 1000 + MARGIN_MS);
+  await worker.answer({ code: '100004', validMs: 20 * 1000 });
+  assert.equal(one.value, '100004');
+  assert.equal(run.messages.length, 4);
+  // A third fill is not made: the watch ends.
   one.value = '';
   await run.timers.advance(RETRY_MS * 4);
-  assert.equal(run.messages.length, 6);
+  assert.equal(run.messages.length, 4);
   assert.equal(one.value, '');
-  assertStopped(run, 'after the fourth fill was emptied');
+  assertStopped(run, 'after the second fill was emptied');
+  // A field put in place of a twice-filled one is not filled either.
+  const other = manualWorker();
+  const swap = await runContentScript(ONE_CODE_FIELD, other.reply);
+  const first = byTag(swap.doc, 'one');
+  await other.answer({ code: '200001', validMs: 20 * 1000 });
+  first.value = '';
+  await swap.timers.advance(RETRY_MS);
+  await other.answer({ code: '200002', validMs: 20 * 1000 });
+  first.detach();
+  const fresh = new El('input', { autocomplete: 'one-time-code', 'data-t': 'fresh' });
+  formOf(swap.doc).append(fresh);
+  await swap.mutate();
+  await swap.timers.advance(RETRY_MS * 4);
+  assert.equal(swap.messages.length, 2);
+  assert.equal(fresh.value, '');
+  assertStopped(swap, 'after two fills, a new field');
+});
+
+// ---- the login step moved on -------------------------------------------------------------------
+
+test('content script: the page moves to another path after the fill → the follow ends; a query or fragment change does not end it', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '111111', validMs: 10 * 1000 });
+  // The same step with a query and a fragment: still followed.
+  run.doc.URL = `${PAGE_URL}?error=1#code`;
+  await run.timers.advance(10 * 1000 + MARGIN_MS);
+  assert.equal(run.messages.length, 2);
+  await worker.answer({ code: '222222', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(one.value, '222222');
+  // The single-page app moved on (history.pushState): an emptied code field there is not filled.
+  run.doc.URL = 'https://otp.test/account/verify-email';
+  one.value = '';
+  await run.timers.advance(RETRY_MS * 4);
+  assert.equal(run.messages.length, 2);
+  assert.equal(one.value, '');
+  assertStopped(run, 'after the path changed');
+});
+
+test('content script: the path changes while the worker answers → nothing is written', async () => {
+  const worker = manualWorker();
+  const run = await runContentScript(ONE_CODE_FIELD, worker.reply);
+  const one = byTag(run.doc, 'one');
+  await worker.answer({ code: '111111', validMs: 20 * 1000 });
+  one.value = '';
+  await run.timers.advance(RETRY_MS);
+  assert.equal(run.messages.length, 2);
+  run.doc.URL = 'https://otp.test/home';
+  await worker.answer({ code: '222222', validMs: 30 * 1000 - MARGIN_MS });
+  assert.equal(one.value, '');
+  assertStopped(run, 'after the path changed during a request');
 });
 
 test('content script: the follow window ends 5 minutes after the first fill; a field emptied after that is not filled again', async () => {

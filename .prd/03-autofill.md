@@ -100,13 +100,17 @@ Status: shipped (2026-11-16, v0.2.0) — the implemented auto-fill contract, not
    another number (zip, postal, phone, tel, mobile, amount, price, card, cc, cvv, cvc, csc, birth,
    bday, dob, date, year, month, day, search, account, qty, quantity, captcha, …) or whose
    `autocomplete` is anything but empty/on/off/one-time-code. After a fill the script follows only the
-   filled field(s) (see "Fresh code and retry after a failed attempt": keep-fresh ≤ 3 replacements, ≤ 4 fills,
-   never the same code twice into a rejected field, 5-minute window); no other field is filled while they are present. Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); one request in flight at a time.
+   filled field(s) (see "Fresh code and retry after a failed attempt": keep-fresh ≤ 2 replacements, ≤ 2 fills,
+   never the same code twice, 5-minute window, same path, a user edit ends it; the worker's per-tab limits
+   hold across page loads); no other field is filled while they are present. Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); one request in flight at a time.
 3. Flow: script → `chrome.runtime.sendMessage({type:'autofill-code'})` → worker validates sender
-   (rules above) → `vault.open` → binding → account → `totp` → `{code}` → script sets value(s) +
-   `input`/`change` events, once per field per page load.
-4. Side effects: field value only. No `lastActiveAt` change.
-5. Errors: locked/idle/unbound/invalid sender → `{code:null}`, script does nothing.
+   (rules above) → under the vault Web Lock: `vault.open` → binding → account → `totp` → per-tab record
+   (`autofillServed`) → `{code, validMs}` (or `{code: null, validMs}` = wait) → script sets value(s) +
+   `input`/`change` events.
+4. Side effects: field value; session `autofillServed` (tab, origin, account id, TOTP counter, time —
+   never a code). No `lastActiveAt` change.
+5. Errors: locked/idle/unbound/invalid sender, or the tab's limit reached → `{code:null}`, the script
+   stops.
 6. Output: filled field.
 
 ### S4 — Remove binding
@@ -132,9 +136,11 @@ Committed on main before the units start: `extension/manifest.json` (v0.2.0: per
 edits these two files.
 
 Session storage (amends 02-architecture Round 2): `chrome.storage.session` holds a subset of
-{`vaultKey`, `lastActiveAt`, `pendingBind`}. `pendingBind = {origin, accountId, at}` is written only
-by the worker after a menu fill. Every lock path (manual, propagated, idle, `lockIfIdle`, stale-key
-clearing) removes all three keys.
+{`vaultKey`, `lastActiveAt`, `pendingBind`, `autofillServed`}. `pendingBind = {origin, accountId, at}` is
+written only by the worker after a menu fill. `autofillServed = [{tab, origin, account, counter, at}]`
+(see "Fresh code and retry after a failed attempt") is written only by the worker, under the vault Web
+Lock while a key is stored. Every lock path (manual, propagated, idle, `lockIfIdle`, stale-key clearing)
+removes all four keys (`store.clearSessionKey()`).
 
 `extension/lib/bindings.js` (pure, AF-A):
 - `normalizeOrigin(url)` → `'https://host[:port]'` or `null` (non-https, invalid, opaque → null).
@@ -210,3 +216,34 @@ Contract (S3 additions):
   period and fill that one (an expired code gets the current, different code at once); keep-fresh is capped
   at 3 replacements per filled field set (sites that submit on `input` would otherwise resubmit every
   period). A field the user empties by hand is refilled like a page-emptied one (indistinguishable).
+  Superseded by the round-4 rules below (main d8636a4 review, 2 REJECT / 1 APPROVE).
+
+### Final rules (round 4, 2026-11-17; supersede the bounds above where they differ)
+
+Owner's words "한번 실패난경우 다시 입력하도록" = one retry. Content script (`content/autofill.js`), per page load:
+- Every reply is checked: `validMs < 3000` → no fill; wait `validMs + 250` ms and ask again. 3 waits in a row
+  without a fill (late codes, worker waits, the code filled last) end the watch (covers periods of a few
+  seconds).
+- Never the same code twice: after any fill, a reply whose code equals the code the script last put is not
+  written to any field (the old set emptied, or a new field put in its place) — wait for the next period.
+- At most 2 fills (first + one retry); at most 2 keep-fresh replacements per filled field set (a refill of
+  the same set does not start a new count).
+- A user edit ends the watch: an `input` event with `isTrusted` on a followed field (typing, deleting,
+  pasting). The page setting `value` fires none; the script's own and a page's events are untrusted.
+- The follow ends when the page's path (`document.URL` up to `?`/`#`; read-only, unlike
+  `location.pathname`) differs from the path at the first fill.
+- Still: follow window 5 minutes from the first fill, no other field set while the filled one is in the
+  page, never submits, `{code: null}` ends the watch.
+
+Worker (`lib/autofill-worker.js` `handleMessage`), per (sender tab id, origin), across page loads and worker
+restarts — a site that submits on `input` and reloads on a rejection resets every in-page count:
+- Each (account id, TOTP counter) is served once: asked again in its period → `{code: null, validMs}`
+  (`validMs` = ms to the next period) = wait; the script waits and asks again (no fill, no stop).
+- At most 3 code replies in any 5 minutes (first fills, retries, keep-fresh and late codes alike) → then
+  `{code: null}` = stop.
+- A context-menu fill (the user's explicit choice) on that tab and origin drops its record (a new budget).
+- State in `chrome.storage.session.autofillServed` = `[{tab, origin, account, counter, at}]` (counters and
+  times, never codes); entries older than 5 minutes are dropped on write; read, decided and written under the
+  vault Web Lock (two frames asking at once get one code; a lock cannot interleave), only while unlocked;
+  removed by every lock path. A sender without a tab (none expected) has a record of its own (tab `-1`).
+- Known cost: a code served with under 3 s left is counted although the script does not fill it.

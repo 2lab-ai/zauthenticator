@@ -48,7 +48,7 @@ const POPUP = 'popup/popup.html';
 const PASSPHRASE = 'e2e autofill passphrase (test only)';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
 // .prd/03-autofill.md, "Cross-unit contract": session storage holds a subset of these keys.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind'];
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'autofillServed'];
 const OTP = 'https://otp.test';
 const EVIL = 'https://evil.test';
 const HOST = 'https://host.test';
@@ -95,32 +95,52 @@ const UNNAMED = 'input[inputmode="numeric"]:not([name]):not([id])';
 // field (no id or name: "tel" would name it for another number). Auto-fill must fill neither.
 const PINONLY_PATH = '/pinonly';
 const PINONLY_HTML = `<!doctype html><html><head>${HEAD}<title>PIN</title></head><body><form method="post" action="/submitted"><label>PIN <input name="pin" inputmode="numeric" maxlength="6"></label><label>Number <input type="tel" maxlength="8"></label><button>Go</button></form></body></html>`;
-// A sign-in step whose own script plays the site: the first Sign in rejects the code (the field is
-// emptied and "invalid" shown, as for an expired code), the second puts a new field in place of
-// the old one (a re-rendered form; the old one is kept as window.oldOtp), later ones only say what
-// they got. A type="button" outside any form: the page never navigates, so a code that comes back
-// can only come from the content script already running in it.
+// A sign-in step whose own script plays the site. Sign in turns the code down: with ?reject=empty
+// the field is emptied (as for an expired code), with ?reject=swap a new field is put in place of
+// the old one (a re-rendered form; the old one is kept as window.oldOtp); a later Sign in only says
+// what it got. Every input event on a code field is logged in window.inputs ({ value, trusted }).
+// A type="button" outside any form: the page never navigates, so a code that comes back can only
+// come from the content script already running in it.
 const SPA_PATH = '/spa-login';
 const SPA_HTML = `<!doctype html><html><head>${HEAD}<title>Sign in</title></head><body><label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label><button id="go" type="button">Sign in</button><p id="msg"></p><script>
+const reject = new URLSearchParams(location.search).get('reject');
+window.inputs = [];
+document.addEventListener('input', (e) => window.inputs.push({ value: e.target.value, trusted: e.isTrusted }), true);
 let tries = 0;
 document.getElementById('go').addEventListener('click', () => {
   tries += 1;
   const msg = document.getElementById('msg');
   const otp = document.getElementById('otp');
-  if (tries === 1) {
-    otp.value = '';
-    msg.textContent = 'invalid code (1)';
-  } else if (tries === 2) {
+  if (tries > 1) {
+    msg.textContent = 'got ' + otp.value;
+  } else if (reject === 'swap') {
     const next = document.createElement('input');
     next.id = 'otp';
     next.name = 'otp';
     next.autocomplete = 'one-time-code';
     window.oldOtp = otp;
     otp.replaceWith(next);
-    msg.textContent = 'invalid code (2)';
+    msg.textContent = 'invalid code';
   } else {
-    msg.textContent = 'got ' + otp.value;
+    otp.value = '';
+    msg.textContent = 'invalid code';
   }
+});
+</script></body></html>`;
+// A site that submits as soon as a whole code is typed and reloads the sign-in page when it turns
+// the code down. Every code it got is kept in localStorage under "submits:" + the ?run= value
+// ({ code, at }), so the list survives the reloads; after 8 it stops reloading (a run without
+// limits would otherwise loop).
+const AUTO_SUBMIT_PATH = '/auto-submit';
+const AUTO_SUBMIT_HTML = `<!doctype html><html><head>${HEAD}<title>Sign in</title></head><body><label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label><p id="msg"></p><script>
+const key = 'submits:' + new URLSearchParams(location.search).get('run');
+const submits = JSON.parse(localStorage.getItem(key) || '[]');
+document.getElementById('msg').textContent = submits.length + ' codes turned down';
+document.getElementById('otp').addEventListener('input', (e) => {
+  if (!/^[0-9]{6}$/.test(e.target.value)) return;
+  submits.push({ code: e.target.value, at: Date.now() });
+  localStorage.setItem(key, JSON.stringify(submits));
+  if (submits.length < 8) setTimeout(() => location.reload(), 200);
 });
 </script></body></html>`;
 
@@ -130,6 +150,7 @@ async function routeTestOrigins(context) {
     [MULTI_PATH, MULTI_HTML],
     [PINONLY_PATH, PINONLY_HTML],
     [SPA_PATH, SPA_HTML],
+    [AUTO_SUBMIT_PATH, AUTO_SUBMIT_HTML],
   ]);
   for (const origin of TEST_ORIGINS) {
     await context.route(`${origin}/**`, (route) => {
@@ -406,6 +427,34 @@ export async function runAutofill({ rep, extensionDir }) {
     await unlockIn(st.popup);
     if (!(await poll(async () => (await storage()).session.vaultKey))) throw new Error('did not unlock');
     await waitState(st.popup, 'list');
+  }
+
+  // Asks the worker for a code from the content script's own isolated world in the top frame of
+  // `page`, as content/autofill.js does (the worker sees the same tab, origin and extension id).
+  // → the reply, or { error }
+  async function askAsContentScript(page) {
+    const cdp = await st.context.newCDPSession(page);
+    try {
+      const { frameTree } = await cdp.send('Page.getFrameTree');
+      const worlds = [];
+      cdp.on('Runtime.executionContextCreated', ({ context }) => {
+        if (context.auxData?.type === 'isolated' && context.origin === st.ownOrigin && context.auxData.frameId === frameTree.frame.id) worlds.push(context.id);
+      });
+      await cdp.send('Runtime.enable');
+      await sleep(200);
+      if (worlds.length === 0) return { error: 'no content-script world in the top frame' };
+      const { result } = await cdp.send('Runtime.evaluate', {
+        contextId: worlds.at(-1),
+        awaitPromise: true,
+        returnByValue: true,
+        expression: "chrome.runtime.sendMessage({ type: 'autofill-code' })",
+      });
+      return result.value ?? { error: result.description ?? 'no value' };
+    } catch (err) {
+      return { error: err.message.split('\n')[0] };
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
   }
 
   // For a failure report: the frame's URL, its field, and the extension's isolated worlds in it
@@ -729,88 +778,134 @@ export async function runAutofill({ rep, extensionDir }) {
     await rec.page.close();
   });
 
-  // "Fresh code and retry after a failed attempt" (.prd/03-autofill.md): three tabs of the
-  // /spa-login page, all filled by the content script within one period. Tab 1 is the site turning
-  // codes down: the first Sign in empties the field, which then gets the next period's code (never
-  // the one just turned down); the second Sign in re-renders the field, which gets the current code
-  // at once. Tab 2 is the user typing a code of their own over the filled one: it is kept across
-  // the period end. Tab 3 is left alone: when the period ends its code becomes the next one.
+  // "Fresh code and retry after a failed attempt" (.prd/03-autofill.md): five tabs of the
+  // /spa-login page, all filled by the content script within one period with the same code. The
+  // site turns that code down in two of them: one empties the field, one puts a new field in its
+  // place; either field then gets the next period's code once it starts, never the code turned
+  // down (each page's input log has it once). One tab is left alone: when the period ends its code
+  // becomes the next one. In one the user types a code of their own over the filled one, in one the
+  // user deletes it: across the same period end the first keeps the user's code, the second stays
+  // empty.
   step('s3-retry-after-reject', ['s2-bind-allow'], async () => {
-    const url = `${OTP}${SPA_PATH}`;
+    const page = (reject) => `${OTP}${SPA_PATH}?reject=${reject}`;
     const periodMs = ACCOUNT_A.period * 1000;
     const recs = [];
-    // The #otp field of `page` once it holds the reference code of the moment it is read.
+    const value = (rec) => rec.page.evaluate(() => document.querySelector('#otp')?.value ?? null);
+    const inputs = (rec) => rec.page.evaluate(() => window.inputs);
+    // The #otp field of `rec` once it holds the reference code of the moment it is read.
     // → { ok, value } (value: what it held last)
-    const currentCode = async (page, timeout) => {
-      let value = null;
+    const currentCode = async (rec, timeout) => {
+      let last = null;
       const ok = await poll(
         async () => {
-          value = await page.evaluate(() => document.querySelector('#otp')?.value ?? null);
-          return value === codeAt(ACCOUNT_A, Date.now());
+          last = await value(rec);
+          return last === codeAt(ACCOUNT_A, Date.now());
         },
         timeout,
         100,
       );
-      return { ok: Boolean(ok), value };
+      return { ok: Boolean(ok), value: last };
     };
+    // How many input events carried `code` in the page's own log.
+    const carried = async (rec, code) => (await inputs(rec)).filter((i) => i.value === code).length;
     try {
-      await waitForFreshPeriod(ACCOUNT_A, 12000);
-      for (let i = 0; i < 3; i++) recs.push(await openTestPage(url));
-      const [site, user, idle] = recs;
-      const filled = [await currentCode(site.page, 10000), await currentCode(user.page, 10000), await currentCode(idle.page, 10000)];
+      await waitForFreshPeriod(ACCOUNT_A, 15000);
+      for (const reject of ['empty', 'swap', 'empty', 'empty', 'empty']) recs.push(await openTestPage(page(reject)));
+      const [emptied, swapped, idle, user, cleared] = recs;
+      const filled = [];
+      for (const rec of recs) filled.push(await currentCode(rec, 10000));
       // The end of the period the tabs were filled in, and that period's code.
       const boundary = (Math.floor(Date.now() / periodMs) + 1) * periodMs;
       const first = codeAt(ACCOUNT_A, boundary - 1);
       if (!filled.every((f) => f.ok && f.value === first)) {
-        throw new Error(`precondition: ${url} not auto-filled in one period: tabs ${JSON.stringify(filled.map((f) => f.value))}, reference ${first}`);
+        throw new Error(`precondition: /spa-login not auto-filled in one period: tabs ${JSON.stringify(filled.map((f) => f.value))}, reference ${first}`);
       }
-      // Tab 2: the user's own code over the filled one, in one edit (no empty field in between).
+      // The user's own code over the filled one, in one edit (no empty field in between).
       const typed = ['111111', '222222', '333333'].find((v) => v !== first && v !== codeAt(ACCOUNT_A, boundary));
       await user.page.fill('#otp', typed);
+      // The user deletes the filled code in one edit (select all, Delete): a trusted input event
+      // that leaves the field empty, as the page emptying it would, but by the user.
+      await cleared.page.fill('#otp', '');
+      const userEdit = (await inputs(cleared)).filter((i) => i.trusted);
+      if (!userEdit.some((i) => i.value === '')) throw new Error(`precondition: no trusted input event emptied the field: ${JSON.stringify(await inputs(cleared))}`);
 
-      // Tab 1, first Sign in: the site empties the field and says the code was invalid. The same
-      // code would be turned down again: the field gets the next period's code once it starts.
-      await site.page.click('#go');
+      // Sign in turns the code down in two tabs.
+      await emptied.page.click('#go');
+      await swapped.page.click('#go');
       const leftAtReject = boundary - Date.now();
-      const rejected = await site.page.evaluate(() => document.querySelector('#msg').textContent);
-      const refilled = await currentCode(site.page, boundary - Date.now() + 5000);
-      rep.check(
-        's3-retry-after-reject',
-        refilled.ok && refilled.value !== first && Date.now() > boundary && rejected === 'invalid code (1)' && stayed(site, url),
-        `${url}: filled ${first}; Sign in ${leftAtReject} ms before the period end -> ${JSON.stringify(rejected)} and the field emptied by the page; then the field ${JSON.stringify(refilled.value)} (the code turned down was ${first}), reference ${codeAt(ACCOUNT_A, Date.now())}, ${Date.now() - boundary} ms after the period end; page still at ${site.page.url()}, ${site.navigations} top-frame navigation(s)`,
-      );
-
-      // Second Sign in: the site puts a new field in place of the old one.
-      await site.page.click('#go');
-      const swapped = await site.page.evaluate(() => ({
+      const swap = await swapped.page.evaluate(() => ({
         msg: document.querySelector('#msg').textContent,
         oldInPage: window.oldOtp ? window.oldOtp.isConnected : null,
         isNew: document.querySelector('#otp') !== window.oldOtp,
       }));
-      const second = await currentCode(site.page, 5000);
+      const refill = await currentCode(emptied, boundary - Date.now() + 5000);
+      rep.check(
+        's3-retry-after-reject',
+        refill.ok && refill.value !== first && Date.now() > boundary && (await carried(emptied, first)) === 1 && stayed(emptied, page('empty')),
+        `${page('empty')}: filled ${first}; Sign in ${leftAtReject} ms before the period end -> the field emptied by the page; then ${JSON.stringify(refill.value)} (the code turned down was ${first}, carried by ${await carried(emptied, first)} input event(s)), reference ${codeAt(ACCOUNT_A, Date.now())}, ${Date.now() - boundary} ms after the period end; ${emptied.navigations} top-frame navigation(s)`,
+      );
+      const second = await currentCode(swapped, Math.max(0, boundary - Date.now()) + 5000);
+      const swapLog = await inputs(swapped);
       rep.check(
         's3-retry-new-field',
-        second.ok && swapped.msg === 'invalid code (2)' && swapped.oldInPage === false && swapped.isNew && stayed(site, url),
-        `second Sign in -> ${JSON.stringify(swapped.msg)}, old field in the page ${swapped.oldInPage}, a new field ${swapped.isNew}; the new field ${JSON.stringify(second.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}; ${site.navigations} top-frame navigation(s)`,
+        second.ok && second.value !== first && Date.now() > boundary && swap.oldInPage === false && swap.isNew && (await carried(swapped, first)) === 1 && new Set(swapLog.map((i) => i.value)).size === swapLog.length && stayed(swapped, page('swap')),
+        `${page('swap')}: filled ${first}; Sign in -> ${JSON.stringify(swap.msg)}, old field in the page ${swap.oldInPage}, a new field ${swap.isNew}; the new field ${JSON.stringify(second.value)} (never ${first}), reference ${codeAt(ACCOUNT_A, Date.now())}, ${Date.now() - boundary} ms after the period end; input events ${JSON.stringify(swapLog)}`,
       );
 
-      // Tab 3, across the same period end: its untouched code became the next one.
+      // Across the same period end, the other three tabs.
       if (Date.now() < boundary + 1000) await sleep(boundary + 1000 - Date.now());
-      const fresh = await currentCode(idle.page, 5000);
+      const fresh = await currentCode(idle, 5000);
       rep.check(
         's3-keep-fresh',
-        fresh.ok && fresh.value !== first && Date.now() > boundary && stayed(idle, url),
+        fresh.ok && fresh.value !== first && Date.now() > boundary && stayed(idle, page('empty')),
         `untouched tab, period ended at ${new Date(boundary).toISOString()}: the field held ${first}, now ${JSON.stringify(fresh.value)}, reference ${codeAt(ACCOUNT_A, Date.now())}`,
       );
-      // Tab 2, across the same period end: still the user's own code.
-      const kept = await user.page.evaluate(() => document.querySelector('#otp').value);
+      const kept = await value(user);
       rep.check(
         's3-user-value-kept',
-        kept === typed && Date.now() > boundary + 1000 && stayed(user, url),
-        `tab 2 auto-filled ${first}, then the user typed ${JSON.stringify(typed)}; ${Date.now() - boundary} ms after the period end the field holds ${JSON.stringify(kept)}`,
+        kept === typed && Date.now() > boundary + 1000 && stayed(user, page('empty')),
+        `auto-filled ${first}, then the user typed ${JSON.stringify(typed)}; ${Date.now() - boundary} ms after the period end the field holds ${JSON.stringify(kept)}`,
+      );
+      const empty = await value(cleared);
+      rep.check(
+        's3-user-cleared-stays-empty',
+        empty === '' && Date.now() > boundary + 1000 && (await carried(cleared, codeAt(ACCOUNT_A, boundary))) === 0 && stayed(cleared, page('empty')),
+        `auto-filled ${first}, then the user deleted it (trusted input events ${JSON.stringify(userEdit)}); ${Date.now() - boundary} ms after the period end the field holds ${JSON.stringify(empty)}; input events ${JSON.stringify(await inputs(cleared))}`,
       );
     } finally {
       for (const rec of recs) await rec.page.close();
+    }
+  });
+
+  // Bounds across page loads (.prd/03-autofill.md, "Fresh code and retry after a failed attempt"):
+  // a site that submits as soon as a code is typed and reloads its sign-in page when it turns the
+  // code down starts the content script afresh every time. The worker gives that tab each code once
+  // and 3 codes in any 5 minutes: the page gets 3 different codes, each the current one when it got
+  // it (one per period: about a minute), and then no more. Proof of the stop without waiting a
+  // fourth period: a request from the content script's own world in that tab then gets
+  // { code: null } outright, not a wait.
+  step('s3-reload-budget', ['s2-bind-allow'], async () => {
+    // At least 5 s left: a first code with under 3 s left would be counted but not filled.
+    await waitForFreshPeriod(ACCOUNT_A, 5000);
+    const run = Date.now();
+    const url = `${OTP}${AUTO_SUBMIT_PATH}?run=${run}`;
+    const rec = await openTestPage(url);
+    try {
+      const submits = async () => (await rec.page.evaluate((k) => JSON.parse(localStorage.getItem(k) || '[]'), `submits:${run}`).catch(() => null)) ?? [];
+      const three = await poll(async () => ((await submits()).length >= 3 ? true : null), 70000, 500);
+      // A fourth load asks right after the third reload; give it time to.
+      await sleep(3000);
+      const got = await submits();
+      const reply = await askAsContentScript(rec.page);
+      const codes = got.map((x) => x.code);
+      const current = got.every((x) => x.code === codeAt(ACCOUNT_A, x.at));
+      rep.check(
+        's3-reload-budget',
+        Boolean(three) && got.length === 3 && new Set(codes).size === 3 && current && reply?.code === null && !Object.hasOwn(reply, 'validMs'),
+        `${url} reloads after every code: it got ${JSON.stringify(got.map((x) => ({ code: x.code, reference: codeAt(ACCOUNT_A, x.at), at: new Date(x.at).toISOString() })))} (must be 3, all different, each the reference at its time) over ${got.length ? got.at(-1).at - got[0].at : 0} ms; then a request from the content script's world -> ${JSON.stringify(reply)} (must be { code: null }, no validMs)`,
+      );
+    } finally {
+      await rec.page.close();
     }
   });
 

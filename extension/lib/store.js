@@ -1,19 +1,24 @@
-// chrome.storage glue. Exactly four keys exist, and nothing else is ever written:
-//   chrome.storage.local.vault           the encrypted vault record (ciphertext + KDF params)
-//   chrome.storage.session.vaultKey      the unlocked raw AES key, base64
-//   chrome.storage.session.lastActiveAt  last user activity while unlocked (ms since the epoch)
-//   chrome.storage.session.pendingBind   { origin, accountId, at }: the auto-fill offer the
-//                                        service worker makes after a menu fill (lib/bindings.js)
+// chrome.storage glue. Exactly five keys exist, and nothing else is ever written:
+//   chrome.storage.local.vault             the encrypted vault record (ciphertext + KDF params)
+//   chrome.storage.session.vaultKey        the unlocked raw AES key, base64
+//   chrome.storage.session.lastActiveAt    last user activity while unlocked (ms since the epoch)
+//   chrome.storage.session.pendingBind     { origin, accountId, at }: the auto-fill offer the
+//                                          service worker makes after a menu fill (lib/bindings.js)
+//   chrome.storage.session.autofillServed  [{ tab, origin, account, counter, at }]: which code
+//                                          counter of which account the service worker gave the
+//                                          auto-fill script in each tab and origin in the last
+//                                          5 minutes (lib/autofill-worker.js); never a code
 // Session storage lives in memory only, is cleared when the browser session ends, and is readable
 // from trusted extension contexts only (never from content scripts; pinSessionAccess()). It
-// holds a subset of its three keys: the key and its activity time are written together, an
-// offer is written only while a key is stored (popup/session.js checks under the vault lock),
-// and clearSessionKey() removes all three in one call, so none of them outlives a lock.
+// holds a subset of its four keys: the key and its activity time are written together, an offer
+// and the auto-fill record are written only while a key is stored (checked under the vault lock),
+// and clearSessionKey() removes all four in one call, so none of them outlives a lock.
 
 export const RECORD_KEY = 'vault';
 export const SESSION_KEY = 'vaultKey';
 export const ACTIVE_KEY = 'lastActiveAt';
 export const PENDING_KEY = 'pendingBind';
+export const SERVED_KEY = 'autofillServed';
 
 export async function getRecord() {
   const items = await chrome.storage.local.get(RECORD_KEY);
@@ -56,9 +61,10 @@ export async function pinSessionAccess() {
   }
 }
 
-// Every lock goes through here: the key, its activity time and any pending offer go together.
+// Every lock goes through here: the key, its activity time, any pending offer and the auto-fill
+// record go together.
 export async function clearSessionKey() {
-  await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, PENDING_KEY]);
+  await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, PENDING_KEY, SERVED_KEY]);
 }
 
 // → ms timestamp of the last recorded activity, or null when none is stored.
@@ -95,6 +101,35 @@ export async function getPendingBind() {
 
 export async function clearPendingBind() {
   await chrome.storage.session.remove(PENDING_KEY);
+}
+
+// → the auto-fill record: its well-formed entries { tab, origin, account, counter, at } (tab an
+// integer, origin and account non-empty strings, counter a non-negative integer, at finite), []
+// when none is stored.
+export async function getServed() {
+  const items = await chrome.storage.session.get(SERVED_KEY);
+  const list = items[SERVED_KEY];
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (e) =>
+      e !== null &&
+      typeof e === 'object' &&
+      Number.isInteger(e.tab) &&
+      typeof e.origin === 'string' &&
+      e.origin !== '' &&
+      typeof e.account === 'string' &&
+      e.account !== '' &&
+      Number.isSafeInteger(e.counter) &&
+      e.counter >= 0 &&
+      Number.isFinite(e.at),
+  ).map(({ tab, origin, account, counter, at }) => ({ tab, origin, account, counter, at }));
+}
+
+// Replaces the auto-fill record. lib/autofill-worker.js writes it under the vault lock while a key
+// is stored, so a lock removes it like the other session keys.
+export async function setServed(list) {
+  if (!Array.isArray(list)) throw new TypeError('setServed: expected an array');
+  await chrome.storage.session.set({ [SERVED_KEY]: list });
 }
 
 // Calls back with { record?, locked? } when another extension page (popup or tab) changes
