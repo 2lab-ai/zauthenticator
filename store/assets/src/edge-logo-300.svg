@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+  <!-- Edge Add-ons extension logo, 300x300 (1:1). icon.svg at 288 px (x3 of its 96-unit grid,
+       so the z's straight edges stay on whole pixels) with 6 px transparent padding. -->
+  <image href="icon.svg" x="6" y="6" width="288" height="288"/>
+</svg>
