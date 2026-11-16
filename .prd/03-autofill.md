@@ -8,8 +8,8 @@ Status: planned (2026-11-16) — implemented after v0.1 ships (user ordering, qu
 
 ## Behaviour
 
-1. Right-click inside an OTP input on any page → context menu "zauthentificator" lists the
-   vault's accounts (issuer · label). Locked vault → one item "Unlock zauthentificator…" that opens
+1. Right-click inside an OTP input on any page → context menu "zauthenticator" lists the
+   vault's accounts (issuer · label). Locked vault → one item "Unlock zauthenticator…" that opens
    the popup page in a tab.
 2. Choosing an account fills the current code into that input (and dispatches `input`/`change`
    events so frameworks see it) and **remembers the binding** `origin → account id`.

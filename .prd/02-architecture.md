@@ -19,7 +19,7 @@ extension/                 # the unpacked extension root (Load unpacked → this
 test/*.test.mjs            # node --test (pure modules only)
 e2e/popup.e2e.mjs          # Playwright: real Chromium + unpacked extension
 scripts/check-policy.mjs   # static trust gate (npm run check)
-scripts/build-zip.mjs      # dist/zauthentificator-<version>.zip
+scripts/build-zip.mjs      # dist/zauthenticator-<version>.zip
 .github/workflows/ci.yml   # test + check on push/PR
 .github/workflows/release.yml  # tag v* → zip → GitHub release
 ```
@@ -64,7 +64,7 @@ only, cleared when the browser session ends or on Lock).
 ```json
 {
   "manifest_version": 3,
-  "name": "zauthentificator",
+  "name": "zauthenticator",
   "version": "0.1.0",
   "permissions": ["storage", "activeTab"],
   "action": { "default_popup": "popup/popup.html" },

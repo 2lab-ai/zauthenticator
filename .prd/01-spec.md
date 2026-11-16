@@ -1,4 +1,4 @@
-# 01 — Spec: zauthentificator v0.1
+# 01 — Spec: zauthenticator v0.1
 
 Status: planned (2026-11-16)
 
@@ -47,4 +47,4 @@ are **mechanically checkable** from the repository:
 | A7 | From the extension page, attempt `fetch('https://example.com')` | Blocked by CSP (console reports a CSP violation; no request leaves). |
 | A8 | Export backup → delete account → import backup with passphrase | The account comes back with the same code. |
 | A9 | Scan QR from current tab (page shows an otpauth QR) | Account is added with the issuer/label from the QR. |
-| A10 | Push tag `v0.1.0` | GitHub Actions publishes a release with `zauthentificator-0.1.0.zip`. |
+| A10 | Push tag `v0.1.0` | GitHub Actions publishes a release with `zauthenticator-0.1.0.zip`. |
