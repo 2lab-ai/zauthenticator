@@ -1,7 +1,9 @@
 # Security policy
 
-zauthenticator holds TOTP secrets, so it is built to keep a few guarantees: no network, no
-remote or dynamic code, and encryption at rest. A break in any of them is a vulnerability.
+zauthenticator holds TOTP secrets, so it is built to keep a few guarantees: extension pages
+open no network connections and load no remote resources, the extension opens no pages other
+than its own, it runs no remote or dynamic code, and secrets are encrypted at rest. A break in
+any of them is a vulnerability.
 
 ## Reporting
 
@@ -28,6 +30,8 @@ Only the latest release is supported.
 - **Any network egress** from the extension: a request of any kind to any host, including
   through a CSP gap, a browser API that bypasses `connect-src`, or a navigation the extension
   triggers.
+- **Opening a page outside the extension**: a tab, window or navigation to anything other than
+  the extension's own pages, for example through a navigation sink that `npm run check` misses.
 - **Secret exposure**: a TOTP secret, the passphrase or the vault key that is written
   unencrypted to `chrome.storage.local` or `chrome.storage.sync`, included in an export, made
   readable outside the extension's trusted contexts, or recoverable from the stored record

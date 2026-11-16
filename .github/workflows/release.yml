@@ -1,27 +1,34 @@
 name: release
 
+# Tag v<version> → the tag must match extension/manifest.json, the full CI verification
+# (ci.yml: unit tests, trust gate and its self-test, Chromium e2e) must pass on the tagged
+# commit, and only then is the zip built and published. Only the publish job can write.
+# Actions are pinned by commit SHA; the comment names the release tag the SHA was resolved from.
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  tag-version:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
       - name: Tag must equal v + manifest version
+        id: version
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -30,24 +37,46 @@ jobs:
             echo "::error::tag $TAG does not match extension/manifest.json version $VERSION (expected v$VERSION)"
             exit 1
           fi
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - run: npm ci
+  verify:
+    needs: tag-version
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
-      - name: Unit tests
-        run: npm test
+  publish:
+    needs: [tag-version, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Trust gate
-        run: npm run check
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
 
       - name: Build zip
         run: node scripts/build-zip.mjs
+
+      - name: Zip contents equal extension/ at the tagged commit
+        env:
+          VERSION: ${{ needs.tag-version.outputs.version }}
+        run: |
+          mkdir "$RUNNER_TEMP/unzipped"
+          unzip -q "dist/zauthenticator-${VERSION}.zip" -d "$RUNNER_TEMP/unzipped"
+          diff -r extension "$RUNNER_TEMP/unzipped"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.tag-version.outputs.version }}
         run: |
           ZIP="dist/zauthenticator-${VERSION}.zip"
           SHA256=$(sha256sum "$ZIP" | cut -d ' ' -f 1)
