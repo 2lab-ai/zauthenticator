@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="560" viewBox="0 0 1400 560">
+  <!-- Marquee promo tile, 1400x560 (Chrome Web Store, optional; Edge Add-ons large promotional
+       tile, optional). Same elements as the small tile, laid out in a row. The tagline is
+       system-font text (see scripts/build-store-assets.mjs). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1400" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1c1d42"/>
+      <stop offset="1" stop-color="#0e0f22"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="277" cy="280" r="600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5470e0" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#5470e0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1400" height="560" fill="url(#bg)"/>
+  <rect width="1400" height="560" fill="url(#glow)"/>
+  <image href="icon.svg" x="173" y="176" width="208" height="208"/>
+  <!-- wordmark at 0.6: 785.21 x 87 px, x-height 60 px, baseline at 205 + 144 * 0.6 = 291.4 -->
+  <image href="wordmark.svg" x="441" y="205" width="785.21" height="87"/>
+  <text x="441" y="350" fill="#babde4" font-size="30" font-weight="500"
+        font-family="system-ui, -apple-system, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif"
+        letter-spacing="0.2">Open-source 2FA codes. Offline. Encrypted.</text>
+</svg>
