@@ -49,7 +49,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          ZIP="dist/zauthentificator-${VERSION}.zip"
+          ZIP="dist/zauthenticator-${VERSION}.zip"
           SHA256=$(sha256sum "$ZIP" | cut -d ' ' -f 1)
           {
             echo "Unzip, then load the folder with \"Load unpacked\" on chrome://extensions or edge://extensions (Developer mode). See the README."
@@ -57,9 +57,9 @@ jobs:
             echo "sha256:"
             echo
             echo '```'
-            echo "${SHA256}  zauthentificator-${VERSION}.zip"
+            echo "${SHA256}  zauthenticator-${VERSION}.zip"
             echo '```'
             echo
-            echo "Check it with \`sha256sum zauthentificator-${VERSION}.zip\` (macOS: \`shasum -a 256 zauthentificator-${VERSION}.zip\`)."
+            echo "Check it with \`sha256sum zauthenticator-${VERSION}.zip\` (macOS: \`shasum -a 256 zauthenticator-${VERSION}.zip\`)."
           } > "$RUNNER_TEMP/release-notes.md"
-          gh release create "$TAG" "$ZIP" --verify-tag --title "zauthentificator ${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md"
+          gh release create "$TAG" "$ZIP" --verify-tag --title "zauthenticator ${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md"

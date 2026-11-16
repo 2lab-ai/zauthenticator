@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds dist/zauthentificator-<version>.zip from the CONTENTS of extension/ (manifest.json at the
+// Builds dist/zauthenticator-<version>.zip from the CONTENTS of extension/ (manifest.json at the
 // zip root, ready for "Load unpacked" after unzipping) with the system `zip` CLI, then prints the
 // zip path and its sha256.
 //
@@ -46,7 +46,7 @@ function main(argv) {
   }
 
   fs.mkdirSync(opts.out, { recursive: true });
-  const zipPath = path.join(opts.out, `zauthentificator-${version}.zip`);
+  const zipPath = path.join(opts.out, `zauthenticator-${version}.zip`);
   fs.rmSync(zipPath, { force: true }); // zip -r would otherwise update an existing archive in place
 
   const zip = spawnSync('zip', ['-q', '-r', '-X', zipPath, '.', '-x', '*.DS_Store'], {

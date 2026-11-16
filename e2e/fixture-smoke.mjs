@@ -27,7 +27,7 @@ import {
 
 const MANIFEST = {
   manifest_version: 3,
-  name: 'zauthentificator-fixture',
+  name: 'zauthenticator-fixture',
   version: '0.0.1',
   permissions: ['storage', 'activeTab'],
   action: { default_popup: 'popup/popup.html' },

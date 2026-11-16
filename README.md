@@ -1,4 +1,4 @@
-# zauthentificator
+# zauthenticator
 
 An open-source TOTP (2FA code) authenticator for Chromium browsers such as Chrome and Edge
 (Manifest V3). It makes no network requests, runs no remote or dynamic code, and keeps your
@@ -11,11 +11,11 @@ read. It does not update itself.
 
 | Property | What it means | Verify it yourself |
 |---|---|---|
-| Zero network | The extension pages' CSP sets `connect-src 'none'`. The manifest has no host permissions. The source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `sendBeacon`. | Read `content_security_policy` in `extension/manifest.json`. Run `npm run check`. `npm run e2e` calls `fetch('https://example.com/')` from the extension page, expects a CSP block, and fails on any http(s) request made during the run. |
-| No remote or dynamic code | `script-src 'self'`, with no `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`. The source contains no `eval(`, `new Function`, inline `<script>` or `on*=` handlers. | `npm run check` |
+| Zero network | The extension pages' CSP sets `connect-src 'none'`. The manifest has no host permissions. The source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or WebRTC (`RTCPeerConnection`). | Read `content_security_policy` in `extension/manifest.json`. Run `npm run check`. `npm run e2e` calls `fetch('https://example.com/')` from the extension page, expects a CSP block, and fails on any http(s) request made during the run. |
+| No remote or dynamic code | `script-src 'self'`, with no `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`. The source contains no `eval(`, `new Function`, `importScripts`, string timers, `javascript:` URLs, inline `<script>` or `on*=` handlers. | `npm run check` |
 | Encrypted at rest | Secrets are stored only inside an AES-GCM-256 vault. Its key is derived from your passphrase with PBKDF2-SHA-256 (600,000 iterations). `chrome.storage.local` holds only `{ v, kdf, iv, ct }`. | `npm run e2e` reads `chrome.storage` and the exported backup. It fails if a test secret appears as base32 (either case), hex, base64, base64url, a byte list or a raw byte string. You can also inspect storage in DevTools on the popup page. |
-| Minimal permissions | `storage` and `activeTab` only. `activeTab` lets the extension capture the current tab for a QR scan, and only after you click the toolbar icon. | Read `permissions` in `extension/manifest.json`, or open the extension's Details page in the browser. `npm run check` fails on anything else. |
-| Pinned third-party code | The only third-party code is the QR decoder (jsQR), vendored and pinned by sha256. Its license ships next to it. | `cd extension/vendor && sha256sum -c SHA256SUMS` (on macOS: `shasum -a 256 -c SHA256SUMS`). `npm run check` verifies the same hashes. |
+| Minimal permissions | `storage` and `activeTab` only, with no optional or host permissions. `activeTab` lets the extension capture the current tab for a QR scan, and only after you click the toolbar icon. There is no background script, content script or web-accessible resource. | Read `extension/manifest.json`, or open the extension's Details page in the browser. `npm run check` fails on any other permission and on manifest keys such as `background`, `content_scripts` or `web_accessible_resources`. |
+| Pinned third-party code | The only third-party code is the QR decoder (jsQR), vendored and pinned by sha256. Its license ships next to it. | `cd extension/vendor && sha256sum -c SHA256SUMS` (on macOS: `shasum -a 256 -c SHA256SUMS`). `npm run check` verifies the same hashes and that every vendored `.js` has a `.LICENSE` beside it. |
 | Readable source | Plain ES modules. No bundler, minifier or runtime npm dependencies. | Browse `extension/`. |
 
 `npm run check` is the static trust gate (`scripts/check-policy.mjs`). It prints one
@@ -28,9 +28,9 @@ every push.
 
 **From a release (recommended)**
 
-1. Download `zauthentificator-<version>.zip` from the
-   [Releases](https://github.com/2lab-ai/zauthentificator/releases) page. Check its sha256
-   against the one in the release notes: `sha256sum zauthentificator-<version>.zip`.
+1. Download `zauthenticator-<version>.zip` from the
+   [Releases](https://github.com/2lab-ai/zauthenticator/releases) page. Check its sha256
+   against the one in the release notes: `sha256sum zauthenticator-<version>.zip`.
 2. Unzip it into a folder you will keep. The browser loads the extension from that folder.
 3. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
 4. Click **Load unpacked** and select the unzipped folder, the one that contains `manifest.json`.
@@ -38,7 +38,7 @@ every push.
 **From source**
 
 ```sh
-git clone https://github.com/2lab-ai/zauthentificator.git
+git clone https://github.com/2lab-ai/zauthenticator.git
 ```
 
 Then click **Load unpacked** and select the `extension/` folder.
@@ -91,7 +91,7 @@ npm run check                             # static trust gate
 node scripts/check-policy.mjs --self-test # proves the gate catches each violation
 npx playwright install chromium           # once, for the e2e browser
 npm run e2e                               # real Chromium + the unpacked extension (E2E_HEADLESS=1 for headless)
-npm run zip                               # dist/zauthentificator-<version>.zip and its sha256
+npm run zip                               # dist/zauthenticator-<version>.zip and its sha256
 ```
 
 `npm run e2e` drives the popup through its DOM contract. It compares the displayed codes with
@@ -114,7 +114,7 @@ release workflow tests, runs the gate, builds the zip and publishes it with its 
 
 ## 한국어 요약
 
-zauthentificator는 Chrome, Edge 같은 Chromium 브라우저용 오픈소스 TOTP(2단계 인증 코드)
+zauthenticator는 Chrome, Edge 같은 Chromium 브라우저용 오픈소스 TOTP(2단계 인증 코드)
 확장 프로그램입니다(Manifest V3). 아래 신뢰 속성은 모두 이 저장소에서 직접 확인할 수 있습니다.
 
 - **네트워크 없음**: CSP가 `connect-src 'none'`이고, 호스트 권한이 없으며, 소스에 네트워크 API가 없습니다. 확인 방법: `npm run check`, `npm run e2e`.

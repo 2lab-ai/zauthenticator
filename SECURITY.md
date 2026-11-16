@@ -1,13 +1,13 @@
 # Security policy
 
-zauthentificator holds TOTP secrets, so it is built to keep a few guarantees: no network, no
+zauthenticator holds TOTP secrets, so it is built to keep a few guarantees: no network, no
 remote or dynamic code, and encryption at rest. A break in any of them is a vulnerability.
 
 ## Reporting
 
 Report privately through GitHub's private vulnerability reporting. On the repository's
 **Security** tab, choose **Report a vulnerability**, or open
-<https://github.com/2lab-ai/zauthentificator/security/advisories/new>.
+<https://github.com/2lab-ai/zauthenticator/security/advisories/new>.
 
 Do not open a public issue or pull request for a vulnerability. Include the version or commit,
 the browser and its version, the steps to reproduce, and what you observed.

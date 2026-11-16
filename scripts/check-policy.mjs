@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Static trust gate for extension/ (npm run check). Rules: .prd/02-architecture.md "Trust gate".
+// Static trust gate for extension/ (npm run check). Rules: .prd/02-architecture.md "Trust gate",
+// tightened by MANIFEST_POLICY and the pattern lists below.
 //
 //   node scripts/check-policy.mjs                 # check ./extension
 //   node scripts/check-policy.mjs --ext <dir>     # check another extension dir
@@ -19,16 +20,32 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT), '..');
 
-const ALLOWED_PERMISSIONS = ['storage', 'activeTab'];
-const FORBIDDEN_KEYS = [
-  'host_permissions',
-  'optional_host_permissions',
-  'content_scripts',
-  'externally_connectable',
-  'update_url',
-  'key',
-];
-const HOMEPAGE_URL = 'https://github.com/2lab-ai/zauthentificator';
+// ---- Manifest policy (v0.1) -------------------------------------------------------------------
+// The one place that says what the manifest may ask for. Widening it is a deliberate, reviewed
+// change; the planned auto-fill feature (.prd/03-autofill.md) is expected to be the next one.
+const MANIFEST_POLICY = Object.freeze({
+  // `permissions` must be a subset of this list.
+  allowedPermissions: ['storage', 'activeTab'],
+  // Must be absent or an empty array; a non-empty value fails the `permissions` rule.
+  absentOrEmptyKeys: ['optional_permissions', 'optional_host_permissions'],
+  // Must be absent; any value, even an empty one, fails the `manifest-keys` rule.
+  forbiddenKeys: [
+    'host_permissions',
+    'content_scripts',
+    'externally_connectable',
+    'update_url',
+    'key',
+    'web_accessible_resources',
+    'background',
+    'sandbox',
+    'declarative_net_request',
+    'chrome_url_overrides',
+    'oauth2',
+  ],
+  // `homepage_url` may be absent or exactly this.
+  homepageUrl: 'https://github.com/2lab-ai/zauthenticator',
+});
+const HOMEPAGE_URL = MANIFEST_POLICY.homepageUrl;
 const ALLOWED_FILE_EXTENSIONS = ['.json', '.js', '.html', '.css', '.png', '.LICENSE'];
 const SUMS_PATH = 'vendor/SHA256SUMS';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -41,11 +58,16 @@ const NETWORK_PATTERNS = [
   ['WebSocket', /\bWebSocket\b/g],
   ['EventSource', /\bEventSource\b/g],
   ['sendBeacon', /\bsendBeacon\b/g],
+  ['RTCPeerConnection', /\bRTCPeerConnection\b/g],
+  ['webkitRTCPeerConnection', /\bwebkitRTCPeerConnection\b/g],
 ];
 const DYNAMIC_CODE_PATTERNS = [
   ['eval(', /\beval\s*\(/g],
   ['new Function', /\bnew\s+Function\b/g],
   ['importScripts', /\bimportScripts\b/g],
+  ['javascript: URL', /\bjavascript\s*:/gi],
+  // setTimeout/setInterval whose first argument is a string or template literal.
+  ['string timer', /\bset(?:Timeout|Interval)\s*\(\s*['"`]/g],
 ];
 const URL_PATTERNS = [
   ['http://', /http:\/\//gi],
@@ -67,6 +89,7 @@ const RULES = [
   'inline-script',
   'locales-url',
   'vendor-sums',
+  'vendor-license',
 ];
 
 // cwd-relative when inside cwd, absolute otherwise.
@@ -190,16 +213,30 @@ function runChecks(extDir) {
       manifest.manifest_version === 3 ? 'manifest_version 3' : `manifest_version ${manifest.manifest_version} (must be 3)`,
     );
 
+    const { allowedPermissions, absentOrEmptyKeys, forbiddenKeys } = MANIFEST_POLICY;
     const perms = manifest.permissions ?? [];
-    const badPerms = Array.isArray(perms) ? perms.filter((p) => !ALLOWED_PERMISSIONS.includes(p)) : ['(not an array)'];
+    const permProblems = [];
+    if (!Array.isArray(perms)) permProblems.push('permissions is not an array');
+    else {
+      const bad = perms.filter((p) => !allowedPermissions.includes(p));
+      if (bad.length) permProblems.push(`not allowed: ${bad.join(', ')}`);
+    }
+    for (const key of absentOrEmptyKeys) {
+      if (!Object.hasOwn(manifest, key)) continue;
+      const value = manifest[key];
+      if (!Array.isArray(value)) permProblems.push(`${key} is not an array`);
+      else if (value.length) permProblems.push(`${key} must be absent or empty, has: ${value.join(', ')}`);
+    }
     record(
       'permissions',
-      badPerms.length === 0,
-      badPerms.length === 0 ? `[${perms.join(', ')}] within {${ALLOWED_PERMISSIONS.join(', ')}}` : `not allowed: ${badPerms.join(', ')}`,
+      permProblems.length === 0,
+      permProblems.length === 0
+        ? `[${perms.join(', ')}] within {${allowedPermissions.join(', ')}}; ${absentOrEmptyKeys.join(', ')} absent or empty`
+        : permProblems.join('; '),
     );
 
-    const present = FORBIDDEN_KEYS.filter((k) => Object.hasOwn(manifest, k));
-    record('manifest-keys', present.length === 0, present.length === 0 ? `none of ${FORBIDDEN_KEYS.join(', ')}` : `forbidden: ${present.join(', ')}`);
+    const present = forbiddenKeys.filter((k) => Object.hasOwn(manifest, k));
+    record('manifest-keys', present.length === 0, present.length === 0 ? `none of ${forbiddenKeys.join(', ')}` : `forbidden: ${present.join(', ')}`);
 
     if (!Object.hasOwn(manifest, 'homepage_url')) record('homepage-url', true, 'absent');
     else
@@ -289,6 +326,18 @@ function runChecks(extDir) {
   const [sumsOk, sumsDetail] = checkVendorSums(extDir, files, label);
   record('vendor-sums', sumsOk, sumsDetail);
 
+  // Every vendored .js ships its license beside it: vendor/x.js -> vendor/x.LICENSE.
+  const present = new Set(files.map((f) => f.rel));
+  const vendoredJs = files.filter((f) => f.rel.startsWith('vendor/') && f.rel.endsWith('.js'));
+  const unlicensed = vendoredJs.filter((f) => !present.has(f.rel.replace(/\.js$/, '.LICENSE')));
+  record(
+    'vendor-license',
+    unlicensed.length === 0,
+    unlicensed.length === 0
+      ? `${vendoredJs.length} vendored .js files each have a sibling .LICENSE`
+      : unlicensed.map((f) => `${label(f.rel)} has no ${path.basename(f.rel, '.js')}.LICENSE beside it`).join('; '),
+  );
+
   return results;
 }
 
@@ -310,7 +359,7 @@ function cleanFixture() {
   return {
     manifest: {
       manifest_version: 3,
-      name: 'zauthentificator',
+      name: 'zauthenticator',
       version: '0.1.0',
       permissions: ['storage', 'activeTab'],
       action: { default_popup: 'popup/popup.html' },
@@ -333,7 +382,7 @@ function cleanFixture() {
       'vendor/jsQR.LICENSE': 'Apache License 2.0 (fixture)\n',
       'icons/16.png': ONE_PIXEL_PNG,
       'icons/128.png': ONE_PIXEL_PNG,
-      '_locales/en/messages.json': JSON.stringify({ name: { message: 'zauthentificator' } }),
+      '_locales/en/messages.json': JSON.stringify({ name: { message: 'zauthenticator' } }),
     },
     symlinks: {},
     sums: 'auto', // 'auto' = write correct sums for vendor/; a string = write it verbatim; null = no file
@@ -362,6 +411,21 @@ function writeFixture(dir, fx) {
     fs.writeFileSync(path.join(dir, SUMS_PATH), fx.sums);
   }
 }
+
+// A realistic value per forbidden key; presence alone must fail.
+const SAMPLE_KEY_VALUES = {
+  host_permissions: ['<all_urls>'],
+  content_scripts: [{ matches: ['<all_urls>'], js: ['lib/x.js'] }],
+  externally_connectable: { ids: ['*'] },
+  update_url: 'x',
+  key: 'x',
+  web_accessible_resources: [{ resources: ['popup/*'], matches: ['<all_urls>'] }],
+  background: { service_worker: 'lib/store.js', type: 'module' },
+  sandbox: { pages: ['popup/popup.html'] },
+  declarative_net_request: { rule_resources: [] },
+  chrome_url_overrides: { newtab: 'popup/popup.html' },
+  oauth2: { client_id: 'x', scopes: [] },
+};
 
 const setCsp = (policy) => (fx) => {
   fx.manifest.content_security_policy.extension_pages = policy;
@@ -396,13 +460,19 @@ const CASES = [
   ['bad-manifest-v2', (fx) => (fx.manifest.manifest_version = 2), ['manifest']],
   ['perm-tabs', (fx) => fx.manifest.permissions.push('tabs'), ['permissions']],
   ['perm-not-array', (fx) => (fx.manifest.permissions = 'storage'), ['permissions']],
-  ...FORBIDDEN_KEYS.map((key) => [
-    `key-${key}`,
+  ['perm-optional-permissions', (fx) => (fx.manifest.optional_permissions = ['downloads']), ['permissions']],
+  ['perm-optional-host-permissions', (fx) => (fx.manifest.optional_host_permissions = ['*://*/*']), ['permissions']],
+  ['perm-optional-not-array', (fx) => (fx.manifest.optional_permissions = 'tabs'), ['permissions']],
+  [
+    'ok-optional-permissions-empty',
     (fx) => {
-      fx.manifest[key] = key === 'key' || key === 'update_url' ? 'x' : key === 'externally_connectable' ? { ids: ['*'] } : [];
+      fx.manifest.optional_permissions = [];
+      fx.manifest.optional_host_permissions = [];
     },
-    ['manifest-keys'],
-  ]),
+    [],
+  ],
+  ...MANIFEST_POLICY.forbiddenKeys.map((key) => [`key-${key}`, (fx) => (fx.manifest[key] = SAMPLE_KEY_VALUES[key] ?? []), ['manifest-keys']]),
+  ['key-empty-host-permissions', (fx) => (fx.manifest.host_permissions = []), ['manifest-keys']],
   ['homepage-other-host', (fx) => (fx.manifest.homepage_url = 'https://example.com/'), ['homepage-url']],
   ['homepage-trailing-slash', (fx) => (fx.manifest.homepage_url = `${HOMEPAGE_URL}/`), ['homepage-url']],
   ['homepage-http', (fx) => (fx.manifest.homepage_url = HOMEPAGE_URL.replace('https:', 'http:')), ['homepage-url']],
@@ -437,6 +507,21 @@ const CASES = [
   ['dyn-eval', addJs('lib/x.js', "export const v = eval('1 + 1');\n"), ['dynamic-code']],
   ['dyn-new-function', addJs('lib/x.js', "export const v = new Function('return 1');\n"), ['dynamic-code']],
   ['dyn-importscripts', addJs('lib/x.js', "importScripts('a.js');\n"), ['dynamic-code']],
+  ['dyn-javascript-url-js', addJs('lib/x.js', "link.href = 'javascript:void 0';\n"), ['dynamic-code']],
+  [
+    'dyn-javascript-url-html',
+    (fx) => (fx.files['popup/popup.html'] = fx.files['popup/popup.html'].replace('</body>', '<a href="JavaScript:void 0">x</a>\n</body>')),
+    ['dynamic-code'],
+  ],
+  ['dyn-string-settimeout', addJs('lib/x.js', "setTimeout('tick()', 10);\n"), ['dynamic-code']],
+  ['dyn-template-setinterval', addJs('lib/x.js', 'window.setInterval(\n  `tick()`, 1000);\n'), ['dynamic-code']],
+  [
+    'ok-function-timers-and-mime',
+    addJs('lib/timers.js', "// served as text/javascript\nconst t = setTimeout(() => tick(), 10);\nsetInterval(tick, 1000);\nclearTimeout(t);\nfunction tick() {}\n"),
+    [],
+  ],
+  ['net-rtcpeerconnection', addJs('lib/x.js', 'export const pc = new RTCPeerConnection();\n'), ['network-api']],
+  ['net-webkitrtcpeerconnection', addJs('lib/x.js', 'export const pc = new webkitRTCPeerConnection({});\n'), ['network-api']],
   ['url-https-js', addJs('lib/x.js', "export const u = 'https://example.com/';\n"), ['remote-url']],
   [
     'url-http-html',
@@ -468,18 +553,35 @@ const CASES = [
   [
     'vendor-unlisted-file',
     (fx) => {
-      fx.tamper = ['vendor/extra.js', 'export {};\n'];
+      fx.tamper = ['vendor/extra.json', '{}\n'];
     },
     ['vendor-sums'],
   ],
   [
     'vendor-listed-missing',
     (fx) => {
-      fx.tamper = ['vendor/jsQR.LICENSE', null];
+      fx.tamper = ['vendor/jsQR.js', null];
     },
     ['vendor-sums'],
   ],
   ['vendor-no-sums', (fx) => (fx.sums = null), ['vendor-sums']],
+  ['vendor-js-without-license', addJs('vendor/extra.js', 'export default 1;\n'), ['vendor-license']],
+  [
+    'vendor-license-misnamed',
+    (fx) => {
+      delete fx.files['vendor/jsQR.LICENSE'];
+      fx.files['vendor/jsQR.js.LICENSE'] = 'Apache License 2.0 (fixture)\n';
+    },
+    ['vendor-license'],
+  ],
+  [
+    'ok-vendor-nested-license',
+    (fx) => {
+      fx.files['vendor/sub/lib.js'] = 'export default 2;\n';
+      fx.files['vendor/sub/lib.LICENSE'] = 'MIT (fixture)\n';
+    },
+    [],
+  ],
   [
     'vendor-malformed-sums',
     (fx) => {
