@@ -92,8 +92,14 @@ export function createListView() {
     el.dataset.id = text(account.id);
     // Issuer and label come from scanned QR codes / pasted links: text only, never markup.
     // text() also turns a non-string field of a hand-edited vault into '' instead of throwing.
-    setText(el.querySelector('.issuer'), text(account.issuer));
-    setText(el.querySelector('.label'), text(account.label));
+    const issuerEl = el.querySelector('.issuer');
+    const labelEl = el.querySelector('.label');
+    setText(issuerEl, text(account.issuer));
+    setText(labelEl, text(account.label));
+    // A long name is cut off with an ellipsis; the tooltip shows all of it.
+    issuerEl.title = text(account.issuer);
+    labelEl.title = text(account.label);
+    paintAvatar(el.querySelector('.avatar'), account);
     const main = el.querySelector('.account-main');
     main.title = t('copyHint');
     const deleteEl = el.querySelector('.delete');
@@ -102,9 +108,9 @@ export function createListView() {
       account,
       el,
       deleteEl,
+      deleteTextEl: el.querySelector('.delete-text'),
       codeEl: el.querySelector('.code'),
       remainingEl: el.querySelector('.remaining'),
-      barEl: el.querySelector('.countdown'),
       counter: null,
       copiedTimer: 0,
       confirmTimer: 0,
@@ -145,8 +151,8 @@ export function createListView() {
       return;
     }
     row.remainingEl.textContent = String(remaining);
-    row.barEl.max = period;
-    row.barEl.value = remaining;
+    // The countdown ring (popup.css) drains with the share of the period left.
+    row.el.style.setProperty('--progress', String(remaining / period));
     row.el.classList.toggle('expiring', remaining <= EXPIRING_SECONDS);
   }
 
@@ -202,7 +208,7 @@ export function createListView() {
     if (!row.el.classList.contains('confirming')) {
       disarmAll();
       row.el.classList.add('confirming');
-      row.deleteEl.textContent = t('deleteConfirm');
+      row.deleteTextEl.textContent = t('deleteConfirm');
       row.deleteEl.setAttribute('aria-label', t('deleteConfirmLabel', displayName(row.account)));
       row.confirmTimer = setTimeout(() => disarm(row), CONFIRM_MS);
       return;
@@ -234,7 +240,7 @@ export function createListView() {
   function disarm(row) {
     clearTimeout(row.confirmTimer);
     row.el.classList.remove('confirming');
-    row.deleteEl.textContent = t('deleteBtn');
+    row.deleteTextEl.textContent = t('deleteBtn');
     row.deleteEl.setAttribute('aria-label', t('deleteLabel', displayName(row.account)));
   }
 
@@ -297,4 +303,28 @@ export function createListView() {
   }
 
   return { render, start, stop, clear, notice, focus };
+}
+
+// The monogram in front of an account: the first letter of its issuer (or label) on a tint whose
+// hue comes from a hash of that name, so an account keeps its colour. Text and a CSS variable only.
+export function paintAvatar(el, account) {
+  const name = text(account.issuer).trim() || text(account.label).trim();
+  const first = [...name][0] ?? '';
+  setText(el, first.toLocaleUpperCase());
+  el.style.setProperty('--avatar-hue', String(hueOf(name.toLocaleLowerCase())));
+}
+
+export function clearAvatar(el) {
+  setText(el, '');
+  el.style.removeProperty('--avatar-hue');
+}
+
+// FNV-1a over the code points → 0..359.
+function hueOf(name) {
+  let hash = 0x811c9dc5;
+  for (const ch of name) {
+    hash ^= ch.codePointAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % 360;
 }

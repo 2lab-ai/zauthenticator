@@ -128,9 +128,14 @@ export function createSettingsView({ isTab, done }) {
         const row = bindingTemplate.content.firstElementChild.cloneNode(true);
         row.dataset.origin = binding.origin;
         // Origins and account names are shown as text only, never markup.
-        setText(row.querySelector('.binding-origin'), binding.origin);
+        const originEl = row.querySelector('.binding-origin');
+        const accountEl = row.querySelector('.binding-account');
+        setText(originEl, binding.origin);
         const account = accounts.get(binding.accountId);
-        setText(row.querySelector('.binding-account'), account ? accountTitle(account) : t('bindingNoAccount'));
+        setText(accountEl, account ? accountTitle(account) : t('bindingNoAccount'));
+        // Cut off with an ellipsis when long; the tooltip shows all of it.
+        originEl.title = originEl.textContent;
+        accountEl.title = accountEl.textContent;
         row.querySelector('.binding-remove').setAttribute('aria-label', t('bindingRemoveLabel', binding.origin));
         return row;
       });

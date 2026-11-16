@@ -12,21 +12,21 @@
 <body data-state="loading">
   <header class="topbar">
     <div class="brand">
-      <img class="brand-icon" src="../icons/32.png" alt="" width="20" height="20">
+      <img class="brand-mark" src="../icons/32.png" srcset="../icons/32.png 1x, ../icons/48.png 2x" alt="" width="20" height="20">
       <span class="brand-name" data-i18n="extName">zauthenticator</span>
     </div>
     <div class="topbar-actions">
       <button type="button" id="edit-btn" class="icon-btn" aria-pressed="false" data-i18n-label="editBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5h3.75L18.6 9.15a2.3 2.3 0 0 0 0-3.25l-.5-.5a2.3 2.3 0 0 0-3.25 0L4.5 15.75z"/><path d="M13.25 7l3.75 3.75"/></svg>
       </button>
       <button type="button" id="add-btn" class="icon-btn" data-i18n-label="addBtn">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
       <button type="button" id="settings-btn" class="icon-btn" data-i18n-label="settingsBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h9M19 8h1M4 16h1M11 16h9"/><circle cx="16" cy="8" r="2.5"/><circle cx="8" cy="16" r="2.5"/></svg>
       </button>
       <button type="button" id="lock-btn" class="icon-btn" data-i18n-label="lockBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
       </button>
     </div>
   </header>
@@ -39,109 +39,158 @@
     </section>
 
     <section class="view gate" data-view="setup" aria-labelledby="setup-title">
-      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
-      <h1 id="setup-title" data-i18n="setupTitle">Create a passphrase</h1>
-      <p class="lead" data-i18n="setupIntro">Your accounts are encrypted with this passphrase and stay on this device.</p>
-      <p class="warning" data-i18n="setupWarning">It cannot be recovered. If you forget it, your accounts cannot be decrypted.</p>
-      <form id="setup-form" class="stack" novalidate>
-        <div class="field">
-          <label for="setup-pass" data-i18n="setupPassLabel">Passphrase (at least 8 characters)</label>
-          <input id="setup-pass" type="password" autocomplete="new-password" minlength="8" required>
-        </div>
-        <div class="field">
-          <label for="setup-pass2" data-i18n="setupPass2Label">Confirm passphrase</label>
-          <input id="setup-pass2" type="password" autocomplete="new-password" minlength="8" required>
-        </div>
-        <p id="setup-error" class="error" role="alert"></p>
-        <button type="submit" id="setup-submit" class="btn primary block" data-i18n="setupSubmit">Create vault</button>
-      </form>
+      <div class="gate-card">
+        <img class="gate-mark" src="../icons/48.png" srcset="../icons/48.png 1x, ../icons/128.png 2x" alt="" width="48" height="48">
+        <h1 id="setup-title" data-i18n="setupTitle">Create a passphrase</h1>
+        <p class="lead" data-i18n="setupIntro">Your accounts are encrypted with this passphrase and stay on this device.</p>
+        <p class="warning" data-i18n="setupWarning">It cannot be recovered. If you forget it, your accounts cannot be decrypted.</p>
+        <form id="setup-form" class="stack" novalidate>
+          <div class="field">
+            <label for="setup-pass" data-i18n="setupPassLabel">Passphrase (at least 8 characters)</label>
+            <input id="setup-pass" type="password" autocomplete="new-password" minlength="8" required>
+          </div>
+          <div class="field">
+            <label for="setup-pass2" data-i18n="setupPass2Label">Confirm passphrase</label>
+            <input id="setup-pass2" type="password" autocomplete="new-password" minlength="8" required>
+          </div>
+          <p id="setup-error" class="error" role="alert"></p>
+          <button type="submit" id="setup-submit" class="btn primary block" data-i18n="setupSubmit">Create vault</button>
+        </form>
+      </div>
     </section>
 
     <section class="view gate" data-view="locked" aria-labelledby="unlock-title">
-      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/></svg>
-      <h1 id="unlock-title" data-i18n="unlockTitle">Locked</h1>
-      <p class="lead" data-i18n="unlockIntro">Enter your passphrase to show your codes.</p>
-      <form id="unlock-form" class="stack" novalidate>
-        <div class="field">
-          <label for="unlock-pass" data-i18n="unlockPassLabel">Passphrase</label>
-          <input id="unlock-pass" type="password" autocomplete="current-password" required>
-        </div>
-        <p id="unlock-error" class="error" role="alert"></p>
-        <button type="submit" id="unlock-submit" class="btn primary block" data-i18n="unlockSubmit">Unlock</button>
-      </form>
+      <div class="gate-card">
+        <img class="gate-mark" src="../icons/48.png" srcset="../icons/48.png 1x, ../icons/128.png 2x" alt="" width="48" height="48">
+        <h1 id="unlock-title" data-i18n="unlockTitle">Locked</h1>
+        <p class="lead" data-i18n="unlockIntro">Enter your passphrase to show your codes.</p>
+        <form id="unlock-form" class="stack" novalidate>
+          <div class="field">
+            <label for="unlock-pass" data-i18n="unlockPassLabel">Passphrase</label>
+            <input id="unlock-pass" type="password" autocomplete="current-password" required>
+          </div>
+          <p id="unlock-error" class="error" role="alert"></p>
+          <button type="submit" id="unlock-submit" class="btn primary block" data-i18n="unlockSubmit">Unlock</button>
+        </form>
+      </div>
     </section>
 
     <section class="view gate" data-view="bind" aria-labelledby="bind-title">
-      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="3"/><path d="M7 12h2M11 12h2M15 12h2"/><path d="M12 3v2M12 19v2"/></svg>
-      <h1 id="bind-title" data-i18n="bindTitle">Fill codes automatically?</h1>
-      <p class="lead" data-i18n="bindIntro">From now on, this account's code is filled in on this site whenever zauthenticator is unlocked.</p>
-      <div class="bind-card">
-        <p class="bind-term" data-i18n="bindSiteLabel">Site</p>
-        <p id="bind-origin" class="bind-origin"></p>
-        <p class="bind-term" data-i18n="bindAccountLabel">Account</p>
-        <p id="bind-account" class="bind-account"></p>
-      </div>
-      <p id="bind-hint" class="hint" data-i18n="bindPermissionHint">Your browser then asks you to allow access to this site only.</p>
-      <p id="bind-error" class="error" role="alert"></p>
-      <div class="bind-actions">
-        <button type="button" id="bind-cancel" class="btn" data-i18n="bindCancel">Not now</button>
-        <button type="button" id="bind-allow" class="btn primary" data-i18n="bindAllow">Allow</button>
+      <div class="gate-card bind">
+        <span class="bind-badge" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="3"/><path d="M7.5 12h.01M12 12h.01M16.5 12h.01"/></svg>
+        </span>
+        <h1 id="bind-title" data-i18n="bindTitle">Fill codes automatically?</h1>
+        <p class="lead" data-i18n="bindIntro">From now on, this account's code is filled in on this site whenever zauthenticator is unlocked.</p>
+        <div class="bind-card">
+          <p class="bind-term" data-i18n="bindSiteLabel">Site</p>
+          <p class="bind-site">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+            <span id="bind-origin" class="bind-origin"></span>
+          </p>
+          <p class="bind-term" data-i18n="bindAccountLabel">Account</p>
+          <div class="bind-account-row">
+            <span id="bind-avatar" class="avatar" aria-hidden="true"></span>
+            <p id="bind-account" class="bind-account"></p>
+          </div>
+        </div>
+        <p id="bind-hint" class="hint bind-hint" data-i18n="bindPermissionHint">Your browser then asks you to allow access to this site only.</p>
+        <p id="bind-error" class="error" role="alert"></p>
+        <div class="bind-actions">
+          <button type="button" id="bind-cancel" class="btn" data-i18n="bindCancel">Not now</button>
+          <button type="button" id="bind-allow" class="btn primary" data-i18n="bindAllow">Allow</button>
+        </div>
       </div>
     </section>
 
     <section class="view" data-view="list" aria-label="Accounts" data-i18n-label="accountsLabel">
       <div class="search-row">
-        <input id="search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="searchPlaceholder" data-i18n-label="searchLabel">
+        <div class="search-field">
+          <svg class="icon search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+          <input id="search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="searchPlaceholder" data-i18n-label="searchLabel">
+        </div>
       </div>
       <p id="list-notice" class="notice" role="status"></p>
       <ul id="accounts" class="accounts"></ul>
-      <p id="no-matches" class="muted center" data-i18n="noMatches" hidden>No matching accounts.</p>
+      <p id="no-matches" class="no-matches" data-i18n="noMatches" hidden>No matching accounts.</p>
       <div id="empty" class="empty" hidden>
-        <svg class="empty-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 12h2M11 12h2M15 12h2"/></svg>
+        <svg class="empty-art" viewBox="0 0 96 80" aria-hidden="true">
+          <rect class="art-card back" x="20" y="8" width="56" height="36" rx="9"/>
+          <rect class="art-card" x="10" y="22" width="76" height="44" rx="11"/>
+          <rect class="art-digit" x="22" y="39" width="9" height="10" rx="2.5"/>
+          <rect class="art-digit" x="34" y="39" width="9" height="10" rx="2.5"/>
+          <rect class="art-digit" x="46" y="39" width="9" height="10" rx="2.5"/>
+          <circle class="art-ring-track" cx="71" cy="44" r="6"/>
+          <path class="art-ring" d="M71 38a6 6 0 1 1-6 6"/>
+          <circle class="art-plus-bg" cx="80" cy="64" r="10"/>
+          <path class="art-plus" d="M80 59.5v9M75.5 64h9"/>
+        </svg>
         <h2 data-i18n="emptyTitle">No accounts yet</h2>
-        <p class="muted" data-i18n="emptyHint">Add one by scanning a QR code or pasting an otpauth:// link.</p>
-        <button type="button" id="empty-add-btn" class="btn primary" data-i18n="addAccountBtn">Add account</button>
+        <p class="empty-hint" data-i18n="emptyHint">Add one by scanning a QR code or pasting an otpauth:// link.</p>
+        <button type="button" id="empty-add-btn" class="btn primary">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span data-i18n="addAccountBtn">Add account</span>
+        </button>
       </div>
     </section>
 
     <section class="view" data-view="add" aria-labelledby="add-title">
       <div class="view-header">
         <button type="button" id="add-cancel" class="icon-btn" data-i18n-label="cancelBtn">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>
         </button>
         <h1 id="add-title" data-i18n="addTitle">Add account</h1>
       </div>
       <p id="add-error" class="error" role="alert"></p>
       <p id="add-status" class="status" role="status"></p>
 
-      <div class="scan-row">
-        <button type="button" id="scan-tab-btn" class="tile">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/></svg>
-          <span class="tile-title" data-i18n="scanTabBtn">Scan QR on this page</span>
-          <span class="tile-hint" data-i18n="scanTabHint">Reads the visible part of the current tab</span>
+      <div class="card options">
+        <button type="button" id="scan-tab-btn" class="option">
+          <span class="option-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2"/><path d="M8 12h8"/></svg>
+          </span>
+          <span class="option-text">
+            <span class="option-title" data-i18n="scanTabBtn">Scan QR on this page</span>
+            <span class="option-hint" data-i18n="scanTabHint">Reads the visible part of the current tab</span>
+          </span>
+          <svg class="icon chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg>
         </button>
-        <button type="button" id="scan-file-btn" class="tile">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20 15l-4.5-4.5L7 19"/></svg>
-          <span class="tile-title" data-i18n="scanFileBtn">QR from an image</span>
-          <span class="tile-hint" data-i18n="scanFileHint">Screenshot or saved picture</span>
+        <button type="button" id="scan-file-btn" class="option">
+          <span class="option-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4.5" width="16" height="15" rx="2.5"/><circle cx="9" cy="9.5" r="1.5"/><path d="M20 15l-4.25-4.25L7 19.5"/></svg>
+          </span>
+          <span class="option-text">
+            <span class="option-title" data-i18n="scanFileBtn">QR from an image</span>
+            <span class="option-hint" data-i18n="scanFileHint">Screenshot or saved picture</span>
+          </span>
+          <svg class="icon chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg>
         </button>
       </div>
 
       <div id="drop-zone" class="drop-zone">
+        <svg class="icon drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4.5M7.5 9L12 4.5 16.5 9"/><path d="M4.5 14.5v2a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3v-2"/></svg>
         <p data-i18n="dropHint">Drop an image here, paste one, or choose a file.</p>
         <label class="visually-hidden" for="scan-file-input" data-i18n="chooseImageLabel">Image with a QR code</label>
         <input id="scan-file-input" type="file" accept="image/*" multiple>
       </div>
 
-      <section class="section" aria-labelledby="uri-title">
-        <h2 id="uri-title"><label for="add-uri" data-i18n="uriTitle">Paste otpauth:// links</label></h2>
+      <section class="card section" aria-labelledby="uri-title">
+        <h2 id="uri-title" class="card-title">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-.75.75"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l.75-.75"/></svg>
+          <label for="add-uri" data-i18n="uriTitle">Paste otpauth:// links</label>
+        </h2>
         <textarea id="add-uri" rows="3" spellcheck="false" autocomplete="off" data-i18n-placeholder="uriPlaceholder"></textarea>
-        <p class="hint" data-i18n="uriHint">One link per line.</p>
-        <button type="button" id="add-uri-submit" class="btn" data-i18n="uriSubmit">Add from links</button>
+        <div class="card-foot">
+          <p class="hint" data-i18n="uriHint">One link per line.</p>
+          <button type="button" id="add-uri-submit" class="btn" data-i18n="uriSubmit">Add from links</button>
+        </div>
       </section>
 
-      <section class="section" aria-labelledby="manual-title">
-        <h2 id="manual-title" data-i18n="manualTitle">Enter a setup key</h2>
+      <section class="card section" aria-labelledby="manual-title">
+        <h2 id="manual-title" class="card-title">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="15.5" r="4"/><path d="M11.4 12.6L19.5 4.5M16 8l2.5 2.5M14 10l1.75 1.75"/></svg>
+          <span data-i18n="manualTitle">Enter a setup key</span>
+        </h2>
         <form id="manual-form" novalidate>
           <div class="field">
             <label for="manual-issuer" data-i18n="manualIssuer">Service</label>
@@ -156,7 +205,10 @@
             <input id="manual-secret" class="mono" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" data-i18n-placeholder="manualSecretPlaceholder">
           </div>
           <details class="advanced">
-            <summary data-i18n="advanced">Advanced</summary>
+            <summary>
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg>
+              <span data-i18n="advanced">Advanced</span>
+            </summary>
             <div class="advanced-grid">
               <div class="field">
                 <label for="manual-algorithm" data-i18n="algorithm">Algorithm</label>
@@ -191,54 +243,81 @@
     <section class="view" data-view="settings" aria-labelledby="settings-title">
       <div class="view-header">
         <button type="button" id="settings-back" class="icon-btn" data-i18n-label="backBtn">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>
         </button>
         <h1 id="settings-title" data-i18n="settingsTitle">Settings</h1>
       </div>
 
-      <section class="section first" aria-labelledby="backup-title">
-        <h2 id="backup-title" data-i18n="backupTitle">Backup</h2>
-        <p class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
-        <button type="button" id="export-btn" class="btn" data-i18n="exportBtn">Export encrypted backup</button>
-        <p id="export-status" class="status" role="status"></p>
-      </section>
-
-      <section class="section" aria-labelledby="import-title">
-        <h2 id="import-title" data-i18n="importTitle">Import a backup</h2>
-        <form id="import-form" novalidate>
-          <div class="field">
-            <label for="import-file" data-i18n="importFileLabel">Backup file</label>
-            <input id="import-file" type="file" accept=".json,application/json">
+      <section class="group" aria-labelledby="backup-title">
+        <h2 id="backup-title" class="group-title" data-i18n="backupTitle">Backup</h2>
+        <div class="card">
+          <div class="card-row">
+            <span class="row-icon" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 4.5V15M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 15v1.5a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V15"/></svg>
+            </span>
+            <div class="row-body">
+              <p class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
+              <button type="button" id="export-btn" class="btn" data-i18n="exportBtn">Export encrypted backup</button>
+              <p id="export-status" class="status" role="status"></p>
+            </div>
           </div>
-          <div class="field">
-            <label for="import-pass" data-i18n="importPassLabel">Passphrase of that backup</label>
-            <input id="import-pass" type="password" autocomplete="off">
-          </div>
-          <p id="import-error" class="error" role="alert"></p>
-          <button type="submit" id="import-submit" class="btn" data-i18n="importSubmit">Import</button>
-        </form>
-        <div id="open-tab-row" class="open-tab-row">
-          <p class="hint" data-i18n="openTabHint">If choosing a file closes this popup, open this page in a tab.</p>
-          <button type="button" id="open-tab-btn" class="btn" data-i18n="openTabBtn">Open in a tab</button>
+          <section class="card-row" aria-labelledby="import-title">
+            <span class="row-icon" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 15V4.5M7.5 9L12 4.5 16.5 9"/><path d="M4.5 15v1.5a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V15"/></svg>
+            </span>
+            <div class="row-body">
+              <h3 id="import-title" class="row-title" data-i18n="importTitle">Import a backup</h3>
+              <form id="import-form" novalidate>
+                <div class="field">
+                  <label for="import-file" data-i18n="importFileLabel">Backup file</label>
+                  <input id="import-file" type="file" accept=".json,application/json">
+                </div>
+                <div class="field">
+                  <label for="import-pass" data-i18n="importPassLabel">Passphrase of that backup</label>
+                  <input id="import-pass" type="password" autocomplete="off">
+                </div>
+                <p id="import-error" class="error" role="alert"></p>
+                <button type="submit" id="import-submit" class="btn" data-i18n="importSubmit">Import</button>
+              </form>
+              <div id="open-tab-row" class="open-tab-row">
+                <p class="hint" data-i18n="openTabHint">If choosing a file closes this popup, open this page in a tab.</p>
+                <button type="button" id="open-tab-btn" class="btn" data-i18n="openTabBtn">Open in a tab</button>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="bindings-title">
-        <h2 id="bindings-title" data-i18n="bindingsTitle">Auto-fill sites</h2>
-        <p class="hint" data-i18n="bindingsHint">Codes are filled in automatically on these sites while zauthenticator is unlocked.</p>
-        <ul id="bindings" class="bindings"></ul>
-        <p id="bindings-empty" class="hint" data-i18n="bindingsEmpty">No sites yet. Right-click a code field on a site and choose an account to add one.</p>
-        <p id="bindings-error" class="error" role="alert"></p>
+      <section class="group" aria-labelledby="bindings-title">
+        <h2 id="bindings-title" class="group-title" data-i18n="bindingsTitle">Auto-fill sites</h2>
+        <div class="card">
+          <p class="hint card-intro" data-i18n="bindingsHint">Codes are filled in automatically on these sites while zauthenticator is unlocked.</p>
+          <ul id="bindings" class="bindings"></ul>
+          <p id="bindings-empty" class="hint bindings-empty" data-i18n="bindingsEmpty">No sites yet. Right-click a code field on a site and choose an account to add one.</p>
+          <p id="bindings-error" class="error" role="alert"></p>
+        </div>
       </section>
 
-      <section class="section" aria-labelledby="about-title">
-        <h2 id="about-title" data-i18n="aboutTitle">About</h2>
-        <p class="hint" data-i18n="securitySummary">No network access and no telemetry. Secrets are encrypted at rest and never leave this device.</p>
-        <p class="hint" data-i18n="autoLockHint">Locks after 15 minutes without use and when the browser quits.</p>
-        <p class="hint" data-i18n="clockHint">Codes rejected? They are computed from your computer's clock. Make sure it is set automatically.</p>
-        <p class="about-row">
-          <span id="version" class="muted"></span>
-        </p>
+      <section class="group" aria-labelledby="about-title">
+        <h2 id="about-title" class="group-title" data-i18n="aboutTitle">About</h2>
+        <div class="card">
+          <div class="about-item">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 2.75v5.25c0 4.4-2.9 7.6-7 9-4.1-1.4-7-4.6-7-9V6.25z"/><path d="M9 12l2.25 2.25L15.5 10"/></svg>
+            <p data-i18n="securitySummary">No network access and no telemetry. Secrets are encrypted at rest and never leave this device.</p>
+          </div>
+          <div class="about-item">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+            <p data-i18n="autoLockHint">Locks after 15 minutes without use and when the browser quits.</p>
+          </div>
+          <div class="about-item">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+            <p data-i18n="clockHint">Codes rejected? They are computed from your computer's clock. Make sure it is set automatically.</p>
+          </div>
+          <p class="about-row">
+            <span class="about-name" data-i18n="extName">zauthenticator</span>
+            <span id="version" class="version"></span>
+          </p>
+        </div>
       </section>
     </section>
   </main>
@@ -246,23 +325,33 @@
   <template id="account-template">
     <li class="account">
       <button type="button" class="account-main">
+        <span class="avatar" aria-hidden="true"></span>
         <span class="account-text">
           <span class="issuer"></span>
           <span class="label"></span>
+          <span class="copied-badge">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+            <span data-i18n="copied">Copied</span>
+          </span>
         </span>
         <span class="code" data-code=""></span>
         <span class="timer">
+          <svg class="ring" viewBox="0 0 28 28" aria-hidden="true"><circle class="ring-track" cx="14" cy="14" r="12"/><circle class="ring-value" cx="14" cy="14" r="12" pathLength="100"/></svg>
           <span class="remaining"></span>
-          <progress class="countdown" max="30" value="30" aria-hidden="true"></progress>
         </span>
-        <span class="copied-badge" data-i18n="copied">Copied</span>
       </button>
-      <button type="button" class="delete" data-i18n="deleteBtn">Delete</button>
+      <button type="button" class="delete">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V5.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7"/><path d="M6.5 7l.8 11.1a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9L17.5 7"/><path d="M10.25 11v5M13.75 11v5"/></svg>
+        <span class="delete-text" data-i18n="deleteBtn">Delete</span>
+      </button>
     </li>
   </template>
 
   <template id="binding-template">
     <li class="binding">
+      <span class="binding-icon" aria-hidden="true">
+        <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.4 2.3 3.5 5.1 3.5 8.5s-1.1 6.2-3.5 8.5c-2.4-2.3-3.5-5.1-3.5-8.5s1.1-6.2 3.5-8.5z"/></svg>
+      </span>
       <span class="binding-text">
         <span class="binding-origin"></span>
         <span class="binding-account"></span>

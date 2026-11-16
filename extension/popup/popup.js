@@ -8,7 +8,7 @@ import { normalizeOrigin } from '../lib/bindings.js';
 import * as session from './session.js';
 import { localize, t, uiLang } from './i18n.js';
 import { $, setText, withBusy, reason, clearAnnouncement } from './ui.js';
-import { createListView } from './list.js';
+import { createListView, paintAvatar, clearAvatar } from './list.js';
 import { createAddView, summary } from './add.js';
 import { createSettingsView, accountTitle } from './settings.js';
 
@@ -395,6 +395,7 @@ async function reconcile() {
 function createBindView() {
   const originEl = $('#bind-origin');
   const accountEl = $('#bind-account');
+  const avatarEl = $('#bind-avatar');
   const hintEl = $('#bind-hint');
   const errorEl = $('#bind-error');
   const allowBtn = $('#bind-allow');
@@ -442,6 +443,7 @@ function createBindView() {
     offer = { origin, accountId: account.id, at: pending.at };
     setText(originEl, origin);
     setText(accountEl, accountTitle(account));
+    paintAvatar(avatarEl, account);
     showReplaced(origin, account.id);
     return true;
   }
@@ -564,6 +566,7 @@ function createBindView() {
     readOffer = null;
     setText(originEl, '');
     setText(accountEl, '');
+    clearAvatar(avatarEl);
     setText(replacesEl, '');
     replacesEl.hidden = true;
     setText(errorEl, '');
