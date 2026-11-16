@@ -1170,8 +1170,8 @@ function selfTest() {
       `NAV_WRAPPER_SOURCE sha256 ${fixtureNav} ${fixtureNav === MANIFEST_POLICY.navWrapperSha256 ? '==' : '!='} navWrapperSha256`,
     );
 
-    // A case may also name the reason: a pattern every failing rule's detail must match, so a
-    // fixture that fails for some other reason (a missing file, say) does not count.
+    // A case may also name the reason: a pattern at least one failing rule's detail must match,
+    // so a fixture that fails for some other reason (a missing file, say) does not count.
     for (const [name, mutate, expected, reason] of CASES) {
       const dir = path.join(root, name);
       buildCase(dir, mutate);
