@@ -86,7 +86,7 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
    `autocomplete="one-time-code"`; or name/id/aria-label/placeholder matching
    `/(otp|totp|2fa|mfa|one.?time|verification|auth(entication)?.?code|security.?code)/i`; or
    `inputmode="numeric"`/`type="tel"|"number"` with `maxlength` 6–8; or a run of 6–8 sibling
-   single-character inputs (split boxes). Watches DOM changes up to 60 s for late fields.
+   single-character inputs (split boxes). Looks again on DOM changes, on `resize`/`load`/`pageshow`/`visibilitychange`, and every 500 ms, for up to 60 s (an iframe can start with a 0x0 viewport); asks once per field.
 3. Flow: script → `chrome.runtime.sendMessage({type:'autofill-code'})` → worker validates sender
    (rules above) → `vault.open` → binding → account → `totp` → `{code}` → script sets value(s) +
    `input`/`change` events, once per field per page load.
