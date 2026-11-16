@@ -28,7 +28,7 @@
   /* Accent as text: #5e6ad2 is 4.4:1 on the surface grey, this one 5.4:1. */
   --accent-text: #4f5bc4;
   --accent-soft: #eef0fb;
-  --focus-halo: rgb(94 106 210 / 24%);
+  --focus-halo: rgb(94 106 210 / 22%);
 
   --danger: #ce2c31;
   --danger-text: #c0292e;
@@ -69,7 +69,7 @@
     /* #5e6ad2 is 4.2:1 on #08090a; this one 7.5:1. */
     --accent-text: #8f98f2;
     --accent-soft: #191b33;
-    --focus-halo: rgb(94 106 210 / 38%);
+    --focus-halo: rgb(94 106 210 / 20%);
 
     --danger: #ce2c31;
     --danger-text: #f2555a;
@@ -379,9 +379,9 @@ select:hover {
   border-color: color-mix(in srgb, var(--muted) 45%, var(--hairline-strong));
 }
 
-/* Text fields: a 2px accent edge (the border plus a 1px ring) with a soft halo instead of an offset
-   outline, which reads as two rings around a bordered field (and the search field is focused every
-   time the popup opens). File inputs have no border and keep the global outline. */
+/* Text fields: a 1px accent border (at least 3:1 against every surface it sits on) and a soft halo,
+   not an offset outline, which reads as a heavy double border around a bordered field (the search
+   field is focused every time the popup opens). File inputs have no border and keep the outline. */
 input[type="text"]:focus-visible,
 input[type="password"]:focus-visible,
 input[type="search"]:focus-visible,
@@ -389,7 +389,7 @@ textarea:focus-visible,
 select:focus-visible {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--focus-halo);
+  box-shadow: 0 0 0 3px var(--focus-halo);
 }
 
 select {
