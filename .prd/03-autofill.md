@@ -53,13 +53,14 @@ Status: planned (2026-11-16) — decided contract for v0.2.0; workstream [v0-2-a
 ### S1 — Menu fill + bind offer
 1. Entry: `contextMenus.onClicked({menuItemId:'acct:<id>', frameId, frameUrl, pageUrl}, tab)`.
 2. Input: `menuItemId` must be `acct:<id>` of a current account; `tab.id` present.
-3. Flow: worker → `idleOrLocked()` (store.getSessionKey + getLastActive; stale → clear key, treat as
-   locked) → `vault.open(key, record)` → account by id → `totp(account, Date.now())` → code →
-   `chrome.scripting.executeScript({target:{tabId, frameIds:[frameId]}, func: fillFocused, args:[code]})`
-   (activeTab from the menu click) → `store.touch()`.
-   `origin = new URL(frameUrl ?? pageUrl).origin`; if `https:` and no binding for it → session
-   `pendingBind = {origin, accountId, at}` → `nav.openBindWindow()` (popup window,
-   `popup/popup.html#bind`).
+3. Flow: worker → `session.readUnlocked({touch: true})` (under the vault Web Lock; stale → clears
+   the session keys and returns null) → account by id → `totp(account, Date.now())` → code →
+   `expected = new URL(frameId === 0 ? pageUrl : frameUrl).origin` (a subframe without `frameUrl`
+   → stop) → `chrome.scripting.executeScript({target:{tabId, frameIds:[frameId]}, func: fillFocused,
+   args:[code, expected]})` (activeTab from the menu click); `fillFocused` writes nothing unless
+   `location.origin === expected` at injection time.
+   If the fill succeeded and `normalizeOrigin(expected)` is an unbound https origin →
+   `session.setPendingBind({origin, accountId})` (true only while unlocked) → `nav.openOwnWindow('bind')`.
 4. Side effects: page field value = code; session `lastActiveAt` refreshed; session `pendingBind`.
 5. Errors: locked/idle → open unlock window instead, no fill; account missing → rebuild menu, no
    fill; executeScript rejects (e.g. restricted page) → no binding offer.
