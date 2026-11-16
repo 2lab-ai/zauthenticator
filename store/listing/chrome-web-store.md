@@ -57,7 +57,7 @@ Features
 - Add an account by scanning a QR code on the current page, from a QR image, from otpauth:// links, or by typing the setup key.
 - Click a code to copy it. A countdown shows when the next code starts.
 - Fill a code into a site: right-click the code field and choose the account.
-- Optional auto-fill: allow a site once, and on later visits the code field is filled for you while zauthenticator is unlocked. Until you submit, an expiring code is replaced with the new one (at most twice), and if the site rejects the code a fresh one is filled once; the same code is never filled twice, and a site gets at most 3 codes per tab in 5 minutes. Auto-fill stops as soon as you type or delete in the field, leave the page, or lock, and it never submits a form.
+- Optional auto-fill: allow a site once, and on later visits the code field is filled for you while zauthenticator is unlocked. Until you submit, an expiring code is replaced with the new one once, and if the site rejects the code a fresh one is filled once; the same code is never filled twice, and a site gets at most 3 codes per tab in 5 minutes. Auto-fill stops as soon as you type or delete in the field, leave the page, or lock, and it never submits a form.
 - Export and import an encrypted backup.
 - Locks when you click Lock, after 15 minutes without use, and when the browser quits.
 - English and Korean.
@@ -86,7 +86,7 @@ zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 
 - 지금 보고 있는 페이지의 QR 코드, QR 이미지, otpauth:// 링크, 설정 키 직접 입력 중 편한 방법으로 계정을 추가해요.
 - 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
 - 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 계정을 고르면 코드가 입력돼요.
-- 원하면 자동 입력도 돼요. 사이트를 한 번 허용해 두면 다음부터는 잠금이 풀려 있는 동안 코드 입력란을 자동으로 채워요. 입력한 코드가 제출 전에 만료되면 새 코드로 바꾸고(최대 두 번), 사이트가 코드를 거부하면 새 코드로 한 번 다시 채워요. 같은 코드를 두 번 넣지 않고, 한 탭에서 한 사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 페이지를 떠나면, 잠기면 바로 멈춰요. 폼을 제출하지는 않아요.
+- 원하면 자동 입력도 돼요. 사이트를 한 번 허용해 두면 다음부터는 잠금이 풀려 있는 동안 코드 입력란을 자동으로 채워요. 입력한 코드가 제출 전에 만료되면 새 코드로 한 번 바꾸고, 사이트가 코드를 거부하면 새 코드로 한 번 다시 채워요. 같은 코드를 두 번 넣지 않고, 한 탭에서 한 사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 페이지를 떠나면, 잠기면 바로 멈춰요. 폼을 제출하지는 않아요.
 - 암호화된 백업을 내보내고 가져올 수 있어요.
 - 잠그기 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 종료하면 잠겨요.
 - 한국어와 영어를 지원해요.
