@@ -12,7 +12,7 @@
 //   store/assets/screenshots/1-codes.png     1280x800  the account list, one code in its last seconds
 //   store/assets/screenshots/2-autofill.png  1280x800  a sign-in page whose code field auto-fill filled
 //   store/assets/screenshots/3-bind.png      1280x800  the "Fill codes automatically?" window
-//   store/assets/screenshots/4-add.png       1280x800  the Add account view
+//   store/assets/screenshots/4-add.png       1280x800  the Add account view, scrolled so no text is cut
 //   store/assets/screenshots/5-settings.png  1280x800  Settings, scrolled to the auto-fill sites
 //   docs/images/popup-list.png               the list capture at 2x, no frame
 //   docs/images/popup-autofill-bind.png      the bind window capture at 2x
@@ -323,10 +323,73 @@ async function settle(page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
-// The page's <body> box (CSS px) as an opaque capture at the page's device scale.
+// Runs in the page: what #main shows, in its scroll content's coordinates (CSS px). atoms are the
+// boxes nothing may cut: one per line of every text node, and every input, textarea, select,
+// button and svg icon. → { atoms: [[top, bottom], ...], view, max, scroll }
+function mainLayout() {
+  const main = document.querySelector('#main');
+  const origin = main.getBoundingClientRect().top - main.scrollTop;
+  const boxes = [];
+  const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.textContent.trim()) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    for (const rect of range.getClientRects()) boxes.push({ rect, what: node.textContent.trim().slice(0, 40) });
+  }
+  for (const el of main.querySelectorAll('input, textarea, select, button, svg')) {
+    boxes.push({ rect: el.getBoundingClientRect(), what: `<${el.localName}${el.id ? `#${el.id}` : ''}>` });
+  }
+  return {
+    atoms: boxes
+      .filter(({ rect }) => rect.width > 0 && rect.height > 0)
+      .map(({ rect, what }) => ({ top: rect.top - origin, bottom: rect.bottom - origin, what })),
+    view: main.clientHeight,
+    max: main.scrollHeight - main.clientHeight,
+    scroll: main.scrollTop,
+  };
+}
+
+// The atoms an edge of #main's visible part cuts at scroll offset s: an atom across an edge, or
+// within EDGE_MARGIN of it. The top edge counts only when scrolled, the bottom one only when more
+// content lies below.
+const EDGE_MARGIN = 4;
+function cutAt(layout, s) {
+  const edges = [];
+  if (s > 0) edges.push(s);
+  if (s < layout.max) edges.push(s + layout.view);
+  return layout.atoms.filter((a) => edges.some((e) => a.top < e + EDGE_MARGIN && a.bottom > e - EDGE_MARGIN));
+}
+
+// Scrolls #main to a clean offset (no atom cut): the first one from `from` towards `towards`
+// (+1 down, -1 up, in 1 px steps), or with `center` the middle of the run of clean offsets that
+// starts there, so both edges sit mid-gap. → the offset
+async function scrollClean(page, { from, towards, center = false, what }) {
+  const layout = await page.evaluate(mainLayout);
+  const clean = (s) => s >= 0 && s <= layout.max && cutAt(layout, s).length === 0;
+  let first = Math.max(0, Math.min(layout.max, from));
+  while (first >= 0 && first <= layout.max && !clean(first)) first += towards;
+  if (!clean(first)) throw new Error(`${what}: no scroll offset leaves both edges clear`);
+  let last = first;
+  while (clean(last + towards)) last += towards;
+  const offset = center ? Math.round((first + last) / 2) : first;
+  await page.evaluate((s) => {
+    document.querySelector('#main').scrollTop = s;
+  }, offset);
+  return offset;
+}
+
+// The page's <body> box (CSS px) as an opaque capture at the page's device scale. Throws when
+// the top or bottom edge of #main's visible part cuts a line of text or a control.
 // → { css: { width, height }, png }
-async function captureBody(page) {
+async function captureBody(page, what) {
   await settle(page);
+  const layout = await page.evaluate(mainLayout);
+  const cut = cutAt(layout, layout.scroll);
+  if (cut.length > 0) {
+    const list = cut.map((a) => `${a.what} [${a.top.toFixed(1)}, ${a.bottom.toFixed(1)}]`).join('; ');
+    throw new Error(`${what}: an edge of the popup cuts ${list} (scroll ${layout.scroll}, view ${layout.view})`);
+  }
   const css = await page.evaluate(() => {
     const r = document.body.getBoundingClientRect();
     return { width: Math.round(r.width), height: Math.round(r.height) };
@@ -377,9 +440,8 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
       if (!value) throw new Error(`no row for ${issuer} (rows: ${[...ids.keys()]})`);
       return value;
     };
-    // popup/session.js as popup.js imported it (same URL, so the same module instance).
-
     // The bind window, offering the demo site for the Example ID account (nothing bound yet).
+    // popup/session.js is imported from the URL popup.js uses, so it is the same module instance.
     const offered = await popup.evaluate(async (offer) => (await import('/popup/session.js')).setPendingBind(offer), {
       origin: DEMO_ORIGIN,
       accountId: idOf(BIND_ISSUER),
@@ -407,7 +469,10 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
     // Add account.
     await popup.click('#add-btn');
     await waitState(popup, 'add');
-    shots.add = await captureBody(popup);
+    // The view is taller than the popup's 600 px; at the top its bottom edge cuts the Account
+    // label. Scrolled down to the first offsets where both edges fall between blocks, mid-gap.
+    await scrollClean(popup, { from: 0, towards: +1, center: true, what: 'add' });
+    shots.add = await captureBody(popup, 'add');
     await popup.click('#add-cancel');
     await waitState(popup, 'list');
 
@@ -418,12 +483,9 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
     await popup.click('#settings-btn');
     await waitState(popup, 'settings');
     await popup.waitForFunction((n) => document.querySelectorAll('#bindings .binding').length === n, SITES.length, { timeout: 15000 });
-    await popup.evaluate(() => {
-      const main = document.querySelector('#main');
-      main.scrollTop = main.scrollHeight;
-    });
+    await scrollClean(popup, { from: Infinity, towards: -1, what: 'settings' });
     await assertNotClipped(popup, ['.binding-origin', '.binding-account'], 'settings');
-    shots.settings = await captureBody(popup);
+    shots.settings = await captureBody(popup, 'settings');
     await popup.click('#settings-back');
     await waitState(popup, 'list');
 
@@ -438,7 +500,7 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
       await sleep(250); // the list ticks 15 ms after each second
       const before = await amberCount();
       await assertNotClipped(popup, ['.account .issuer', '.account .label'], 'list');
-      const shot = await captureBody(popup);
+      const shot = await captureBody(popup, 'list');
       const after = await amberCount();
       const notice = await popup.evaluate(() => document.querySelector('#list-notice').textContent);
       if (before === 1 && after === 1 && notice === '') {
@@ -451,7 +513,7 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
     // Locked.
     await popup.click('#lock-btn');
     await waitState(popup, 'locked');
-    shots.locked = await captureBody(popup);
+    shots.locked = await captureBody(popup, 'locked');
     return shots;
   } finally {
     await context.close();
