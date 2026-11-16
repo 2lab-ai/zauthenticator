@@ -14,7 +14,7 @@ the browser and keeps the secrets behind them on your device.
 - **Optional auto-fill, one site at a time.** You choose the sites. A site gets the 6–8 digit
   code and nothing else.
 
-![The zauthenticator popup listing accounts and their current codes](docs/images/popup-list.png)
+<img src="docs/images/popup-list.png" width="360" alt="The zauthenticator popup listing accounts and their current codes">
 
 [한국어 안내](#한국어) · [Privacy policy](PRIVACY.md) · [Security policy](SECURITY.md)
 
@@ -88,7 +88,7 @@ After a fill, until you submit:
 - **It stops** as soon as you type or delete in the field yourself, when you leave the page, or
   when zauthenticator locks. It never submits a form.
 
-![The window that asks whether to fill codes automatically on a site](docs/images/popup-autofill-bind.png)
+<img src="docs/images/popup-autofill-bind.png" width="400" alt="The window that asks whether to fill codes automatically on a site">
 
 Auto-fill works only on the exact site you allowed: the same scheme, host and port, on the page
 itself or in a frame of that site inside another page. A subdomain or a look-alike domain gets
@@ -116,7 +116,7 @@ when the browser fully quits (on macOS, Cmd+Q; closing the windows is not enough
 locked nothing is filled, and the right-click menu offers **Unlock zauthenticator…** instead of
 your accounts.
 
-![The locked popup asking for the passphrase](docs/images/popup-locked.png)
+<img src="docs/images/popup-locked.png" width="360" alt="The locked popup asking for the passphrase">
 
 ## Privacy and security
 
