@@ -174,7 +174,7 @@ export function refresh() {
 }
 
 // Records user activity. → 'touched' | 'idle' (the session already sat idle past the
-// limit; the caller locks) | 'locked' (nothing to refresh)
+// limit; the caller decides with lockIfIdle()) | 'locked' (nothing to refresh)
 export function touch() {
   const gen = epoch;
   if (!rawKey) return Promise.resolve('locked');
@@ -188,17 +188,33 @@ export function touch() {
   });
 }
 
-// → true when this page is unlocked and the shared activity time is past the limit.
-export async function idleExpired() {
-  if (!rawKey) return false;
-  const last = await store.getLastActive();
-  return rawKey !== null && isStale(last);
+// Locks when the shared activity time is past the limit, decided under the vault lock: activity
+// another page recorded (or an unlock it finished) while this call waited keeps the session,
+// and so does a lock or unlock in this page since the call. A missing stored key has no
+// activity time either, so this page drops its own. → true when this call locked this page
+export function lockIfIdle() {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.resolve(false);
+  return exclusive(async () => {
+    const live = () => epoch === gen && rawKey === key;
+    if (!live()) return false;
+    const [last, stored] = await Promise.all([store.getLastActive(), store.getSessionKey()]);
+    if (!live() || !isStale(last)) return false;
+    forget();
+    if (stored) await store.clearSessionKey();
+    return true;
+  });
 }
 
 // Decrypts another vault record (an imported backup) with its own passphrase. → its raw
-// account entries; addAccounts() validates them.
+// account entries; addAccounts() validates them. Throws SessionError('locked') when this page
+// is locked or locked meanwhile: decrypted entries are never handed out after a lock.
 export async function readBackup(record, passphrase) {
+  const gen = epoch;
+  if (!rawKey) throw new SessionError('locked');
   const opened = await vault.unlock(record, passphrase);
+  if (epoch !== gen || !rawKey) throw new SessionError('locked');
   const list = opened.data && typeof opened.data === 'object' ? opened.data.accounts : undefined;
   if (!Array.isArray(list)) throw new SessionError('not-backup');
   return list;
@@ -210,8 +226,18 @@ export async function readBackup(record, passphrase) {
 export function addAccounts(incoming) {
   const entries = Array.isArray(incoming) ? incoming : [];
   return mutate((current) => {
-    const seenKeys = new Set(current.accounts.map(duplicateKey));
-    const seenIds = new Set(current.accounts.map((a) => a?.id));
+    // A malformed stored entry (only a hand-made vault could hold one) stays stored and never
+    // blocks adding: non-objects are left out, and so is an entry whose fields cannot be compared.
+    const stored = current.accounts.filter((a) => a !== null && typeof a === 'object');
+    const seenKeys = new Set();
+    for (const a of stored) {
+      try {
+        seenKeys.add(duplicateKey(a));
+      } catch {
+        // e.g. a secret that is an object without a usable toString
+      }
+    }
+    const seenIds = new Set(stored.map((a) => a.id));
     let added = 0;
     let duplicates = 0;
     let invalid = 0;

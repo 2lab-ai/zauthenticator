@@ -2,6 +2,7 @@
 // otpauth:// links, and manual entry of a setup key.
 import * as otpauth from '../lib/otpauth.js';
 import { decodeQR, QRError } from '../lib/qr.js';
+import { openOwnView } from '../lib/nav.js';
 import * as session from './session.js';
 import { t } from './i18n.js';
 import { $, setText, withBusy, reason } from './ui.js';
@@ -114,7 +115,7 @@ export function createAddView({ isTab, done }) {
       return;
     }
     // A file chooser can close the popup on some platforms; continue in a full tab instead.
-    await chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html#add-file') });
+    await openOwnView('add-file');
     window.close();
   }
 
@@ -255,6 +256,7 @@ export function createAddView({ isTab, done }) {
       if (error.code === 'no-qr') return t(source === 'tab' ? 'errNoQrTab' : 'errNoQrImage');
       if (error.code === 'bad-image') return t('errBadImage');
       if (error.code === 'too-large') return t('errImageTooLarge');
+      if (error.code === 'unsupported-format') return t('errImageFormat');
       return t('errDecoderMissing');
     }
     return reason(error);
