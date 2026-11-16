@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Static trust gate for extension/ (npm run check). Rules: .prd/02-architecture.md "Trust gate"
-// and "Round 2 contract changes", tightened by MANIFEST_POLICY and the pattern lists below.
+// and "Round 2 contract changes", widened for auto-fill by .prd/03-autofill.md ("Cross-unit
+// contract"), tightened by MANIFEST_POLICY and the pattern lists below.
 //
 //   node scripts/check-policy.mjs                 # check ./extension
 //   node scripts/check-policy.mjs --ext <dir>     # check another extension dir
@@ -12,8 +13,13 @@
 // because of their CSP, which this gate requires to equal the approved policy exactly. CSP does
 // not govern top-level navigation, so the gate additionally bans URL strings and navigation sinks
 // (window.open, location assignment, links, forms and frames that leave the extension). Opening
-// a tab is left to one file, lib/nav.js, which opens only this extension's own popup views and is
-// pinned by sha256; everywhere else chrome.windows is refused and chrome.tabs may only be read.
+// a tab or a window is left to one file, lib/nav.js, which opens only this extension's own popup
+// views and is pinned by sha256; everywhere else chrome.windows is refused and chrome.tabs may
+// only be read. Injecting into web pages (chrome.scripting) is left to lib/autofill-worker.js,
+// and asking for, enumerating or giving up host access (chrome.permissions) to that worker and
+// the popup's bind view. The content script that runs in web pages (lib/fieldfind.js and
+// content/autofill.js) is not covered by the extension-page CSP; it is held to the same source
+// rules as every other file.
 // The gate reads source text; it is a tripwire for the repository's own sources, not a
 // JavaScript parser or a sandbox. The end-to-end test is what observes the pages a browser opens.
 
@@ -27,18 +33,28 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT), '..');
 
-// ---- Manifest policy (v0.1) -------------------------------------------------------------------
-// The one place that says what the manifest may ask for and how the extension may open tabs.
-// Widening it is a deliberate, reviewed change; the planned auto-fill feature
-// (.prd/03-autofill.md) is expected to be the next one.
+// ---- Manifest policy (v0.2) -------------------------------------------------------------------
+// The one place that says what the manifest may ask for, how the extension may open tabs and
+// windows, and which files may inject into pages or change host access. Widening it is a
+// deliberate, reviewed change; v0.2 widened it for auto-fill (.prd/03-autofill.md) to exactly
+// the committed manifest: two more permissions, optional https host access granted per site,
+// and a module service worker.
 // The self-test pins every value here against PINNED_POLICY, a copy written out by hand, so a
 // change has to be made in both places.
 const MANIFEST_POLICY = Object.freeze({
   // `permissions` must be a subset of this list.
-  allowedPermissions: ['storage', 'activeTab'],
+  allowedPermissions: ['storage', 'activeTab', 'contextMenus', 'scripting'],
   // Must be absent or an empty array; a non-empty value fails the `permissions` rule.
-  absentOrEmptyKeys: ['optional_permissions', 'optional_host_permissions'],
-  // Must be absent; any value, even an empty one, fails the `manifest-keys` rule.
+  absentOrEmptyKeys: ['optional_permissions'],
+  // `optional_host_permissions` must be present and hold exactly these patterns (no other, no
+  // repeat); anything else fails the `permissions` rule. Nothing is granted at install: a site
+  // gets access only when the user allows auto-fill for it and accepts the browser's prompt.
+  optionalHostPermissions: ['https://*/*'],
+  // `background` must be present and be exactly this object (no other key); anything else
+  // fails the `background` rule.
+  background: { service_worker: 'background.js', type: 'module' },
+  // Must be absent; any value, even an empty one, fails the `manifest-keys` rule. The auto-fill
+  // content script is registered at run time for bound sites only, never in the manifest.
   forbiddenKeys: [
     'host_permissions',
     'content_scripts',
@@ -46,7 +62,6 @@ const MANIFEST_POLICY = Object.freeze({
     'update_url',
     'key',
     'web_accessible_resources',
-    'background',
     'sandbox',
     'declarative_net_request',
     'chrome_url_overrides',
@@ -59,12 +74,23 @@ const MANIFEST_POLICY = Object.freeze({
   // content_security_policy key is allowed.
   extensionPagesCsp:
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-  // sha256 of extension/lib/nav.js, the only file that may open or change a tab.
-  navWrapperSha256: 'bcd3c5ef3f2a70537349f0c8957214dd1143d695a0f088ecd7b76130fe9cbf83',
+  // sha256 of extension/lib/nav.js, the only file that may open or change a tab or a window.
+  navWrapperSha256: 'b0f323da96fc1cad5cbd0e15d64d7caf2c279bf29902c2a7112bd65fcb945822',
   // The chrome.tabs methods any other file may use; none of them opens, navigates or reloads a
   // tab. Every other chrome.tabs member (create, update, duplicate, goBack, goForward, reload,
   // ...) and all of chrome.windows fail the `navigation` rule outside lib/nav.js.
   tabsMethodsOutsideNav: ['getCurrent', 'captureVisibleTab'],
+  // The only files (paths inside the extension) that may name chrome.scripting at all; any
+  // reference elsewhere fails the `scripting-api` rule.
+  scriptingFiles: ['lib/autofill-worker.js'],
+  // The only files that may use chrome.permissions freely: the worker (reconciles grants with
+  // bindings, so it is what gives up a site's access once its binding is removed) and the popup's
+  // bind view (asks for exactly one site, in the click on Allow).
+  permissionsFiles: ['lib/autofill-worker.js', 'popup/popup.js'],
+  // The chrome.permissions members any other file may use; none of them asks for, enumerates or
+  // gives up access. request, remove, getAll, addHostAccessRequest, aliases and every other
+  // member fail the `permissions-api` rule outside permissionsFiles.
+  permissionsMembersAnywhere: ['contains', 'onAdded', 'onRemoved'],
 });
 const HOMEPAGE_URL = MANIFEST_POLICY.homepageUrl;
 const NAV_WRAPPER = 'lib/nav.js';
@@ -123,6 +149,9 @@ const BARE_OPEN = /(?<![\w$.])(?<!\.\s+)(?<!\bfunction\s*\*?\s*)\bopen\s*(?:\?\.
 // chrome.tabs / chrome.windows (also with ?.), and the member that follows when there is one.
 // No member means an alias or computed access (chrome.tabs['create'], const t = chrome.tabs).
 const TABS_OR_WINDOWS = /(?<![\w$])chrome\s*(?:\?\.|\.)\s*(tabs|windows)(?![\w$])(?:\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*))?/g;
+// The same shape for the APIs that are scoped to a few files: chrome.scripting and
+// chrome.permissions, with the member that follows when there is one.
+const SCOPED_APIS = /(?<![\w$])chrome\s*(?:\?\.|\.)\s*(scripting|permissions)(?![\w$])(?:\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*))?/g;
 const FORBIDDEN_CSP_TOKENS = ["'unsafe-eval'", "'unsafe-inline'", "'wasm-unsafe-eval'"];
 
 const RULES = [
@@ -130,6 +159,7 @@ const RULES = [
   'manifest',
   'permissions',
   'manifest-keys',
+  'background',
   'homepage-url',
   'csp',
   'file-types',
@@ -139,6 +169,8 @@ const RULES = [
   'css-remote',
   'navigation',
   'nav-wrapper',
+  'scripting-api',
+  'permissions-api',
   'inline-script',
   'locales-url',
   'vendor-sums',
@@ -339,6 +371,39 @@ function navigationHits(text, label, rel) {
   return hits;
 }
 
+// chrome.scripting outside MANIFEST_POLICY.scriptingFiles, and chrome.permissions outside
+// MANIFEST_POLICY.permissionsFiles other than the members in permissionsMembersAnywhere.
+// Like the chrome.tabs check, any reference counts, not only a call, and a reference without a
+// member (an alias, a computed access) is refused. → { scripting: [hit], permissions: [hit] }
+function scopedApiHits(text, label, rel) {
+  const hits = { scripting: [], permissions: [] };
+  SCOPED_APIS.lastIndex = 0;
+  for (const m of text.matchAll(SCOPED_APIS)) {
+    const [, area, member] = m;
+    const where = `${label}:${lineOf(text, m.index)}`;
+    const shown = member ? `chrome.${area}.${member}` : `chrome.${area} (alias or computed access)`;
+    if (area === 'scripting') {
+      if (!MANIFEST_POLICY.scriptingFiles.includes(rel)) hits.scripting.push(`${where} ${shown} outside ${MANIFEST_POLICY.scriptingFiles.join(', ')}`);
+    } else if (!MANIFEST_POLICY.permissionsFiles.includes(rel) && !(member && MANIFEST_POLICY.permissionsMembersAnywhere.includes(member))) {
+      hits.permissions.push(`${where} ${shown} outside ${MANIFEST_POLICY.permissionsFiles.join(', ')}`);
+    }
+  }
+  return hits;
+}
+
+// JSON text of `value` with object keys sorted, so two values compare equal exactly when they
+// hold the same keys and values (array order kept).
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
 // SHA256SUMS is accepted only in the form `sha256sum` prints when run inside vendor/:
 // `<64 lowercase hex>  <name>` (or ` *<name>`, binary mode), LF line ends, with a plain relative
 // name. No other spelling of a name is rewritten into one, so each file has exactly one.
@@ -426,7 +491,7 @@ function runChecks(extDir) {
       manifest.manifest_version === 3 ? 'manifest_version 3' : `manifest_version ${manifest.manifest_version} (must be 3)`,
     );
 
-    const { allowedPermissions, absentOrEmptyKeys, forbiddenKeys } = MANIFEST_POLICY;
+    const { allowedPermissions, absentOrEmptyKeys, optionalHostPermissions, forbiddenKeys } = MANIFEST_POLICY;
     const perms = manifest.permissions ?? [];
     const permProblems = [];
     if (!Array.isArray(perms)) permProblems.push('permissions is not an array');
@@ -440,16 +505,31 @@ function runChecks(extDir) {
       if (!Array.isArray(value)) permProblems.push(`${key} is not an array`);
       else if (value.length) permProblems.push(`${key} must be absent or empty, has: ${value.join(', ')}`);
     }
+    // Compared as sorted lists, so a repeated or an extra pattern is a difference.
+    const optionalHosts = manifest.optional_host_permissions;
+    const approvedHosts = JSON.stringify(optionalHostPermissions);
+    if (!Object.hasOwn(manifest, 'optional_host_permissions')) permProblems.push(`optional_host_permissions missing (approved: ${approvedHosts})`);
+    else if (!Array.isArray(optionalHosts)) permProblems.push(`optional_host_permissions is not an array`);
+    else if (JSON.stringify([...optionalHosts].sort()) !== JSON.stringify([...optionalHostPermissions].sort())) {
+      permProblems.push(`optional_host_permissions is ${JSON.stringify(optionalHosts)} (approved: exactly ${approvedHosts})`);
+    }
     record(
       'permissions',
       permProblems.length === 0,
       permProblems.length === 0
-        ? `[${perms.join(', ')}] within {${allowedPermissions.join(', ')}}; ${absentOrEmptyKeys.join(', ')} absent or empty`
+        ? `[${perms.join(', ')}] within {${allowedPermissions.join(', ')}}; optional_host_permissions exactly ${approvedHosts}; ${absentOrEmptyKeys.join(', ')} absent or empty`
         : permProblems.join('; '),
     );
 
     const present = forbiddenKeys.filter((k) => Object.hasOwn(manifest, k));
     record('manifest-keys', present.length === 0, present.length === 0 ? `none of ${forbiddenKeys.join(', ')}` : `forbidden: ${present.join(', ')}`);
+
+    const approvedBackground = canonicalJson(MANIFEST_POLICY.background);
+    if (!Object.hasOwn(manifest, 'background')) record('background', false, `background missing (approved: exactly ${approvedBackground})`);
+    else {
+      const got = canonicalJson(manifest.background);
+      record('background', got === approvedBackground, got === approvedBackground ? `exactly ${approvedBackground}` : `background is ${got} (approved: exactly ${approvedBackground})`);
+    }
 
     if (!Object.hasOwn(manifest, 'homepage_url')) record('homepage-url', true, 'absent');
     else
@@ -483,7 +563,7 @@ function runChecks(extDir) {
       cspProblems.length === 0 ? `extension_pages equals the approved policy (${directiveCount} directives), no other CSP keys` : cspProblems.join('; '),
     );
   } else {
-    for (const rule of ['permissions', 'manifest-keys', 'homepage-url', 'csp']) record(rule, false, 'manifest.json unreadable');
+    for (const rule of ['permissions', 'manifest-keys', 'background', 'homepage-url', 'csp']) record(rule, false, 'manifest.json unreadable');
   }
 
   const files = walk(extDir).filter((f) => !IGNORED_NAMES.has(path.basename(f.rel)));
@@ -521,6 +601,8 @@ function runChecks(extDir) {
   const dynamic = [];
   const urls = [];
   const navigation = [];
+  const scripting = [];
+  const permissionsUse = [];
   const inline = [];
   for (const f of scanned) {
     const text = fs.readFileSync(f.abs, 'utf8');
@@ -528,6 +610,9 @@ function runChecks(extDir) {
     dynamic.push(...findAll(text, DYNAMIC_CODE_PATTERNS, label(f.rel)));
     urls.push(...findAll(text, URL_PATTERNS, label(f.rel)));
     navigation.push(...navigationHits(text, label(f.rel), f.rel));
+    const scoped = scopedApiHits(text, label(f.rel), f.rel);
+    scripting.push(...scoped.scripting);
+    permissionsUse.push(...scoped.permissions);
     if (f.rel.endsWith('.html')) inline.push(...inlineScriptHits(text, label(f.rel)));
   }
   const css = styles.flatMap((f) => findAll(fs.readFileSync(f.abs, 'utf8'), CSS_PATTERNS, label(f.rel)));
@@ -549,15 +634,27 @@ function runChecks(extDir) {
       : navigation.join('; '),
   );
 
-  // The one file allowed to open tabs must be exactly the reviewed one.
+  // The one file allowed to open tabs and windows must be exactly the reviewed one.
   const wrapper = files.find((f) => f.rel === NAV_WRAPPER);
   const pin = MANIFEST_POLICY.navWrapperSha256;
-  if (!wrapper) record('nav-wrapper', false, `${label(NAV_WRAPPER)} missing (the only file allowed to open tabs, pinned by sha256)`);
+  if (!wrapper) record('nav-wrapper', false, `${label(NAV_WRAPPER)} missing (the only file allowed to open tabs and windows, pinned by sha256)`);
   else if (wrapper.kind !== 'file') record('nav-wrapper', false, `${label(NAV_WRAPPER)} is a ${wrapper.kind}, not a regular file`);
   else {
     const got = sha256(wrapper.abs);
     record('nav-wrapper', got === pin, got === pin ? `${label(NAV_WRAPPER)} sha256 ${pin} (pinned)` : `${label(NAV_WRAPPER)} sha256 ${got} != pinned ${pin}`);
   }
+  record(
+    'scripting-api',
+    scripting.length === 0,
+    scripting.length === 0 ? `chrome.scripting only in ${MANIFEST_POLICY.scriptingFiles.join(', ')} (${scope})` : scripting.join('; '),
+  );
+  record(
+    'permissions-api',
+    permissionsUse.length === 0,
+    permissionsUse.length === 0
+      ? `chrome.permissions only in ${MANIFEST_POLICY.permissionsFiles.join(', ')}; elsewhere only chrome.permissions.{${MANIFEST_POLICY.permissionsMembersAnywhere.join(', ')}}`
+      : permissionsUse.join('; '),
+  );
   record('inline-script', inline.length === 0, inline.length === 0 ? `no inline <script> or on*= in ${htmlCount} .html files` : inline.join('; '));
 
   const locales = files.filter((f) => f.kind === 'file' && /^_locales\/.+\/messages\.json$/.test(f.rel));
@@ -599,10 +696,11 @@ function printAndExit(results) {
 // MANIFEST_POLICY: widening the policy means editing both, and the self-test fails until then.
 // List order does not matter; strings must match exactly.
 const PINNED_POLICY = {
-  allowedPermissions: ['activeTab', 'storage'],
-  absentOrEmptyKeys: ['optional_host_permissions', 'optional_permissions'],
+  allowedPermissions: ['activeTab', 'contextMenus', 'scripting', 'storage'],
+  absentOrEmptyKeys: ['optional_permissions'],
+  optionalHostPermissions: ['https://*/*'],
+  background: { type: 'module', service_worker: 'background.js' },
   forbiddenKeys: [
-    'background',
     'chrome_url_overrides',
     'content_scripts',
     'declarative_net_request',
@@ -617,12 +715,15 @@ const PINNED_POLICY = {
   homepageUrl: 'https://github.com/2lab-ai/zauthenticator',
   extensionPagesCsp:
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-  navWrapperSha256: 'bcd3c5ef3f2a70537349f0c8957214dd1143d695a0f088ecd7b76130fe9cbf83',
+  navWrapperSha256: 'b0f323da96fc1cad5cbd0e15d64d7caf2c279bf29902c2a7112bd65fcb945822',
   tabsMethodsOutsideNav: ['captureVisibleTab', 'getCurrent'],
+  scriptingFiles: ['lib/autofill-worker.js'],
+  permissionsFiles: ['popup/popup.js', 'lib/autofill-worker.js'],
+  permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
 };
 
 // Differences between two policies, [] when equal. Lists compare as sorted copies (so a
-// duplicate entry is a difference), everything else exactly.
+// duplicate entry is a difference), objects by their keys and values, everything else exactly.
 function policyDifferences(actual, pinned) {
   const problems = [];
   const keys = new Set([...Object.keys(actual), ...Object.keys(pinned)]);
@@ -635,6 +736,8 @@ function policyDifferences(actual, pinned) {
       const sa = Array.isArray(a) ? [...a].sort() : a;
       const sp = Array.isArray(p) ? [...p].sort() : p;
       if (JSON.stringify(sa) !== JSON.stringify(sp)) problems.push(`${key}: ${JSON.stringify(sa)} != pinned ${JSON.stringify(sp)}`);
+    } else if ((a !== null && typeof a === 'object') || (p !== null && typeof p === 'object')) {
+      if (canonicalJson(a) !== canonicalJson(p)) problems.push(`${key}: ${canonicalJson(a)} != pinned ${canonicalJson(p)}`);
     } else if (a !== p) {
       problems.push(`${key}: ${JSON.stringify(a)} != pinned ${JSON.stringify(p)}`);
     }
@@ -646,12 +749,26 @@ function policyDifferences(actual, pinned) {
 const PIN_MUTATIONS = [
   ['allowedPermissions', (p) => p.allowedPermissions.push('tabs')],
   ['allowedPermissions', (p) => p.allowedPermissions.push('storage')],
+  ['allowedPermissions', (p) => (p.allowedPermissions = p.allowedPermissions.filter((k) => k !== 'scripting'))],
   ['absentOrEmptyKeys', (p) => p.absentOrEmptyKeys.pop()],
-  ['forbiddenKeys', (p) => (p.forbiddenKeys = p.forbiddenKeys.filter((k) => k !== 'background'))],
+  ['absentOrEmptyKeys', (p) => p.absentOrEmptyKeys.push('optional_host_permissions')],
+  ['optionalHostPermissions', (p) => p.optionalHostPermissions.push('http://*/*')],
+  ['optionalHostPermissions', (p) => (p.optionalHostPermissions = ['<all_urls>'])],
+  ['background', (p) => (p.background.persistent = false)],
+  ['background', (p) => (p.background.service_worker = 'background.test.js')],
+  ['background', (p) => delete p.background.type],
+  ['forbiddenKeys', (p) => (p.forbiddenKeys = p.forbiddenKeys.filter((k) => k !== 'content_scripts'))],
+  ['forbiddenKeys', (p) => (p.forbiddenKeys = p.forbiddenKeys.filter((k) => k !== 'host_permissions'))],
   ['homepageUrl', (p) => (p.homepageUrl = 'https://github.com/2lab-ai/zauthenticator/')],
   ['extensionPagesCsp', (p) => (p.extensionPagesCsp = p.extensionPagesCsp.replace("img-src 'self' data: blob:", 'img-src *'))],
   ['navWrapperSha256', (p) => (p.navWrapperSha256 = `${p.navWrapperSha256.slice(0, -1)}0`)],
   ['tabsMethodsOutsideNav', (p) => p.tabsMethodsOutsideNav.push('create')],
+  ['scriptingFiles', (p) => p.scriptingFiles.push('background.js')],
+  ['scriptingFiles', (p) => (p.scriptingFiles = ['popup/popup.js'])],
+  ['permissionsFiles', (p) => p.permissionsFiles.push('popup/settings.js')],
+  ['permissionsFiles', (p) => p.permissionsFiles.pop()],
+  ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('request')],
+  ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('getAll')],
   ['newField', (p) => (p.newField = [])],
 ];
 
@@ -666,35 +783,114 @@ const APPROVED_CSP =
 // extension/lib/nav.js, byte for byte. Written out here rather than read from the repository so
 // the self-test does not depend on where the script runs; its sha256 must equal the pin.
 const NAV_WRAPPER_SOURCE = [
-  "// The only code in the extension that opens a tab. Every destination is this extension's own",
-  '// popup page with one of the fixed view names below; nothing else can be passed in.',
+  "// The only code in the extension that opens a tab or a window. Every destination is this",
+  "// extension's own popup page with one of the fixed view names below; nothing else can be passed in.",
   '// The trust gate pins this file by sha256 and rejects tab/window-opening calls anywhere else.',
   '',
-  "const VIEWS = new Set(['add-file', 'settings']);",
+  "const TAB_VIEWS = new Set(['add-file', 'settings']);",
+  "const WINDOW_VIEWS = new Set(['bind', 'unlock']);",
   '',
   '/** Opens popup/popup.html#<view> of this extension in a new tab. */',
   'export async function openOwnView(view) {',
-  '  if (!VIEWS.has(view)) throw new Error(`Unknown view: ${view}`);',
+  '  if (!TAB_VIEWS.has(view)) throw new Error(`Unknown view: ${view}`);',
   '  await chrome.tabs.create({ url: chrome.runtime.getURL(`popup/popup.html#${view}`) });',
   '}',
   '',
+  '/** Opens popup/popup.html#<view> of this extension in a small popup window. */',
+  'export async function openOwnWindow(view) {',
+  '  if (!WINDOW_VIEWS.has(view)) throw new Error(`Unknown view: ${view}`);',
+  '  await chrome.windows.create({',
+  '    url: chrome.runtime.getURL(`popup/popup.html#${view}`),',
+  "    type: 'popup',",
+  '    width: 400,',
+  '    height: 600,',
+  '  });',
+  '}',
+  '',
+].join('\n');
+
+// The auto-fill files of the clean fixture: the worker module with its chrome.scripting and
+// chrome.permissions calls, the entry that wires it, and the content script.
+const WORKER_SOURCE = [
+  "// Context menu, codes for bound sites, script registration.",
+  "import { openOwnWindow } from './nav.js';",
+  "export async function handleMenuClick(info, tab) {",
+  "  const frameIds = [info.frameId ?? 0];",
+  "  await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds }, func: fillFocused, args: ['123456'] });",
+  "  const origin = new URL(info.frameUrl ?? info.pageUrl).origin;",
+  "  if (origin.startsWith('https:')) await openOwnWindow('bind');",
+  "}",
+  "function fillFocused(code) {",
+  "  const field = document.activeElement;",
+  "  if (field && !field.value) field.value = code;",
+  "}",
+  "export async function syncRegistrations(origins) {",
+  "  const matches = origins.map((origin) => `${origin}/*`);",
+  "  const [current] = await chrome.scripting.getRegisteredContentScripts({ ids: ['autofill'] });",
+  "  if (matches.length === 0 && current) await chrome.scripting.unregisterContentScripts({ ids: ['autofill'] });",
+  "  else if (current) await chrome.scripting.updateContentScripts([{ id: 'autofill', matches }]);",
+  "  else await chrome.scripting.registerContentScripts([{ id: 'autofill', matches, js: ['content/autofill.js'], allFrames: true, runAt: 'document_idle' }]);",
+  "  const granted = await chrome.permissions.getAll();",
+  "  const stale = (granted.origins ?? []).filter((pattern) => !matches.includes(pattern));",
+  "  if (stale.length) await chrome.permissions.remove({ origins: stale });",
+  "}",
+  "export async function handleMessage(message, sender) {",
+  "  if (sender.id !== chrome.runtime.id || message?.type !== 'autofill-code') return { code: null };",
+  "  const origin = sender.origin ?? new URL(sender.url).origin;",
+  "  return { code: origin === 'x' ? '123456' : null };",
+  "}",
+  "",
+].join('\n');
+const BACKGROUND_SOURCE = [
+  "import * as worker from './lib/autofill-worker.js';",
+  "chrome.runtime.onInstalled.addListener(() => worker.syncRegistrations([]));",
+  "chrome.contextMenus.onClicked.addListener((info, tab) => worker.handleMenuClick(info, tab));",
+  "chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {",
+  "  worker.handleMessage(message, sender).then(sendResponse);",
+  "  return true;",
+  "});",
+  "chrome.permissions.onRemoved.addListener(() => worker.syncRegistrations([]));",
+  "",
+].join('\n');
+const CONTENT_SOURCE = [
+  "// Runs in frames of bound sites only: asks the worker for a code, fills an empty field once.",
+  "const field = document.querySelector('input[autocomplete=\"one-time-code\"]');",
+  "if (field && !field.value) {",
+  "  chrome.runtime.sendMessage({ type: 'autofill-code' }).then((reply) => {",
+  "    if (!reply?.code || field.value) return;",
+  "    field.value = reply.code;",
+  "    field.dispatchEvent(new Event('input', { bubbles: true }));",
+  "    field.dispatchEvent(new Event('change', { bubbles: true }));",
+  "  });",
+  "}",
+  "const here = location.origin;",
+  "",
 ].join('\n');
 
 // The clean fixture carries the shapes the real extension uses that must NOT trip a rule
 // (member .open() calls, open() declarations and method shorthand, location reads, the
 // chrome.tabs reads other files may make, tabs opened through lib/nav.js, plain forms, JSDoc
-// generics, CSS data: urls).
+// generics, CSS data: urls, chrome.scripting in the worker, chrome.permissions in the worker
+// and the two popup files, chrome.permissions.contains/onRemoved elsewhere, a content script).
 function cleanFixture() {
   return {
     manifest: {
       manifest_version: 3,
       name: 'zauthenticator',
-      version: '0.1.0',
-      permissions: ['storage', 'activeTab'],
+      version: '0.2.0',
+      permissions: ['storage', 'activeTab', 'contextMenus', 'scripting'],
+      optional_host_permissions: ['https://*/*'],
+      background: { service_worker: 'background.js', type: 'module' },
       action: { default_popup: 'popup/popup.html' },
       content_security_policy: { extension_pages: APPROVED_CSP },
     },
     files: {
+      'background.js': BACKGROUND_SOURCE,
+      'lib/autofill-worker.js': WORKER_SOURCE,
+      'content/autofill.js': CONTENT_SOURCE,
+      'popup/settings.js':
+        "import * as session from './session.js';\nexport async function removeBinding(origin) {\n  await session.removeBinding(origin);\n  return chrome.permissions.contains({ origins: [`${origin}/*`] });\n}\n",
+      'popup/list.js': "export const hasAccess = (origin) => chrome.permissions.contains({ origins: [`${origin}/*`] });\n",
       'lib/base32.js': "export function decode(str) { return new Uint8Array(str.length); }\n",
       'lib/totp.js':
         "// RFC 6238 over WebCrypto\nexport async function hotp(key) {\n  return crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);\n}\n",
@@ -735,6 +931,10 @@ function cleanFixture() {
         '  link.href = url;',
         '  link.download = name;',
         '  link.click();',
+        '}',
+        '// The bind view: asks the browser for exactly one site.',
+        'export function allowSite(origin) {',
+        '  return chrome.permissions.request({ origins: [`${origin}/*`] });',
         '}',
         '',
       ].join('\n'),
@@ -780,7 +980,6 @@ const SAMPLE_KEY_VALUES = {
   update_url: 'x',
   key: 'x',
   web_accessible_resources: [{ resources: ['popup/*'], matches: ['<all_urls>'] }],
-  background: { service_worker: 'lib/store.js', type: 'module' },
   sandbox: { pages: ['popup/popup.html'] },
   declarative_net_request: { rule_resources: [] },
   chrome_url_overrides: { newtab: 'popup/popup.html' },
@@ -794,6 +993,16 @@ const replaceDirective = (name, value) => setCsp(APPROVED_CSP.replace(new RegExp
 const dropDirective = (name) => setCsp(APPROVED_CSP.replace(new RegExp(`(?:; )?${name} [^;]*`), '').replace(/^; /, ''));
 const addJs = (rel, code) => (fx) => {
   fx.files[rel] = code;
+};
+// Adds code at the end of a fixture file (creating it when absent).
+const appendJs = (rel, code) => (fx) => {
+  fx.files[rel] = `${fx.files[rel] ?? ''}${code}`;
+};
+const setBackground = (value) => (fx) => {
+  fx.manifest.background = value;
+};
+const setOptionalHosts = (value) => (fx) => {
+  fx.manifest.optional_host_permissions = value;
 };
 const addHtml = (markup) => (fx) => {
   fx.files['popup/popup.html'] = fx.files['popup/popup.html'].replace('</body>', `${markup}\n</body>`);
@@ -835,23 +1044,49 @@ const CASES = [
     },
     [],
   ],
-  ['bad-manifest-json', (fx) => (fx.manifestRaw = '{ "manifest_version": 3, '), ['manifest', 'permissions', 'manifest-keys', 'homepage-url', 'csp']],
+  ['bad-manifest-json', (fx) => (fx.manifestRaw = '{ "manifest_version": 3, '), ['manifest', 'permissions', 'manifest-keys', 'background', 'homepage-url', 'csp']],
   ['bad-manifest-v2', (fx) => (fx.manifest.manifest_version = 2), ['manifest']],
   ['perm-tabs', (fx) => fx.manifest.permissions.push('tabs'), ['permissions']],
   ['perm-not-array', (fx) => (fx.manifest.permissions = 'storage'), ['permissions']],
   ['perm-optional-permissions', (fx) => (fx.manifest.optional_permissions = ['downloads']), ['permissions']],
   ['perm-optional-host-permissions', (fx) => (fx.manifest.optional_host_permissions = ['*://*/*']), ['permissions']],
   ['perm-optional-not-array', (fx) => (fx.manifest.optional_permissions = 'tabs'), ['permissions']],
-  [
-    'ok-optional-permissions-empty',
-    (fx) => {
-      fx.manifest.optional_permissions = [];
-      fx.manifest.optional_host_permissions = [];
-    },
-    [],
-  ],
+  ['ok-optional-permissions-empty', (fx) => (fx.manifest.optional_permissions = []), []],
+  // v0.2: the two auto-fill permissions are allowed, a subset (the v0.1 set) still passes.
+  ['ok-permissions-v01-subset', (fx) => (fx.manifest.permissions = ['storage', 'activeTab']), []],
+  ['perm-userscripts', (fx) => fx.manifest.permissions.push('userScripts'), ['permissions']],
+  ['perm-webrequest', (fx) => fx.manifest.permissions.push('webRequest'), ['permissions']],
+  ['perm-all-urls-as-permission', (fx) => fx.manifest.permissions.push('<all_urls>'), ['permissions']],
+  // optional_host_permissions: exactly ["https://*/*"], nothing wider, narrower or repeated.
+  ['perm-optional-host-all-urls', setOptionalHosts(['<all_urls>']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-http', setOptionalHosts(['http://*/*']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-extra', setOptionalHosts(['https://*/*', 'http://*/*']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-file', setOptionalHosts(['https://*/*', 'file:///*']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-repeated', setOptionalHosts(['https://*/*', 'https://*/*']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-one-site', setOptionalHosts(['https://example.com/*']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-uppercase', setOptionalHosts(['HTTPS://*/*']), ['permissions'], /optional_host_permissions is/],
+  ['perm-optional-host-empty', setOptionalHosts([]), ['permissions'], /optional_host_permissions is \[\]/],
+  ['perm-optional-host-string', setOptionalHosts('https://*/*'), ['permissions'], /not an array/],
+  ['perm-optional-host-absent', (fx) => delete fx.manifest.optional_host_permissions, ['permissions'], /optional_host_permissions missing/],
+  // background: exactly { service_worker: 'background.js', type: 'module' }.
+  ['ok-background-key-order', setBackground({ type: 'module', service_worker: 'background.js' }), []],
+  ['background-absent', (fx) => delete fx.manifest.background, ['background'], /missing/],
+  ['background-extra-key', setBackground({ service_worker: 'background.js', type: 'module', persistent: false }), ['background']],
+  ['background-scripts-too', setBackground({ service_worker: 'background.js', type: 'module', scripts: ['background.js'] }), ['background']],
+  ['background-classic-worker', setBackground({ service_worker: 'background.js' }), ['background']],
+  ['background-type-classic', setBackground({ service_worker: 'background.js', type: 'classic' }), ['background']],
+  ['background-other-file', setBackground({ service_worker: 'lib/store.js', type: 'module' }), ['background']],
+  // The e2e test copy's entry (e2e/fixtures/background.test.js) can never pass the gate.
+  ['background-test-entry', setBackground({ service_worker: 'background.test.js', type: 'module' }), ['background']],
+  ['background-mv2-page', setBackground({ page: 'popup/popup.html' }), ['background']],
+  ['background-string', setBackground('background.js'), ['background']],
+  ['background-array', setBackground([{ service_worker: 'background.js', type: 'module' }]), ['background']],
+  ['background-null', setBackground(null), ['background']],
   ...MANIFEST_POLICY.forbiddenKeys.map((key) => [`key-${key}`, (fx) => (fx.manifest[key] = SAMPLE_KEY_VALUES[key] ?? []), ['manifest-keys']]),
   ['key-empty-host-permissions', (fx) => (fx.manifest.host_permissions = []), ['manifest-keys']],
+  // What the e2e test copy adds so that no permission prompt appears: refused here.
+  ['key-host-permissions-test-origins', (fx) => (fx.manifest.host_permissions = ['https://otp.test/*', 'https://evil.test/*']), ['manifest-keys']],
+  ['key-content-scripts-autofill', (fx) => (fx.manifest.content_scripts = [{ matches: ['https://*/*'], js: ['content/autofill.js'], all_frames: true }]), ['manifest-keys']],
   ['homepage-other-host', (fx) => (fx.manifest.homepage_url = 'https://example.com/'), ['homepage-url']],
   ['homepage-trailing-slash', (fx) => (fx.manifest.homepage_url = `${HOMEPAGE_URL}/`), ['homepage-url']],
   ['homepage-http', (fx) => (fx.manifest.homepage_url = HOMEPAGE_URL.replace('https:', 'http:')), ['homepage-url']],
@@ -1022,10 +1257,21 @@ const CASES = [
   ['nav-wrapper-trailing-byte', (fx) => (fx.files['lib/nav.js'] = `${NAV_WRAPPER_SOURCE}\n`), ['nav-wrapper'], /sha256/],
   [
     'nav-wrapper-any-url',
-    (fx) => (fx.files['lib/nav.js'] = NAV_WRAPPER_SOURCE.replace('if (!VIEWS.has(view)) throw', 'if (!view) throw').replace('chrome.runtime.getURL(`popup/popup.html#${view}`)', 'view')),
+    (fx) => (fx.files['lib/nav.js'] = replacedOnce(replacedOnce(NAV_WRAPPER_SOURCE, 'if (!TAB_VIEWS.has(view)) throw', 'if (!view) throw'), '{ url: chrome.runtime.getURL(`popup/popup.html#${view}`) }', '{ url: view }')),
     ['nav-wrapper'],
     /sha256/,
   ],
+  [
+    'nav-wrapper-window-any-url',
+    (fx) => (fx.files['lib/nav.js'] = replacedOnce(replacedOnce(NAV_WRAPPER_SOURCE, 'if (!WINDOW_VIEWS.has(view)) throw', 'if (!view) throw'), '    url: chrome.runtime.getURL(`popup/popup.html#${view}`),', '    url: view,')),
+    ['nav-wrapper'],
+    /sha256/,
+  ],
+  ['nav-wrapper-window-view-added', (fx) => (fx.files['lib/nav.js'] = replacedOnce(NAV_WRAPPER_SOURCE, "['bind', 'unlock']", "['bind', 'unlock', 'add-file']")), ['nav-wrapper'], /sha256/],
+  // Windows and tabs from the new files go through lib/nav.js as well.
+  ['nav-windows-create-in-worker', appendJs('lib/autofill-worker.js', "chrome.windows.create({ url: chrome.runtime.getURL('popup/popup.html#bind'), type: 'popup' });\n"), ['navigation']],
+  ['nav-tabs-create-in-background', appendJs('background.js', "chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html#unlock') });\n"), ['navigation']],
+  ['nav-tabs-update-in-worker', appendJs('lib/autofill-worker.js', 'export const go = (tab, u) => chrome.tabs.update(tab.id, { url: u });\n'), ['navigation']],
   [
     'nav-wrapper-symlink',
     (fx) => {
@@ -1038,6 +1284,49 @@ const CASES = [
   ],
   ['nav-set-uninstall-url', addJs('lib/x.js', 'chrome.runtime.setUninstallURL(chrome.runtime.getManifest().homepage_url);\n'), ['navigation']],
   ['nav-in-comment', addJs('lib/x.js', '// do not call window.open(url) here\n'), ['navigation']],
+
+  // chrome.scripting: lib/autofill-worker.js only, by path, any reference.
+  ['scripting-in-popup', appendJs('popup/popup.js', 'chrome.scripting.executeScript({ target: { tabId: 1 }, func: () => 0 });\n'), ['scripting-api']],
+  ['scripting-in-settings', appendJs('popup/settings.js', "chrome.scripting.unregisterContentScripts({ ids: ['autofill'] });\n"), ['scripting-api']],
+  ['scripting-in-background', appendJs('background.js', 'chrome.scripting.registerContentScripts([]);\n'), ['scripting-api']],
+  ['scripting-in-content-script', appendJs('content/autofill.js', 'chrome.scripting.getRegisteredContentScripts();\n'), ['scripting-api']],
+  ['scripting-in-nav', (fx) => (fx.files['lib/nav.js'] = `${NAV_WRAPPER_SOURCE}chrome.scripting.executeScript(o);\n`), ['scripting-api', 'nav-wrapper']],
+  ['scripting-alias', addJs('lib/x.js', 'const s = chrome.scripting;\ns.executeScript(o);\n'), ['scripting-api']],
+  ['scripting-optional-chain', addJs('lib/x.js', 'chrome?.scripting?.executeScript(o);\n'), ['scripting-api']],
+  ['scripting-computed', addJs('lib/x.js', "chrome.scripting['executeScript'](o);\n"), ['scripting-api']],
+  ['scripting-spaced-comment', addJs('lib/x.js', 'chrome.scripting /* x */ .executeScript(o);\n'), ['scripting-api']],
+  ['scripting-in-comment', addJs('lib/x.js', '// chrome.scripting.executeScript is for the worker\n'), ['scripting-api']],
+  ['scripting-in-html', addHtml('<!-- chrome.scripting.executeScript -->'), ['scripting-api']],
+  // The exemption is the path lib/autofill-worker.js, not the content.
+  ['scripting-worker-copy-elsewhere', (fx) => (fx.files['lib/autofill-worker-copy.js'] = WORKER_SOURCE), ['scripting-api', 'permissions-api']],
+  ['scripting-worker-other-dir', (fx) => (fx.files['popup/autofill-worker.js'] = WORKER_SOURCE), ['scripting-api', 'permissions-api']],
+  // chrome.permissions: free in the worker and popup/popup.js; elsewhere only
+  // contains, onAdded and onRemoved.
+  ['ok-permissions-events-anywhere', appendJs('lib/store.js', 'chrome.permissions.onAdded.addListener(() => {});\nchrome.permissions?.contains({ origins: [] });\n'), []],
+  ['permissions-request-in-list', appendJs('popup/list.js', "chrome.permissions.request({ origins: ['<all_urls>'] });\n"), ['permissions-api']],
+  // Settings removes a binding through the vault; the worker then gives up the site's access.
+  ['permissions-remove-in-settings', appendJs('popup/settings.js', 'chrome.permissions.remove({ origins: [o] });\n'), ['permissions-api']],
+  ['permissions-request-in-settings', appendJs('popup/settings.js', 'chrome.permissions.request({ origins: [o] });\n'), ['permissions-api']],
+  ['permissions-remove-in-background', appendJs('background.js', 'chrome.permissions.remove({ origins: [o] });\n'), ['permissions-api']],
+  ['permissions-getall-in-session', appendJs('popup/session.js', 'export const all = () => chrome.permissions.getAll();\n'), ['permissions-api']],
+  ['permissions-request-in-content-script', appendJs('content/autofill.js', "chrome.permissions.request({ origins: ['<all_urls>'] });\n"), ['permissions-api']],
+  ['permissions-request-in-nav', (fx) => (fx.files['lib/nav.js'] = `${NAV_WRAPPER_SOURCE}chrome.permissions.request(o);\n`), ['permissions-api', 'nav-wrapper']],
+  ['permissions-host-access-request', addJs('lib/x.js', 'chrome.permissions.addHostAccessRequest({ tabId: 1 });\n'), ['permissions-api']],
+  ['permissions-alias', addJs('lib/x.js', 'const p = chrome.permissions;\np.request(o);\n'), ['permissions-api']],
+  ['permissions-computed', addJs('lib/x.js', "chrome.permissions['request'](o);\n"), ['permissions-api']],
+  ['permissions-optional-chain', addJs('lib/x.js', 'chrome?.permissions?.request(o);\n'), ['permissions-api']],
+  ['permissions-in-comment', addJs('lib/x.js', '// chrome.permissions.remove is for the worker\n'), ['permissions-api']],
+  // The content script runs in web pages, outside the extension-page CSP: every source rule
+  // applies to it as to any other file.
+  ['content-fetch', appendJs('content/autofill.js', "fetch('/collect', { method: 'POST', body: field.value });\n"), ['network-api']],
+  ['content-sendbeacon', appendJs('content/autofill.js', "navigator.sendBeacon('/collect', field.value);\n"), ['network-api']],
+  ['content-websocket', appendJs('content/autofill.js', "export const w = new WebSocket('wss://x');\n"), ['network-api']],
+  ['content-eval', appendJs('content/autofill.js', 'eval(field.value);\n'), ['dynamic-code']],
+  ['content-string-timer', appendJs('content/autofill.js', "setTimeout('fill()', 10);\n"), ['dynamic-code']],
+  ['content-url-string', appendJs('content/autofill.js', "const collector = 'https://collect.example/';\n"), ['remote-url']],
+  ['content-location-assign', appendJs('content/autofill.js', "location.href = '/next';\n"), ['navigation']],
+  ['content-window-open', appendJs('content/autofill.js', "window.open('/x');\n"), ['navigation']],
+  ['content-frame-in-string', appendJs('content/autofill.js', "document.body.insertAdjacentHTML('beforeend', '<iframe src=\"/x\"></iframe>');\n"), ['navigation']],
 
   ['inline-script-body', addHtml('<script>document.title = 1;</script>'), ['inline-script']],
   [
@@ -1114,6 +1403,14 @@ const CASES = [
     ['vendor-sums'],
   ],
 ];
+
+// `text` with `from` replaced by `to`; throws unless `from` occurs exactly once, so a case cannot
+// silently stop changing what it claims to change when the source it edits moves on.
+function replacedOnce(text, from, to) {
+  const count = text.split(from).length - 1;
+  if (count !== 1) throw new Error(`self-test fixture: expected ${JSON.stringify(from)} once, found ${count}`);
+  return text.replace(from, () => to);
+}
 
 function buildCase(dir, mutate) {
   const fx = cleanFixture();
@@ -1215,13 +1512,13 @@ function selfTest() {
     if (process.env.ZAUTH_POLICY_NESTED !== '1') {
       const source = fs.readFileSync(SCRIPT, 'utf8');
       // Assembled so that this line does not itself contain the text it looks for.
-      const needle = ['allowedPermissions: [', "'storage', 'activeTab'", '],'].join('');
+      const needle = ['allowedPermissions: [', "'storage', 'activeTab', 'contextMenus', 'scripting'", '],'].join('');
       const count = source.split(needle).length - 1;
       if (count !== 1) {
         report(false, 'cli-policy-edit-fails-self-test', `expected the MANIFEST_POLICY line ${JSON.stringify(needle)} exactly once, found ${count}`);
       } else {
         const widened = path.join(root, 'widened-policy.mjs');
-        fs.writeFileSync(widened, source.replace(needle, needle.replace("'activeTab'", "'activeTab', 'tabs'")));
+        fs.writeFileSync(widened, source.replace(needle, needle.replace("'scripting'", "'scripting', 'tabs'")));
         const run = runCli(widened, ['--self-test']);
         const pinLine = run.stdout.split('\n').find((l) => l.includes('self-test:policy-pin ')) ?? '(no policy-pin line)';
         report(
