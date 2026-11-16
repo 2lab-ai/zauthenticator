@@ -7,9 +7,14 @@
 // session-key write. Locking bumps a generation counter at once, before waiting for that
 // Web Lock; async work captures the generation and key when it starts and publishes its
 // result (the in-memory key and data, the session key) only if neither changed meanwhile.
+//
+// The service worker imports this module too, so it imports nothing that needs a document or
+// a window. The worker never unlocks its instance: it reads with readUnlocked(), which goes to
+// storage every time, and writes only the auto-fill offer (setPendingBind()).
 import * as vault from '../lib/vault.js';
 import * as store from '../lib/store.js';
 import { normalize } from '../lib/otpauth.js';
+import { bindingsOf, normalizeOrigin, withBinding, withoutAccountBindings, withoutBinding } from '../lib/bindings.js';
 import { duplicateKey } from './format.js';
 
 const LOCK_NAME = 'zauthenticator-vault';
@@ -18,9 +23,11 @@ const LOCK_NAME = 'zauthenticator-vault';
 export const IDLE_LOCK_MS = 15 * 60 * 1000;
 // An activity time this far in the future means the clock was set back: treat it as idle.
 const CLOCK_SLACK_MS = 60 * 1000;
+// The auto-fill offer a menu fill leaves for the bind window is good for this long.
+export const PENDING_BIND_MS = 2 * 60 * 1000;
 
 let rawKey = null;   // Uint8Array while unlocked
-let data = null;     // { accounts: [...] } as stored plus the ids withIds() gave, while unlocked
+let data = null;     // { accounts: [...], bindings?: [...] } as stored plus the ids withIds() gave, while unlocked
 let recordCt = null; // ciphertext of the record `data` was read from or sealed into
 let epoch = 0;       // the generation; forget() bumps it
 
@@ -44,6 +51,13 @@ export function generation() {
 export function accounts() {
   if (rawKey === null || data === null) return [];
   return data.accounts.filter(isEntry);
+}
+
+// The auto-fill bindings, for display: [{ origin, accountId, createdAt }] (lib/bindings.js
+// bindingsOf()); empty while locked.
+export function bindings() {
+  if (rawKey === null || data === null) return [];
+  return bindingsOf(data);
 }
 
 // → 'setup' | 'locked' | 'list'. Locks first when the session sat idle too long.
@@ -208,6 +222,80 @@ export function lockIfIdle() {
   });
 }
 
+// The vault data, read from storage under the vault lock, or null while locked. This is the
+// service worker's only read path, and it publishes nothing into this instance (no key, no data):
+// every call reads the stored record, key and activity time again, so a lock in any page is seen
+// by the next call. Like resume(), an idle session and a key that does not open the record are
+// locked here: every session key is removed (the pending offer too), and this page, if it holds
+// a key, drops it. accounts are what accounts() would show (an entry that is not an object, or
+// is an array, is left out; nothing seals this result), with the ids loaded() gives them: the ids
+// this page shows while it holds the same record. touch: true records activity (a menu fill);
+// auto-fill reads without. A lock in this page while the call waits or reads makes it return null.
+export function readUnlocked({ touch: active = false } = {}) {
+  const gen = epoch;
+  return exclusive(async () => {
+    if (epoch !== gen) return null;
+    const [record, key, last] = await Promise.all([store.getRecord(), store.getSessionKey(), store.getLastActive()]);
+    if (epoch !== gen || !record || !key) return null;
+    if (isStale(last)) {
+      drop();
+      await store.clearSessionKey();
+      return null;
+    }
+    let current;
+    try {
+      current = loaded(record, await vault.open(key, record));
+    } catch {
+      drop();
+      await store.clearSessionKey();
+      return null;
+    }
+    if (epoch !== gen) return null;
+    if (active) {
+      await store.touch();
+      if (epoch !== gen) return null;
+    }
+    return { ...current, accounts: current.accounts.filter(isEntry) };
+  });
+}
+
+// Leaves the auto-fill offer { origin, accountId } for the bind window, after a menu fill on
+// origin (exactly as normalizeOrigin() gives it). Written under the vault lock and only while a
+// session key is stored and not idle, so an offer never exists without the key: every lock
+// removes both. → true when stored; false (nothing written) for a bad origin or account id, a
+// locked or idle session, or a lock in this page meanwhile.
+export function setPendingBind(offer) {
+  const { origin, accountId } = offer ?? {};
+  if (!isOrigin(origin) || !isId(accountId)) return Promise.resolve(false);
+  const gen = epoch;
+  return exclusive(async () => {
+    if (epoch !== gen) return false;
+    const [key, last] = await Promise.all([store.getSessionKey(), store.getLastActive()]);
+    if (epoch !== gen || !key || isStale(last)) return false;
+    await store.setPendingBind({ origin, accountId });
+    return true;
+  });
+}
+
+// → the stored offer { origin, accountId, at } while it is younger than maxAgeMs, else null. It
+// stays stored (the bind window may read it again) until clearPendingBind() or a lock. An expired
+// offer, or one dated in the future past the clock slack (the clock was set back), is removed.
+export function takePendingBind(maxAgeMs = PENDING_BIND_MS) {
+  const limit = Number.isFinite(maxAgeMs) && maxAgeMs >= 0 ? maxAgeMs : PENDING_BIND_MS;
+  return exclusive(async () => {
+    const offer = await store.getPendingBind();
+    if (!offer) return null;
+    const age = Date.now() - offer.at;
+    if (age < limit && -age <= CLOCK_SLACK_MS) return offer;
+    await store.clearPendingBind();
+    return null;
+  });
+}
+
+export function clearPendingBind() {
+  return exclusive(() => store.clearPendingBind());
+}
+
 // Decrypts another vault record (an imported backup) with its own passphrase. → its raw
 // account entries; addAccounts() validates them. Throws SessionError('locked') when this page
 // is locked or locked meanwhile: decrypted entries are never handed out after a lock.
@@ -265,13 +353,48 @@ export function addAccounts(incoming) {
   });
 }
 
+// Removes the entry and, in the same seal, every binding to its id. → true when an entry went
 export function deleteAccount(id) {
   return mutate((current) => {
     if (typeof id !== 'string' || id === '') return false;
     const before = current.accounts.length;
     current.accounts = current.accounts.filter((a) => !(isEntry(a) && a.id === id));
+    adoptBindings(current, withoutAccountBindings(current, id));
     return before !== current.accounts.length;
   });
+}
+
+// Binds origin to the entry with id accountId, replacing origin's earlier binding, in one
+// read → change → seal → save. origin must be exactly what normalizeOrigin() returns for it (the
+// origin the worker put in the offer): anything else is SessionError('bad-origin'), and an id no
+// stored entry has is SessionError('no-account'); either way nothing is stored.
+// → the stored binding { origin, accountId, createdAt }
+export function addBinding(origin, accountId) {
+  if (!isOrigin(origin)) return Promise.reject(new SessionError('bad-origin'));
+  return mutate((current) => {
+    if (!isId(accountId) || !current.accounts.some((a) => isEntry(a) && a.id === accountId)) {
+      throw new SessionError('no-account');
+    }
+    const createdAt = Date.now();
+    adoptBindings(current, withBinding(current, origin, accountId, createdAt));
+    return { origin, accountId, createdAt };
+  });
+}
+
+// Removes the binding of origin (any URL of that origin). → true when there was one
+export function removeBinding(origin) {
+  return mutate((current) => {
+    const key = normalizeOrigin(origin);
+    const found = key !== null && bindingsOf(current).some((b) => b.origin === key);
+    adoptBindings(current, withoutBinding(current, origin));
+    return found;
+  });
+}
+
+// mutate() seals the object it hands to its change: a lib/bindings.js result (new data) is
+// copied back into it. A result without a bindings key (none was stored) adds none.
+function adoptBindings(current, next) {
+  if (Object.hasOwn(next, 'bindings')) current.bindings = next.bindings;
 }
 
 // One read → change → seal → save against the freshest stored record, under the vault lock.
@@ -353,6 +476,15 @@ function withIds(current, previous) {
 // → true for a stored entry that can be an account: an object that is not an array.
 function isEntry(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// → true for a string that is exactly an origin normalizeOrigin() returns.
+function isOrigin(value) {
+  return typeof value === 'string' && normalizeOrigin(value) === value;
+}
+
+function isId(value) {
+  return typeof value === 'string' && value !== '';
 }
 
 function isStale(lastActiveAt, now = Date.now()) {
