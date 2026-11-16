@@ -399,6 +399,14 @@ function createBindView() {
   const errorEl = $('#bind-error');
   const allowBtn = $('#bind-allow');
   const cancelBtn = $('#bind-cancel');
+  // "Replaces <account>", under the card, while the site is bound to another account: Allow binds
+  // it to the offered one instead (session.addBinding replaces). It names an account, so it is
+  // emptied with the rest of the view.
+  const replacesEl = document.createElement('p');
+  replacesEl.id = 'bind-replaces';
+  replacesEl.className = 'hint';
+  replacesEl.hidden = true;
+  $('.bind-card').after(replacesEl);
   let offer = null; // { origin, accountId, at } on display, while unlocked
   // The stored offer this window read, usable or not: the only one its Close, Not now or a failed
   // Allow removes. Another menu fill meanwhile stores a newer offer (for its own window), which
@@ -434,7 +442,17 @@ function createBindView() {
     offer = { origin, accountId: account.id, at: pending.at };
     setText(originEl, origin);
     setText(accountEl, accountTitle(account));
+    showReplaced(origin, account.id);
     return true;
+  }
+
+  // The account the site is bound to now, when that is another one the vault still has. A binding
+  // whose account is gone fills nothing, so there is nothing to name.
+  function showReplaced(origin, accountId) {
+    const current = session.bindings().find((b) => b.origin === origin);
+    const replaced = current && current.accountId !== accountId ? session.accounts().find((a) => a.id === current.accountId) : null;
+    setText(replacesEl, replaced ? t('bindReplaces', accountTitle(replaced)) : '');
+    replacesEl.hidden = !replaced;
   }
 
   // Nothing to offer: only the message and a Close button remain.
@@ -442,6 +460,8 @@ function createBindView() {
     offer = null;
     allowBtn.hidden = true;
     hintEl.hidden = true;
+    setText(replacesEl, '');
+    replacesEl.hidden = true;
     cancelBtn.textContent = t('bindClose');
     setText(errorEl, message);
   }
@@ -544,6 +564,8 @@ function createBindView() {
     readOffer = null;
     setText(originEl, '');
     setText(accountEl, '');
+    setText(replacesEl, '');
+    replacesEl.hidden = true;
     setText(errorEl, '');
     allowBtn.hidden = false;
     hintEl.hidden = false;

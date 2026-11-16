@@ -575,5 +575,14 @@
         "example": "bad input"
       }
     }
+  },
+  "bindReplaces": {
+    "message": "Replaces $ACCOUNT$ on this site.",
+    "placeholders": {
+      "account": {
+        "content": "$1",
+        "example": "GitHub · alice"
+      }
+    }
   }
 }
