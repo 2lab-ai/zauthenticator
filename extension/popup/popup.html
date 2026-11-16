@@ -71,6 +71,24 @@
       </form>
     </section>
 
+    <section class="view gate" data-view="bind" aria-labelledby="bind-title">
+      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="3"/><path d="M7 12h2M11 12h2M15 12h2"/><path d="M12 3v2M12 19v2"/></svg>
+      <h1 id="bind-title" data-i18n="bindTitle">Fill codes automatically?</h1>
+      <p class="lead" data-i18n="bindIntro">From now on, this account's code is filled in on this site whenever zauthenticator is unlocked.</p>
+      <div class="bind-card">
+        <p class="bind-term" data-i18n="bindSiteLabel">Site</p>
+        <p id="bind-origin" class="bind-origin"></p>
+        <p class="bind-term" data-i18n="bindAccountLabel">Account</p>
+        <p id="bind-account" class="bind-account"></p>
+      </div>
+      <p id="bind-hint" class="hint" data-i18n="bindPermissionHint">Your browser then asks you to allow access to this site only.</p>
+      <p id="bind-error" class="error" role="alert"></p>
+      <div class="bind-actions">
+        <button type="button" id="bind-cancel" class="btn" data-i18n="bindCancel">Not now</button>
+        <button type="button" id="bind-allow" class="btn primary" data-i18n="bindAllow">Allow</button>
+      </div>
+    </section>
+
     <section class="view" data-view="list" aria-label="Accounts" data-i18n-label="accountsLabel">
       <div class="search-row">
         <input id="search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="searchPlaceholder" data-i18n-label="searchLabel">
@@ -205,6 +223,14 @@
         </div>
       </section>
 
+      <section class="section" aria-labelledby="bindings-title">
+        <h2 id="bindings-title" data-i18n="bindingsTitle">Auto-fill sites</h2>
+        <p class="hint" data-i18n="bindingsHint">Codes are filled in automatically on these sites while zauthenticator is unlocked.</p>
+        <ul id="bindings" class="bindings"></ul>
+        <p id="bindings-empty" class="hint" data-i18n="bindingsEmpty">No sites yet. Right-click a code field on a site and choose an account to add one.</p>
+        <p id="bindings-error" class="error" role="alert"></p>
+      </section>
+
       <section class="section" aria-labelledby="about-title">
         <h2 id="about-title" data-i18n="aboutTitle">About</h2>
         <p class="hint" data-i18n="securitySummary">No network access and no telemetry. Secrets are encrypted at rest and never leave this device.</p>
@@ -232,6 +258,16 @@
         <span class="copied-badge" data-i18n="copied">Copied</span>
       </button>
       <button type="button" class="delete" data-i18n="deleteBtn">Delete</button>
+    </li>
+  </template>
+
+  <template id="binding-template">
+    <li class="binding">
+      <span class="binding-text">
+        <span class="binding-origin"></span>
+        <span class="binding-account"></span>
+      </span>
+      <button type="button" class="binding-remove" data-i18n="bindingRemove">Remove</button>
     </li>
   </template>
 </body>

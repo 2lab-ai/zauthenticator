@@ -94,6 +94,13 @@ html.tab body {
   box-shadow: 0 8px 30px rgb(16 24 32 / 8%);
 }
 
+/* Opened by the service worker in its own small window (#bind, #unlock): fills its width. */
+html.window body {
+  width: auto;
+  max-width: 440px;
+  max-height: none;
+}
+
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -377,7 +384,8 @@ body[data-state="setup"] .view[data-view="setup"],
 body[data-state="locked"] .view[data-view="locked"],
 body[data-state="list"] .view[data-view="list"],
 body[data-state="add"] .view[data-view="add"],
-body[data-state="settings"] .view[data-view="settings"] {
+body[data-state="settings"] .view[data-view="settings"],
+body[data-state="bind"] .view[data-view="bind"] {
   display: block;
 }
 
@@ -800,4 +808,121 @@ body.file-mode .drop-zone {
   align-items: center;
   margin: 4px 0 0;
   font-size: 12.5px;
+}
+
+/* ---- settings: auto-fill sites ---- */
+
+.bindings {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.bindings:empty {
+  display: none;
+}
+
+.binding {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.binding-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.binding-origin,
+.binding-account {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.binding-origin {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.binding-account {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.binding-remove {
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--danger);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.binding-remove:hover {
+  background: var(--danger-soft);
+}
+
+.binding-remove:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ---- bind window ---- */
+
+.bind-card {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.bind-card:has(.bind-origin:empty) {
+  display: none;
+}
+
+.bind-term {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+/* The exact origin is what the user agrees to: large, never cut off. */
+.bind-origin {
+  margin: 2px 0 10px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.bind-account {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.bind-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.bind-actions:has(#bind-allow[hidden]) {
+  grid-template-columns: 1fr;
 }
