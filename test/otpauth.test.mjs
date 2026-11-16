@@ -25,13 +25,69 @@ test('parse handles a label without an issuer prefix', () => {
   assert.equal(parse(`otpauth://totp/alice?secret=${SECRET}&issuer=Example`).issuer, 'Example');
 });
 
-test('parse takes the issuer parameter over the label prefix', () => {
+test('parse accepts an issuer parameter that matches the label prefix', () => {
   const agree = parse(`otpauth://totp/Example:alice?secret=${SECRET}&issuer=Example`);
   assert.equal(agree.issuer, 'Example');
   assert.equal(agree.label, 'alice');
-  const disagree = parse(`otpauth://totp/Old%20Name:alice?secret=${SECRET}&issuer=New%20Name`);
-  assert.equal(disagree.issuer, 'New Name');
-  assert.equal(disagree.label, 'alice');
+  const spaced = parse(`otpauth://totp/Big%20Bank%20:%20alice?secret=${SECRET}&issuer=Big+Bank`);
+  assert.equal(spaced.issuer, 'Big Bank');
+  assert.equal(spaced.label, 'alice');
+  // An issuer containing ':' is matched as a whole before the first colon is considered.
+  const colon = parse(`otpauth://totp/A%3AB:alice?secret=${SECRET}&issuer=A%3AB`);
+  assert.equal(colon.issuer, 'A:B');
+  assert.equal(colon.label, 'alice');
+  // Either side empty is not a conflict.
+  assert.equal(parse(`otpauth://totp/:alice?secret=${SECRET}&issuer=Example`).issuer, 'Example');
+  assert.equal(parse(`otpauth://totp/Example:alice?secret=${SECRET}&issuer=`).issuer, 'Example');
+  assert.equal(parse(`otpauth://totp/Example:alice?secret=${SECRET}&issuer=%20`).issuer, 'Example');
+});
+
+test('parse rejects an issuer parameter that disagrees with the label prefix', () => {
+  for (const uri of [
+    `otpauth://totp/Old%20Name:alice?secret=${SECRET}&issuer=New%20Name`,
+    `otpauth://totp/Example:alice?secret=${SECRET}&issuer=example`,
+    `otpauth://totp/Bank:alice?secret=${SECRET}&issuer=Evil`,
+    `otpauth://totp/A:B:alice?secret=${SECRET}&issuer=B`,
+  ]) {
+    assert.throws(() => parse(uri), /Issuer .* does not match the label prefix/, uri);
+  }
+});
+
+test('parse rejects duplicate secret, issuer, algorithm, digits and period parameters', () => {
+  const base = `otpauth://totp/Example:alice?secret=${SECRET}&issuer=Example`;
+  for (const extra of [
+    `secret=${SECRET}`,
+    'secret=GEZDGNBVGY3TQOJQ',
+    'issuer=Example',
+    'issuer=',
+    'algorithm=SHA1&algorithm=SHA1',
+    'digits=6&digits=8',
+    'period=30&period=30',
+    `%73ecret=${SECRET}`,
+  ]) {
+    assert.throws(() => parse(`${base}&${extra}`), /Duplicate (secret|issuer|algorithm|digits|period) parameter/, extra);
+  }
+  // Repeated unknown parameters are still ignored.
+  assert.equal(parse(`${base}&image=a&image=b&counter=1&counter=2`).secret, SECRET);
+});
+
+test('parse rejects malformed percent-encoding in the query', () => {
+  const base = `otpauth://totp/Example:alice?secret=${SECRET}`;
+  for (const extra of [
+    'issuer=Ex%ZZample',
+    'issuer=%',
+    'issuer=%4',
+    'issuer=%E0%A4%A',
+    'issuer=%C3',
+    'image=%zz',
+    'bad%key=1',
+  ]) {
+    assert.throws(() => parse(`${base}&${extra}`), /Malformed percent-encoding in query/, extra);
+  }
+  assert.throws(() => parse('otpauth://totp/Example:alice?secret=JBSW%Y3DPEHPK3PXP'), /Malformed percent-encoding in query/);
+  // Well-formed escapes and parameters without '=' or empty pairs still parse.
+  const account = parse(`${base}&issuer=Ex%61mple&image&&`);
+  assert.equal(account.issuer, 'Example');
 });
 
 test('parse percent-decodes the label and trims space after the colon', () => {

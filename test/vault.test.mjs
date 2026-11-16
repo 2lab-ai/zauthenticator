@@ -187,3 +187,107 @@ test('seal rejects data that is not JSON-serializable', async () => {
   const { record, rawKey } = await create(PASS, DATA, FAST);
   await assert.rejects(seal(rawKey, record, undefined), TypeError);
 });
+
+test('passphrases are NFC-normalized: composed and decomposed forms unlock the same vault', async () => {
+  const composed = 'Café crème brûlée';
+  const decomposed = 'Café crème brûlée';
+  assert.notEqual(composed, decomposed);
+  assert.equal(decomposed.normalize('NFC'), composed);
+
+  const a = await create(composed, DATA, FAST);
+  const fromNfd = await unlock(a.record, decomposed);
+  assert.deepEqual(fromNfd.data, DATA);
+  assert.deepEqual(fromNfd.rawKey, a.rawKey);
+
+  const b = await create(decomposed, DATA, FAST);
+  const fromNfc = await unlock(b.record, composed);
+  assert.deepEqual(fromNfc.data, DATA);
+  assert.deepEqual(fromNfc.rawKey, b.rawKey);
+});
+
+test('the 8-character minimum counts the NFC form', async () => {
+  // 7 composed characters, 14 code points when decomposed.
+  const decomposed = 'é'.repeat(7);
+  assert.equal([...decomposed].length, 14);
+  await assert.rejects(create(decomposed, DATA, FAST), isVaultError('weak-passphrase'));
+  const { record } = await create('é'.repeat(8), DATA, FAST);
+  assert.deepEqual((await unlock(record, 'é'.repeat(8))).data, DATA);
+});
+
+// Counts PBKDF2 work: importKey(..., 'PBKDF2', ...) and deriveBits calls on WebCrypto.
+function spyOnKdf(t) {
+  const { subtle } = globalThis.crypto;
+  const importKey = t.mock.method(subtle, 'importKey');
+  const deriveBits = t.mock.method(subtle, 'deriveBits');
+  return () => importKey.mock.calls.filter((call) => call.arguments[2] === 'PBKDF2').length
+    + deriveBits.mock.calls.length;
+}
+
+const b64 = (length) => Buffer.alloc(length, 7).toString('base64');
+const MiB = 1024 * 1024;
+
+test('structural checks run before key derivation', async (t) => {
+  const { record } = await create(PASS, DATA, FAST);
+  const kdfCalls = spyOnKdf(t);
+
+  // Positive control: the spy sees a good unlock derive the key.
+  await unlock(record, PASS);
+  assert.ok(kdfCalls() >= 2, `spy saw ${kdfCalls()} KDF calls on a good unlock`);
+  t.mock.reset();
+  const kdfCallsAfter = spyOnKdf(t);
+
+  const corrupt = {
+    'iv 11 bytes': { ...record, iv: b64(11) },
+    'iv 13 bytes': { ...record, iv: b64(13) },
+    'iv base64 too long': { ...record, iv: 'A'.repeat(1000) },
+    'missing ct': { ...record, ct: undefined },
+    'ct 15 bytes': { ...record, ct: b64(15) },
+    'ct over 1 MiB': { ...record, ct: b64(MiB + 1) },
+    'ct base64 too long': { ...record, ct: 'A'.repeat(3 * MiB) },
+    'salt 15 bytes': { ...record, kdf: { ...record.kdf, salt: b64(15) } },
+    'salt 65 bytes': { ...record, kdf: { ...record.kdf, salt: b64(65) } },
+    'salt base64 too long': { ...record, kdf: { ...record.kdf, salt: 'A'.repeat(MiB) } },
+    'iterations 0': { ...record, kdf: { ...record.kdf, iterations: 0 } },
+    // At the iteration cap the count itself is accepted; the oversized ct still rejects first.
+    'iterations 2,000,000 with ct over 1 MiB': {
+      ...record, kdf: { ...record.kdf, iterations: 2000000 }, ct: b64(MiB + 1),
+    },
+  };
+  for (const [name, bad] of Object.entries(corrupt)) {
+    await assert.rejects(unlock(bad, PASS), isVaultError('corrupt'), name);
+  }
+  const unsupported = {
+    'iterations 2,000,001': { ...record, kdf: { ...record.kdf, iterations: 2000001 } },
+    'iterations 10,000,000': { ...record, kdf: { ...record.kdf, iterations: 10000000 } },
+  };
+  for (const [name, bad] of Object.entries(unsupported)) {
+    await assert.rejects(unlock(bad, PASS), isVaultError('unsupported'), name);
+  }
+  assert.equal(kdfCallsAfter(), 0, 'no record above was passed to PBKDF2');
+});
+
+test('records at the size limits still pass the structural checks', async () => {
+  const { record, rawKey } = await create(PASS, DATA, FAST);
+  // A 64-byte salt and a 1 MiB ct are structurally valid; they fail only authentication.
+  const salt64 = { ...record, kdf: { ...record.kdf, salt: b64(64) } };
+  await assert.rejects(unlock(salt64, PASS), isVaultError('bad-passphrase'));
+  const ct1MiB = { ...record, ct: b64(MiB) };
+  await assert.rejects(unlock(ct1MiB, PASS), isVaultError('bad-passphrase'));
+  await assert.rejects(open(rawKey, ct1MiB), isVaultError('corrupt'));
+});
+
+test('create and seal refuse data whose ciphertext would exceed 1 MiB', async () => {
+  const { record, rawKey } = await create(PASS, DATA, FAST);
+  const big = { accounts: [], pad: 'x'.repeat(MiB) };
+  await assert.rejects(seal(rawKey, record, big), RangeError);
+  await assert.rejects(create(PASS, big, FAST), RangeError);
+  // Just under the limit seals and opens.
+  const overhead = JSON.stringify({ accounts: [], pad: '' }).length + 16;
+  const fits = { accounts: [], pad: 'x'.repeat(MiB - overhead) };
+  assert.deepEqual(await open(rawKey, await seal(rawKey, record, fits)), fits);
+});
+
+test('create rejects iteration counts outside 1..2,000,000', async () => {
+  await assert.rejects(create(PASS, DATA, { iterations: 2000001 }), isVaultError('unsupported'));
+  await assert.rejects(create(PASS, DATA, { iterations: 0 }), isVaultError('corrupt'));
+});

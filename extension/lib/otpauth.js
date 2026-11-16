@@ -92,15 +92,41 @@ function splitLabel(path, issuerParam) {
   return { prefix: decoded.slice(0, colon), label: decoded.slice(colon + 1) };
 }
 
+// Parameters that set a field; a second copy is an error rather than silently ignored.
+const SINGLE_PARAMS = new Set(['secret', 'issuer', 'algorithm', 'digits', 'period']);
+
+// application/x-www-form-urlencoded, like URLSearchParams ('+' is a space), except that
+// malformed percent-encoding is an error instead of being kept literally or replaced.
+function parseQuery(query) {
+  const params = new Map();
+  for (const pair of query.split('&')) {
+    if (pair === '') continue;
+    const eq = pair.indexOf('=');
+    const name = decodeComponent((eq === -1 ? pair : pair.slice(0, eq)).replaceAll('+', ' '), 'query');
+    const value = decodeComponent((eq === -1 ? '' : pair.slice(eq + 1)).replaceAll('+', ' '), 'query');
+    if (!SINGLE_PARAMS.has(name)) continue;
+    if (params.has(name)) throw new Error(`Duplicate ${name} parameter`);
+    params.set(name, value);
+  }
+  return params;
+}
+
 /**
  * Parse an `otpauth://totp/...` URI.
  *
  * The label is `Issuer:account` or `account` (percent-encoded; a literal or encoded colon
- * separates the prefix). An `issuer` query parameter wins over the label prefix.
+ * separates the prefix). The issuer is the `issuer` query parameter or the label prefix; when
+ * both are present and non-empty they must be equal (after trimming), so a link cannot show one
+ * issuer in its label and save another.
+ *
+ * The query is decoded like a form (`+` is a space). Malformed percent-encoding anywhere in the
+ * label or query, and a repeated secret/issuer/algorithm/digits/period parameter, are errors.
+ * Other parameters are ignored.
  *
  * @param {string} uri
  * @returns {Account}
- * @throws {Error} for HOTP URIs, other schemes, malformed encoding, or invalid parameters
+ * @throws {Error} for HOTP URIs, other schemes, malformed encoding, duplicate or invalid
+ *   parameters, or an issuer parameter that disagrees with the label prefix
  */
 export function parse(uri) {
   if (typeof uri !== 'string') throw new TypeError('URI must be a string');
@@ -115,9 +141,12 @@ export function parse(uri) {
   if (type.toLowerCase() === 'hotp') throw new Error('HOTP is not supported');
   if (type.toLowerCase() !== 'totp') throw new Error(`Unsupported OTP type: ${type || '(none)'}`);
 
-  const params = new URLSearchParams(query);
+  const params = parseQuery(query);
   const issuerParam = text(params.get('issuer'));
   const { prefix, label } = splitLabel(path, issuerParam);
+  if (issuerParam && text(prefix) && text(prefix) !== issuerParam) {
+    throw new Error(`Issuer "${issuerParam}" does not match the label prefix "${text(prefix)}"`);
+  }
 
   return normalize({
     issuer: issuerParam || prefix,

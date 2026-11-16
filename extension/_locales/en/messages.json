@@ -305,6 +305,9 @@
   "errDecoderMissing": {
     "message": "The QR decoder failed to load."
   },
+  "errImageTooLarge": {
+    "message": "That image is too large to scan (limit: 20 MB and 50 megapixels)."
+  },
   "errNotImage": {
     "message": "Choose an image file (PNG, JPEG, …)."
   },
