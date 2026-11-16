@@ -91,14 +91,22 @@ const HOST_HTML = `<!doctype html><html><head>${HEAD}<title>Host</title></head><
 const MULTI_PATH = '/multi';
 const MULTI_HTML = `<!doctype html><html><head>${HEAD}<title>Sign in</title></head><body><form method="post" action="/submitted"><label>Zip <input id="zip" name="zip" inputmode="numeric" maxlength="6"></label><label>Number <input inputmode="numeric" maxlength="6"></label><label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label><button>Sign in</button></form></body></html>`;
 const UNNAMED = 'input[inputmode="numeric"]:not([name]):not([id])';
+// Only fields sized like a code, with nothing that says one-time code: a PIN and an unnamed tel
+// field (no id or name: "tel" would name it for another number). Auto-fill must fill neither.
+const PINONLY_PATH = '/pinonly';
+const PINONLY_HTML = `<!doctype html><html><head>${HEAD}<title>PIN</title></head><body><form method="post" action="/submitted"><label>PIN <input name="pin" inputmode="numeric" maxlength="6"></label><label>Number <input type="tel" maxlength="8"></label><button>Go</button></form></body></html>`;
 
 async function routeTestOrigins(context) {
   const served = [];
+  const pages = new Map([
+    [MULTI_PATH, MULTI_HTML],
+    [PINONLY_PATH, PINONLY_HTML],
+  ]);
   for (const origin of TEST_ORIGINS) {
     await context.route(`${origin}/**`, (route) => {
       const url = new URL(route.request().url());
       served.push(url.href);
-      const body = url.origin === HOST ? HOST_HTML : url.pathname === MULTI_PATH ? MULTI_HTML : LOGIN_HTML;
+      const body = url.origin === HOST ? HOST_HTML : (pages.get(url.pathname) ?? LOGIN_HTML);
       return route.fulfill({ status: 200, contentType: 'text/html', body });
     });
   }
@@ -660,6 +668,24 @@ export async function runAutofill({ rep, extensionDir }) {
       's3-one-fill-per-page',
       value === expected && now.otp === expected && now.zip === '' && now.unnamed === '',
       `${url}: #otp ${JSON.stringify(value)} (reference ${expected}); ${NO_FILL_WAIT_MS} ms later #otp ${JSON.stringify(now.otp)}, #zip (inputmode numeric, maxlength 6) ${JSON.stringify(now.zip)}, unnamed numeric maxlength-6 field ${JSON.stringify(now.unnamed)} (both must stay empty)`,
+    );
+    await rec.page.close();
+  });
+
+  // Auto-fill needs a sign of a one-time code: on a bound page whose only fields are a PIN and an
+  // unnamed tel field, both sized for a code, the content script runs and fills nothing.
+  step('s3-no-signal-no-fill', ['s2-bind-allow'], async () => {
+    const url = `${OTP}${PINONLY_PATH}`;
+    const rec = await openTestPage(url);
+    await sleep(NO_FILL_WAIT_MS);
+    const now = await rec.page.evaluate(() => ({
+      pin: document.querySelector('input[name="pin"]')?.value ?? null,
+      tel: document.querySelector('input[type="tel"]')?.value ?? null,
+    }));
+    rep.check(
+      's3-no-signal-no-fill',
+      now.pin === '' && now.tel === '' && rec.worlds.inMainFrame() >= 1,
+      `${url} after ${NO_FILL_WAIT_MS} ms: pin field (inputmode numeric, maxlength 6) ${JSON.stringify(now.pin)}, unnamed tel maxlength-8 field ${JSON.stringify(now.tel)} (both must stay empty); content-script worlds in the top frame ${rec.worlds.inMainFrame()} (must be at least 1)`,
     );
     await rec.page.close();
   });

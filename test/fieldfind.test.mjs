@@ -116,9 +116,13 @@ function found(html) {
   const fields = ff.findInDocument(parse(html));
   return fields && fields.map((el) => el.attrs['data-t'] ?? '?');
 }
+// Split boxes named otp-1, otp-2, ...: the names say they hold a code. `extra` goes on the first.
 const boxes = (n, extra = '') =>
   Array.from({ length: n }, (_, i) => `<input name="otp-${i + 1}" maxlength="1" inputmode="numeric" data-t="b${i + 1}"${i === 0 ? extra : ''}>`).join('');
-const labels = (n) => Array.from({ length: n }, (_, i) => `b${i + 1}`);
+// The same boxes with no name: nothing in them says code (a PIN entry looks like this).
+const bareBoxes = (n, extra = '', tag = 'b') =>
+  Array.from({ length: n }, (_, i) => `<input maxlength="1" inputmode="numeric" data-t="${tag}${i + 1}"${i === 0 ? extra : ''}>`).join('');
+const labels = (n, tag = 'b') => Array.from({ length: n }, (_, i) => `${tag}${i + 1}`);
 
 // ---- detection: positive -----------------------------------------------------------------------
 
@@ -171,47 +175,44 @@ test('security code is not a code name (it is what card forms call the CVV)', ()
   }
 });
 
-// Rules 2 to 4 skip a field whose name, id, label, placeholder or autocomplete names something else
-// a short number goes into, and a field whose autocomplete asks for any other kind of value.
+// Rules 2 and 3 skip a field whose name, id, label, placeholder or autocomplete names something
+// else a short number goes into, and a field whose autocomplete asks for any other kind of value.
 const EXCLUDED_WORDS = [
   'zip', 'postal', 'phone', 'tel', 'mobile', 'amount', 'price', 'card', 'cc', 'cvv', 'cvc', 'csc', 'birth',
   'bday', 'dob', 'date', 'year', 'month', 'day', 'search', 'account', 'qty', 'quantity', 'captcha',
 ];
 
-test('rules 2 to 4 skip a field named for another number, in name, id, aria-label, placeholder or autocomplete', () => {
+test('rules 2 and 3 skip a field named for another number, in name, id, aria-label, placeholder or autocomplete', () => {
   for (const word of EXCLUDED_WORDS) {
     for (const attr of ['name', 'id', 'aria-label', 'placeholder', 'autocomplete']) {
       // Rule 2: a code name with the word beside it.
       assert.equal(found(`<input ${attr === 'name' ? '' : 'name="otp" '}${attr}="${attr === 'name' ? `otp-${word}` : word}">`), null, `rule 2, ${attr}=${word}`);
-      // Rule 3: a numeric field sized for a code.
-      assert.equal(found(`<input inputmode="numeric" maxlength="6" ${attr}="${word}">`), null, `rule 3, ${attr}=${word}`);
+      // Rule 3: split boxes named for a code, one of them also so named.
+      const marked = attr === 'name' ? boxes(6).replace('name="otp-3"', `name="${word}-3"`) : boxes(6).replace('data-t="b3"', `data-t="b3" ${attr}="${word}"`);
+      assert.equal(found(`<div>${marked}</div>`), null, `rule 3, ${attr}=${word}`);
     }
-    // Rule 4: split boxes, one of them so named.
-    const marked = boxes(6).replace('name="otp-3"', `name="${word}-3"`);
-    assert.equal(found(`<div>${marked}</div>`), null, `rule 4, ${word}`);
   }
-  // camelCase and compounds.
+  // camelCase and compounds, beside a label that names a code.
   for (const name of ['postalCode', 'zipCode', 'zipcode', 'postcode', 'phoneNumber', 'telephone', 'mobileNo', 'cardNumber', 'ccNumber', 'cvc2', 'birthYear', 'birthday', 'dateOfBirth', 'expiryMonth', 'accountNumber', 'captchaInput', 'searchQuery']) {
-    assert.equal(found(`<input type="tel" maxlength="6" name="${name}">`), null, name);
+    assert.equal(found(`<input type="tel" maxlength="6" name="${name}" aria-label="Verification code">`), null, name);
   }
   // The postal field next to a code field: the code field is the one found.
-  assert.deepEqual(found('<input inputmode="numeric" maxlength="6" name="postal"><input inputmode="numeric" maxlength="6" data-t="hit">'), ['hit']);
+  assert.deepEqual(found('<input name="postal" aria-label="Verification code"><input aria-label="Verification code" data-t="hit">'), ['hit']);
 });
 
 test('the excluded words count only as whole words: hotel, today, update, cardinal and the like are not', () => {
   for (const name of ['hotelCode', 'today', 'updateCode', 'success', 'accepted', 'cardinal', 'research', 'holiday', 'zipper', 'spotprice']) {
-    assert.deepEqual(found(`<input inputmode="numeric" maxlength="6" name="${name}" data-t="hit">`), ['hit'], name);
+    assert.deepEqual(found(`<input inputmode="numeric" maxlength="6" name="${name}" aria-label="Verification code" data-t="hit">`), ['hit'], name);
   }
 });
 
-test('rules 2 to 4 skip a field whose autocomplete is anything but one-time-code, off, on or empty', () => {
+test('rules 2 and 3 skip a field whose autocomplete is anything but one-time-code, off, on or empty', () => {
   for (const value of ['', 'off', 'on', 'OFF', ' on ', 'one-time-code']) {
     assert.deepEqual(found(`<input name="otp" autocomplete="${value}" data-t="hit">`), ['hit'], value);
-    assert.deepEqual(found(`<input inputmode="numeric" maxlength="6" autocomplete="${value}" data-t="hit">`), ['hit'], value);
+    assert.deepEqual(found(`<div>${boxes(6, ` autocomplete="${value}"`)}</div>`), labels(6), value);
   }
   for (const value of ['nope', 'new-password', 'username', 'email', 'transaction-amount', 'section-login otp']) {
     assert.equal(found(`<input name="otp" autocomplete="${value}">`), null, value);
-    assert.equal(found(`<input inputmode="numeric" maxlength="6" autocomplete="${value}">`), null, value);
     assert.equal(found(`<div>${boxes(6, ` autocomplete="${value}"`)}</div>`), null, value);
   }
 });
@@ -221,29 +222,66 @@ test('rule 1 (autocomplete one-time-code) is not narrowed: it wins whatever the 
   assert.deepEqual(found('<input autocomplete="section-sms one-time-code" id="zip" data-t="hit">'), ['hit']);
 });
 
-test('a numeric field sized for a code is found', () => {
-  assert.deepEqual(found('<input inputmode="numeric" maxlength="6" data-t="hit">'), ['hit']);
-  assert.deepEqual(found('<input type="tel" maxlength="8" data-t="hit">'), ['hit']);
-  assert.deepEqual(found('<input type="number" maxlength="7" data-t="hit">'), ['hit']);
-  assert.deepEqual(found('<input type="TEL" maxlength=" 6 " data-t="hit">'), ['hit']);
+// Auto-fill writes with no click from the user, so a field only sized like a code (a PIN, a short
+// number) is not taken: it is left to the right-click menu.
+test('a field only sized for a code (numeric, tel or number, maxlength 6 to 8) is not found', () => {
+  assert.equal(found('<input name="pin" inputmode="numeric" maxlength="6">'), null);
+  assert.equal(found('<input type="tel" maxlength="8">'), null);
+  assert.equal(found('<input inputmode="numeric" maxlength="6">'), null);
+  assert.equal(found('<input type="number" maxlength="7">'), null);
+  assert.equal(found('<input type="TEL" maxlength=" 6 ">'), null);
+  // A label on an element around a lone field does not count for it (rule 2 reads the field's own
+  // name, id, label and placeholder only).
+  assert.equal(found('<div aria-label="Enter verification code"><input inputmode="numeric" maxlength="6"></div>'), null);
+  assert.equal(found('<form id="otp-form"><input inputmode="numeric" maxlength="6"></form>'), null);
+  // The same fields named for a code are found.
+  assert.deepEqual(found('<input name="pin" inputmode="numeric" maxlength="6" aria-label="One-time code" data-t="hit">'), ['hit']);
+  assert.deepEqual(found('<input type="tel" maxlength="8" name="otp" data-t="hit">'), ['hit']);
 });
 
 test('6 to 8 single-character boxes are found as one run, the first named and marked one-time-code', () => {
   assert.deepEqual(found(`<form><input name="user" value="a"><div class="boxes">${boxes(6, ' autocomplete="one-time-code"')}</div></form>`), labels(6));
   assert.deepEqual(found(`<div>${boxes(8)}</div>`), labels(8));
-  // Each box in its own wrapper.
+  // Each box in its own wrapper: the row around the wrappers is the group, and its label counts.
   const wrapped = Array.from({ length: 6 }, (_, i) => `<div class="cell"><input maxlength="1" data-t="b${i + 1}"></div>`).join('');
-  assert.deepEqual(found(`<div class="row">${wrapped}</div>`), labels(6));
-  // A hidden input holding the joined value does not break the run.
+  assert.deepEqual(found(`<div class="row" aria-label="Enter verification code">${wrapped}</div>`), labels(6));
+  assert.equal(found(`<div class="row">${wrapped}</div>`), null);
+  // A hidden input holding the joined value does not break the run, and does not speak for it.
   const withHidden = Array.from({ length: 6 }, (_, i) => `<input maxlength="1" data-t="b${i + 1}">`);
   withHidden.splice(3, 0, '<input type="hidden" name="otp">');
-  assert.deepEqual(found(`<div>${withHidden.join('')}</div>`), labels(6));
+  assert.deepEqual(found(`<div id="otp-boxes">${withHidden.join('')}</div>`), labels(6));
+  assert.equal(found(`<div>${withHidden.join('')}</div>`), null);
 });
 
-test('the rules apply in order: one-time-code, then names, then numeric size, then boxes', () => {
+// Rule 3 needs a sign of a code too: a box marked one-time-code, a box whose name, id, label or
+// placeholder names a code, or a group (the element around the boxes) whose aria-label or id does.
+test('split boxes with no sign of a code (a PIN entry) are not found', () => {
+  assert.equal(found(`<div>${bareBoxes(6)}</div>`), null);
+  assert.equal(found(`<div>${bareBoxes(8)}</div>`), null);
+  assert.equal(found(`<form><input name="user" value="a"><div class="pin">${bareBoxes(6)}</div></form>`), null);
+  // A label on an element further out than the group does not count.
+  assert.equal(found(`<div aria-label="Enter verification code"><div class="row">${bareBoxes(6)}</div></div>`), null);
+  // Neither does a group label that names no code.
+  assert.equal(found(`<div aria-label="Enter your PIN" id="pin-boxes">${bareBoxes(6)}</div>`), null);
+});
+
+test('split boxes with a sign of a code are found: on a box, or on the group', () => {
+  assert.deepEqual(found(`<div>${bareBoxes(6, ' aria-label="OTP digit 1"')}</div>`), labels(6));
+  assert.deepEqual(found(`<div aria-label="Enter verification code">${bareBoxes(6)}</div>`), labels(6));
+  assert.deepEqual(found(`<div>${bareBoxes(6, ' autocomplete="one-time-code"')}</div>`), labels(6));
+  assert.deepEqual(found(`<div id="totp-input">${bareBoxes(8)}</div>`), labels(8));
+  assert.deepEqual(found(`<div>${bareBoxes(6, ' placeholder="2FA"')}</div>`), labels(6));
+  // The sign may be on any box of the run, not only the first.
+  assert.deepEqual(found(`<div>${bareBoxes(6).replace('data-t="b4"', 'data-t="b4" id="otp-4"')}</div>`), labels(6));
+  // A PIN run first and a code run after it: the code run is the one found.
+  assert.deepEqual(found(`<div>${bareBoxes(6, '', 'p')}</div><div aria-label="Verification code">${bareBoxes(6)}</div>`), labels(6));
+});
+
+test('the rules apply in order: one-time-code, then names, then boxes', () => {
   assert.deepEqual(found('<input name="verification" data-t="named"><input autocomplete="one-time-code" data-t="otc">'), ['otc']);
-  assert.deepEqual(found('<input inputmode="numeric" maxlength="6" data-t="sized"><input name="otp" data-t="named">'), ['named']);
-  assert.deepEqual(found(`<div>${boxes(6)}</div><input type="tel" maxlength="6" data-t="sized">`), ['sized']);
+  assert.deepEqual(found(`<div>${boxes(6)}</div><input name="otp" data-t="named">`), ['named']);
+  // A field only sized for a code is not a rule of its own: the boxes are found.
+  assert.deepEqual(found(`<div>${boxes(6)}</div><input type="tel" maxlength="6" data-t="sized">`), labels(6));
   // Within a rule the first field in document order wins.
   assert.deepEqual(found('<input name="otp" data-t="first"><input name="totp" data-t="second">'), ['first']);
 });
@@ -297,7 +335,14 @@ test('box runs that are too short, too long, broken or partly typed are skipped'
 test('findOtpField reads plain attribute maps (no DOM needed)', () => {
   const field = (attrs, extra = {}) => ({ attrs, value: '', disabled: false, readOnly: false, visible: true, group: 'g', ...extra });
   assert.deepEqual(ff.findOtpField([field({ name: 'user' }), field({ autocomplete: 'one-time-code' })]), [1]);
-  assert.deepEqual(ff.findOtpField(Array.from({ length: 6 }, () => field({ maxlength: '1' }))), [0, 1, 2, 3, 4, 5]);
+  assert.equal(ff.findOtpField([field({ name: 'pin', inputmode: 'numeric', maxlength: '6' })]), null);
+  // Boxes: the group's label and id come in attrs as group-aria-label and group-id.
+  const sixBoxes = (attrs = {}) => Array.from({ length: 6 }, () => field({ maxlength: '1', ...attrs }));
+  assert.equal(ff.findOtpField(sixBoxes()), null);
+  assert.deepEqual(ff.findOtpField(sixBoxes({ 'group-aria-label': 'Enter verification code' })), [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual(ff.findOtpField(sixBoxes({ 'group-id': 'otp' })), [0, 1, 2, 3, 4, 5]);
+  // A lone field's group label is not read.
+  assert.equal(ff.findOtpField([field({ inputmode: 'numeric', maxlength: '6', 'group-aria-label': 'Verification code' })]), null);
   assert.equal(ff.findOtpField([field({ name: 'otp' }, { visible: false })]), null);
   assert.equal(ff.findOtpField([field({ name: 'otp' }, { value: '1' })]), null);
   assert.equal(ff.findOtpField([]), null);
@@ -449,8 +494,8 @@ test('content script: fills the code field once with input and change events, no
 });
 
 test('content script: one fill per page load: a second candidate is never asked for or filled, and the watch stops', async () => {
-  // The OTP field and, after it, a field rule 3 also takes (numeric, sized for a code).
-  const page = '<form><input name="otp" data-t="otp"><input inputmode="numeric" maxlength="6" data-t="second"></form>';
+  // The OTP field and, after it, a field rule 2 also takes (named for a code).
+  const page = '<form><input name="otp" data-t="otp"><input name="totp" data-t="second"></form>';
   let n = 0;
   const run = await runContentScript(page, () => ({ code: String(111111 * ++n).padStart(6, '0') }));
   assert.equal(byTag(run.doc, 'otp').value, '111111');
@@ -473,14 +518,28 @@ test('content script: one fill per page load: a second candidate is never asked 
 });
 
 test('content script: split boxes filled → the watch stops too (a second run of boxes stays empty)', async () => {
+  // The second run is labelled for a code as well, so rule 3 would take it.
   const second = Array.from({ length: 6 }, (_, i) => `<input maxlength="1" data-t="c${i + 1}">`).join('');
-  const run = await runContentScript(`<div>${boxes(6)}</div><div>${second}</div>`, { code: '102938' });
+  const run = await runContentScript(`<div>${boxes(6)}</div><div aria-label="Verification code">${second}</div>`, { code: '102938' });
   assert.deepEqual(labels(6).map((t) => byTag(run.doc, t).value), ['1', '0', '2', '9', '3', '8']);
   await run.timers.advance(60 * 1000);
   assert.equal(run.messages.length, 1);
   assert.ok(['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].every((t) => byTag(run.doc, t).value === ''));
   assert.equal(run.timers.pending(), 0);
   assert.equal(run.listeners.length, 0);
+});
+
+test('content script: a page with only a PIN field, a short numeric field and PIN boxes → no code asked for, nothing filled', async () => {
+  const page = `<form><input name="pin" inputmode="numeric" maxlength="6" data-t="pin"><input type="tel" maxlength="8" data-t="tel"><div>${bareBoxes(6)}</div></form>`;
+  const run = await runContentScript(page, { code: '123456' });
+  for (const type of ['load', 'pageshow', 'resize', 'visibilitychange']) await run.fire(type);
+  await run.mutate();
+  await run.timers.advance(60 * 1000);
+  assert.equal(run.messages.length, 0);
+  for (const t of ['pin', 'tel', ...labels(6)]) {
+    assert.equal(byTag(run.doc, t).value, '', t);
+    assert.deepEqual(byTag(run.doc, t).events, [], t);
+  }
 });
 
 test('content script: no code (locked, idle, unbound) → nothing filled and the watch stops', async () => {
@@ -622,7 +681,9 @@ test('content script: split boxes get one digit each', async () => {
 });
 
 test('content script: a single field whose maxlength is shorter than the code is not filled', async () => {
-  const run = await runContentScript('<input type="tel" maxlength="6" data-t="f">', { code: '12345678' });
+  const run = await runContentScript('<input name="otp" type="tel" maxlength="6" data-t="f">', { code: '12345678' });
+  // The field was found and a code asked for; the code does not fit.
+  assert.equal(run.messages.length, 1);
   assert.equal(byTag(run.doc, 'f').value, '');
 });
 

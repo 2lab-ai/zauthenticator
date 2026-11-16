@@ -6,6 +6,12 @@
 //
 // findOtpField() holds the rules and reads plain field descriptions (attribute maps), so it needs
 // no DOM. findInDocument() describes the page's <input> elements and maps the answer back to them.
+//
+// The field found is filled with no click from the user, so every rule needs a sign that the page
+// asks for a one-time code: autocomplete="one-time-code", or a name, id, label or placeholder that
+// names one (OTP, 2FA, verification code, ...). A field that is only sized like a code (a PIN, a
+// short number, boxes with no such sign) is never filled by itself; the right-click menu fills it
+// when the user asks.
 'use strict';
 
 (() => {
@@ -15,11 +21,11 @@
   // A name split into words: at anything that is not a letter or digit, at camelCase humps
   // (otpCode, OTPCode) and where letters meet digits (otp1; 2fa stays whole).
   const WORD_BREAK = /[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[0-9])/;
-  // Rule 2, matched against name, id, aria-label and placeholder: one of these words, or one of
-  // the phrases (any separator or none between their parts).
+  // Rules 2 and 3, matched against name, id, aria-label and placeholder: one of these words, or one
+  // of the phrases (any separator or none between their parts).
   const CODE_WORDS = new Set(['otp', 'totp', 'mfa', '2fa']);
   const CODE_PHRASES = [/one.?time.?(code|pass|password|pin)/i, /verification.?code/i, /auth(entication)?.?code/i];
-  // Rules 2 to 4 pass over a field whose name, id, aria-label, placeholder or autocomplete has one
+  // Rules 2 and 3 pass over a field whose name, id, aria-label, placeholder or autocomplete has one
   // of these words (whole words, split as above; the last five are common one-word spellings):
   // other short numbers a page asks for.
   const OTHER_NUMBER_WORDS = new Set([
@@ -36,10 +42,17 @@
   const CODE_TYPES = new Set(['', 'text', 'tel', 'number']);
   // The attributes the rules read; describe() copies exactly these.
   const ATTRIBUTES = ['type', 'autocomplete', 'inputmode', 'maxlength', ...NAMED_ATTRIBUTES];
+  // Rule 3 also reads these attributes of the element that groups the boxes (a row labelled
+  // "Enter verification code"); describe() copies them into attrs under GROUP_PREFIX + the name,
+  // so the rules need no DOM. Rule 2 does not read them: the group of a lone field is an ancestor
+  // further out (see groupOf()), and its label says nothing sure about that one field.
+  const GROUP_ATTRIBUTES = ['aria-label', 'id'];
+  const GROUP_PREFIX = 'group-';
 
   // A field description:
   //   { attrs: { <lower-case attribute name>: string }, value: string, disabled: boolean,
   //     readOnly: boolean, visible: boolean, group: any }
+  // attrs also holds 'group-aria-label' and 'group-id' when the group element has them.
   // `group` is compared with ===; boxes of one split code share it (see groupOf()).
 
   function attribute(field, name) {
@@ -82,35 +95,49 @@
     return words(value).some((word) => CODE_WORDS.has(word)) || CODE_PHRASES.some((phrase) => phrase.test(value));
   }
 
-  // Named for another number, or marked by autocomplete as another kind of value: rules 2 to 4
+  // Named for another number, or marked by autocomplete as another kind of value: rules 2 and 3
   // never take it.
   function isOtherField(field) {
     if (!NEUTRAL_AUTOCOMPLETE.includes(attribute(field, 'autocomplete').trim().toLowerCase())) return true;
     return EXCLUSION_ATTRIBUTES.some((name) => words(attribute(field, name)).some((word) => OTHER_NUMBER_WORDS.has(word)));
   }
 
+  // autocomplete="one-time-code" (the attribute is a token list).
+  function isMarkedOneTimeCode(field) {
+    return attribute(field, 'autocomplete').toLowerCase().split(/\s+/).includes('one-time-code');
+  }
+
+  // A name, id, label or placeholder that names a code.
+  function isNamedForCode(field) {
+    return NAMED_ATTRIBUTES.some((name) => namesCode(attribute(field, name)));
+  }
+
+  // The label or id of the field's group (copied by describe()) names a code.
+  function isInGroupNamedForCode(field) {
+    return GROUP_ATTRIBUTES.some((name) => namesCode(attribute(field, GROUP_PREFIX + name)));
+  }
+
   const SINGLE_FIELD_RULES = [
-    // 1. autocomplete="one-time-code" (the attribute is a token list), whatever else the field says.
-    (field) => attribute(field, 'autocomplete').toLowerCase().split(/\s+/).includes('one-time-code'),
+    // 1. autocomplete="one-time-code", whatever else the field says.
+    isMarkedOneTimeCode,
     // 2. a name, id, label or placeholder that names a code.
-    (field) => !isOtherField(field) && NAMED_ATTRIBUTES.some((name) => namesCode(attribute(field, name))),
-    // 3. a numeric field sized for a code.
-    (field) => {
-      const numeric = attribute(field, 'inputmode').trim().toLowerCase() === 'numeric' ||
-        ['tel', 'number'].includes(attribute(field, 'type').trim().toLowerCase());
-      const max = maxLength(field);
-      return numeric && max >= MIN_DIGITS && max <= MAX_DIGITS && !isOtherField(field);
-    },
+    (field) => !isOtherField(field) && isNamedForCode(field),
   ];
 
-  // 4. The first run of MIN_DIGITS..MAX_DIGITS single-character boxes in one group, every box
-  // fillable and none named for another number. Inputs that are not shown or not of a code type
-  // (a hidden input that holds the joined value) are passed over; any other input ends a run.
+  // 3. The first run of MIN_DIGITS..MAX_DIGITS single-character boxes in one group, every box
+  // fillable and none named for another number, that says it holds a code: a box marked
+  // one-time-code, a box whose name, id, label or placeholder names a code, or a group whose
+  // aria-label or id does. Inputs that are not shown or not of a code type (a hidden input that
+  // holds the joined value) are passed over, and say nothing for the run; any other input ends a
+  // run. A run with no such sign (a PIN typed into boxes) is skipped, and the next one is looked at.
   // → indices, or null
   function boxRun(fields) {
     let run = [];
     const qualifies = () =>
-      run.length >= MIN_DIGITS && run.length <= MAX_DIGITS && run.every((i) => isFillable(fields[i]) && !isOtherField(fields[i]));
+      run.length >= MIN_DIGITS &&
+      run.length <= MAX_DIGITS &&
+      run.every((i) => isFillable(fields[i]) && !isOtherField(fields[i])) &&
+      run.some((i) => isMarkedOneTimeCode(fields[i]) || isNamedForCode(fields[i]) || isInGroupNamedForCode(fields[i]));
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
       if (!isShownCodeInput(field)) continue;
@@ -161,13 +188,19 @@
       const value = el.getAttribute(name);
       if (value !== null) attrs[name] = value;
     }
+    const group = groupOf(el);
+    for (const name of GROUP_ATTRIBUTES) {
+      const value = group ? group.getAttribute(name) : null;
+      const key = GROUP_PREFIX + name;
+      if (value !== null) attrs[key] = value;
+    }
     return {
       attrs,
       value: typeof el.value === 'string' ? el.value : '',
       disabled: el.matches(':disabled'),
       readOnly: el.readOnly === true,
       visible: isVisible(el),
-      group: groupOf(el),
+      group,
     };
   }
 
