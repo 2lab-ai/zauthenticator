@@ -153,7 +153,7 @@ which exports `handleMenuClick(info, tab)`, `handleMessage(message, sender)` (re
 `{code}`/`{code:null}`), `rebuildMenu()`, `syncRegistrations()`, `onStorageChanged(changes, area)`.
 The shipped worker has no test hooks. The e2e (AF-C) runs a test copy whose manifest points at a
 test-only entry `e2e/fixtures/background.test.js` that imports the same module, wires the same
-listeners and exposes `globalThis.__zauthTest = { handleMenuClick }`; the test copy also adds
+listeners and exposes `globalThis.__zauthTest = { handleMenuClick, frameIdFor }` (frameIdFor: test-only, frame URL → frameId); the test copy also adds
 `host_permissions` for the routed test origins.
 
 Reconciliation (AF-B): `syncRegistrations()` is the single reconciler, run on `onStartup`,
