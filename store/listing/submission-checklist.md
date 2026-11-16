@@ -29,7 +29,7 @@ and [edge-addons.md](edge-addons.md). Facts were checked on 2026-11-16 against t
 | `store/assets/screenshots/4-add.png` | 1280×800 | both stores |
 | `store/assets/screenshots/5-settings.png` | 1280×800 | both stores |
 
-- [ ] The button labels quoted in the certification notes match the released popup.
+Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-17 (v0.2.0).
 
 ## 1. Accounts (once)
 

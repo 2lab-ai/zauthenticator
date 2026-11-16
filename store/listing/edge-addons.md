@@ -151,8 +151,7 @@ Optional, but the extension must be fully testable and the notes help testers re
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 source: https://learn.microsoft.com/en-us/legal/microsoft-edge/extensions/developer-policies, checked 2026-11-16
 
-Before pasting, check the quoted button labels against the released popup (the UI was being
-redesigned when this was written).
+Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-17 (v0.2.0).
 
 ```text
 zauthenticator generates two-factor (TOTP) codes on the device. It needs no account, server or test credentials, and it makes no network requests.

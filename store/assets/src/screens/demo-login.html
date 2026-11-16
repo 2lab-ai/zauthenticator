@@ -1,0 +1,110 @@
+<!doctype html>
+<!-- The made-up sign-in step scripts/build-screenshots.mjs serves at https://login.example.com/2fa
+     (context.route, nothing leaves the machine) for the auto-fill screenshot. The field is marked
+     as a one-time code (autocomplete="one-time-code"), the way a real site marks it, so the
+     extension's auto-fill script finds it. Text is 18 px or more: the capture is shown at 1x in
+     a 1280x800 store screenshot. No script, no remote resource. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>Two-step verification</title>
+<style>
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #f2f3f6;
+    color: #15161b;
+    font: 400 18px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .card {
+    width: 440px;
+    box-sizing: border-box;
+    padding: 34px 36px 32px;
+    border: 1px solid #e2e4ea;
+    border-radius: 18px;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(16 18 27 / 4%), 0 16px 36px -14px rgb(16 18 27 / 16%);
+  }
+
+  .site {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 19px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+
+  .site-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #0f9488, #0b6b63);
+  }
+
+  h1 {
+    margin: 22px 0 6px;
+    font-size: 26px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+  }
+
+  .lead {
+    margin: 0 0 22px;
+    color: #555a66;
+  }
+
+  label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+
+  input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 60px;
+    padding: 0 18px;
+    border: 1.5px solid #cdd1d9;
+    border-radius: 12px;
+    background: #ffffff;
+    color: #15161b;
+    font: 600 30px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: 0.32em;
+    outline: none;
+  }
+
+  button {
+    width: 100%;
+    height: 52px;
+    margin-top: 18px;
+    border: 0;
+    border-radius: 12px;
+    background: #15161b;
+    color: #ffffff;
+    font: 600 18px/1 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="site"><span class="site-mark" aria-hidden="true"></span>Example</div>
+    <h1>Two-step verification</h1>
+    <p class="lead">Enter the 6-digit code from your app.</p>
+    <form method="post" action="/2fa/verify">
+      <label for="otp">Verification code</label>
+      <input id="otp" name="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" spellcheck="false">
+      <button type="submit">Verify</button>
+    </form>
+  </main>
+</body>
+</html>
