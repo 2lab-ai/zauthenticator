@@ -5,8 +5,10 @@
 // punycoded, the port only when it is not 443); accountId is the id of an entry in data.accounts.
 //
 // Pure functions; none changes its input. Only a hand-edited vault holds anything else in the
-// list: an entry that is not a well-formed binding (or repeats an earlier entry's origin) is
-// ignored by every read and kept as stored by every write, like a malformed account entry. A
+// list: an entry that is not a well-formed binding is ignored by every read and kept as stored by
+// every write, like a malformed account entry. A well-formed entry that repeats an earlier
+// entry's origin is ignored by reads too; a write that removes or replaces bindings (of an
+// origin, of an account) removes every well-formed entry it matches, repeats included. A
 // bindings value that is not a list reads as no bindings and is replaced only by withBinding().
 
 // → the origin of url ('https:' scheme, host, and port when it is not 443), or null for anything
