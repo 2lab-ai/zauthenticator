@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Tag must equal v + manifest version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('extension/manifest.json', 'utf8')).version)")
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::tag $TAG does not match extension/manifest.json version $VERSION (expected v$VERSION)"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Trust gate
+        run: npm run check
+
+      - name: Build zip
+        run: node scripts/build-zip.mjs
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ZIP="dist/zauthentificator-${VERSION}.zip"
+          SHA256=$(sha256sum "$ZIP" | cut -d ' ' -f 1)
+          {
+            echo "Unzip, then load the folder with \"Load unpacked\" on chrome://extensions or edge://extensions (Developer mode). See the README."
+            echo
+            echo "sha256:"
+            echo
+            echo '```'
+            echo "${SHA256}  zauthentificator-${VERSION}.zip"
+            echo '```'
+            echo
+            echo "Check it with \`sha256sum zauthentificator-${VERSION}.zip\` (macOS: \`shasum -a 256 zauthentificator-${VERSION}.zip\`)."
+          } > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$TAG" "$ZIP" --verify-tag --title "zauthentificator ${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md"
