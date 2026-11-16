@@ -139,7 +139,7 @@ function checkVendorSums(extDir, files, label) {
     .split('\n')
     .forEach((raw, i) => {
       const line = raw.replace(/\r$/, '');
-      if (line.trim() === '') return;
+      if (line.trim() === '' || line.startsWith('#')) return; // sha256sum -c skips '#' comment lines too
       const m = line.match(/^([0-9a-fA-F]{64}) [ *](.+)$/);
       if (!m) {
         problems.push(`${label(SUMS_PATH)}:${i + 1} malformed line`);
@@ -385,6 +385,13 @@ const CASES = [
     },
     [],
   ],
+  [
+    'ok-sums-comment-line',
+    (fx) => {
+      fx.sums = 'comment';
+    },
+    [],
+  ],
   ['bad-manifest-json', (fx) => (fx.manifestRaw = '{ "manifest_version": 3, '), ['manifest', 'permissions', 'manifest-keys', 'homepage-url', 'csp']],
   ['bad-manifest-v2', (fx) => (fx.manifest.manifest_version = 2), ['manifest']],
   ['perm-tabs', (fx) => fx.manifest.permissions.push('tabs'), ['permissions']],
@@ -486,8 +493,13 @@ function buildCase(dir, mutate) {
   const fx = cleanFixture();
   mutate(fx);
   const deferred = fx.sums === 'deferred';
-  if (deferred) fx.sums = 'auto';
+  const comment = fx.sums === 'comment';
+  if (deferred || comment) fx.sums = 'auto';
   writeFixture(dir, fx);
+  if (comment) {
+    const sums = fs.readFileSync(path.join(dir, SUMS_PATH), 'utf8');
+    fs.writeFileSync(path.join(dir, SUMS_PATH), `# jsQR, pinned upstream build\n${sums}`);
+  }
   if (deferred) {
     // Same hashes, written in the other two standard sha256sum forms.
     const lines = fs

@@ -13,7 +13,7 @@ read. It does not update itself.
 |---|---|---|
 | Zero network | The extension pages' CSP sets `connect-src 'none'`. The manifest has no host permissions. The source contains no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `sendBeacon`. | Read `content_security_policy` in `extension/manifest.json`. Run `npm run check`. `npm run e2e` calls `fetch('https://example.com/')` from the extension page, expects a CSP block, and fails on any http(s) request made during the run. |
 | No remote or dynamic code | `script-src 'self'`, with no `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`. The source contains no `eval(`, `new Function`, inline `<script>` or `on*=` handlers. | `npm run check` |
-| Encrypted at rest | Secrets are stored only inside an AES-GCM-256 vault. Its key is derived from your passphrase with PBKDF2-SHA-256 (600,000 iterations). `chrome.storage.local` holds only `{ v, kdf, iv, ct }`. | `npm run e2e` reads `chrome.storage` and the exported backup, and fails if a test secret appears in any encoding. You can also inspect storage in DevTools on the popup page. |
+| Encrypted at rest | Secrets are stored only inside an AES-GCM-256 vault. Its key is derived from your passphrase with PBKDF2-SHA-256 (600,000 iterations). `chrome.storage.local` holds only `{ v, kdf, iv, ct }`. | `npm run e2e` reads `chrome.storage` and the exported backup. It fails if a test secret appears as base32 (either case), hex, base64, base64url, a byte list or a raw byte string. You can also inspect storage in DevTools on the popup page. |
 | Minimal permissions | `storage` and `activeTab` only. `activeTab` lets the extension capture the current tab for a QR scan, and only after you click the toolbar icon. | Read `permissions` in `extension/manifest.json`, or open the extension's Details page in the browser. `npm run check` fails on anything else. |
 | Pinned third-party code | The only third-party code is the QR decoder (jsQR), vendored and pinned by sha256. Its license ships next to it. | `cd extension/vendor && sha256sum -c SHA256SUMS` (on macOS: `shasum -a 256 -c SHA256SUMS`). `npm run check` verifies the same hashes. |
 | Readable source | Plain ES modules. No bundler, minifier or runtime npm dependencies. | Browse `extension/`. |
@@ -44,7 +44,9 @@ git clone https://github.com/2lab-ai/zauthentificator.git
 Then click **Load unpacked** and select the `extension/` folder.
 
 To update, replace the folder's contents with a newer release and click the reload icon on the
-extensions page. Your vault stays in the browser profile.
+extensions page. Your vault stays in the browser profile. Keep the same folder path: an unpacked
+extension's id is derived from its path, so a different folder loads as a different extension
+with an empty vault. Export a backup before you move the folder.
 
 ## Usage
 
