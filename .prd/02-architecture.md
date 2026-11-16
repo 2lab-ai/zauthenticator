@@ -95,3 +95,23 @@ Fails (exit 1) when any of these holds:
 - CSP missing `connect-src 'none'` or `script-src 'self'` or has `unsafe-eval`/`unsafe-inline`/`wasm-unsafe-eval`.
 - Any `extension/**/*.{js,html}` outside `vendor/` contains `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`, `eval(`, `new Function`, `importScripts`, `http://`, `https://` (except in comments of license headers — none expected), or an inline `<script>` body / `on*=` attribute.
 - `vendor/SHA256SUMS` does not match the vendored files.
+
+## Round 2 contract changes (2026-11-16, from the R1 review: 3-engine panel + 3 reviewers, all REJECT on the same defects)
+
+State and storage
+- **Cross-page exclusion.** Every vault read-modify-write (`create`, every mutation, `unlock` → session key write, `lock` → session key clear) runs inside `navigator.locks.request('zauthenticator-vault', …)` (Web Locks are shared by all extension pages of the same origin: popup + full tab). Inside the lock a mutation re-reads the stored record, opens it, applies the change, seals, saves.
+- **Lock invalidates in-flight work.** `session.js` keeps a generation counter; `forget()`/`lock()` bump it. Every async path (`resume`, `unlock`, `reload`, mutations) captures the generation (and key) at start and publishes results (`remember`, session-key write) only if both are unchanged. `accounts()` returns `[]` while locked.
+- **Lock clears sensitive inputs** (setup/unlock passphrases, backup passphrase + file, otpauth textarea, manual issuer/label/secret) on local and propagated locks.
+- **Idle auto-lock (15 min, fixed in v0.1).** Session storage may hold exactly `vaultKey` and `lastActiveAt` (ms). Opening a page whose `lastActiveAt` is older than 15 minutes locks before showing codes; user activity in an open page refreshes it.
+- Stored accounts are never dropped by a seal; invalid stored entries render as "Invalid key". Imported entries are validated with `otpauth.normalize`; invalid ones are skipped and counted in the result message. Duplicate identity = canonical secret + issuer + label + algorithm + digits + period.
+
+Inputs and crypto
+- Passphrases are NFC-normalized before PBKDF2 (pre-release, no existing vaults). Vault structural checks (sizes of salt ≤ 64 B, iv = 12 B, ct ≤ 1 MiB) run before key derivation; iterations 1..2,000,000.
+- Backup files > 1 MiB are rejected before reading. Images > 20 MiB are rejected before decoding; PNG/JPEG/GIF/WebP/BMP headers are sniffed and images above 50 megapixels rejected before decoding; decoding uses `createImageBitmap` with resize options so no full-resolution canvas exists above 4096 px per side.
+- `otpauth.parse` rejects a non-empty `issuer` parameter that conflicts with a non-empty label prefix, duplicate `secret/issuer/algorithm/digits/period` parameters, and malformed percent-encoding in the query.
+- Copy recomputes the code at click time (never copies a cached code from an expired period).
+
+Network claim and gate
+- The claim is stated precisely: CSP blocks every connection and remote resource load from extension pages (`default-src 'none'` + explicit directives); the static gate additionally bans URL strings, navigation sinks (`window.open`, `location` assignment/`assign`/`replace`, `chrome.tabs.create/update` with anything but `chrome.runtime.getURL(...)`), and CSS `url(http…)`/`@import`. The settings "Source code" button is removed (the extensions page already links `homepage_url`).
+- The gate requires the CSP to equal the approved policy exactly (directive set and values), rejects duplicate SHA256SUMS paths, and its self-test pins the policy constants against an independently written literal copy.
+- Release publishing reuses the CI verification (unit, gate + self-test, Chromium e2e) and actions are pinned by commit SHA.
