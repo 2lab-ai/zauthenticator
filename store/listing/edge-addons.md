@@ -63,12 +63,24 @@ none of them names a browser:
   texts. Which of these Partner Center lists for an optional host permission is **unverified**.
 - **Are you using remote code?:** "No, I am not using remote code." Remote code is not permitted in
   Manifest V3.
-- **Data usage:** the same ticks and certifications as the other store (Authentication
-  information only; all certifications), so both stores and PRIVACY.md say the same thing. The
-  Partner Center checkbox labels are shown only as a screenshot in the docs: **unverified**. The
-  open questions about Web history and Website content, and what would change the answer, are in
-  the [Tensions](chrome-web-store.md#tensions) of the other file; if you tick either box there,
-  tick it here too.
+- **Data usage:** the same ticks and certifications as the other store, so both stores and
+  PRIVACY.md describe the same handling:
+  - **Authentication information**: ticked. TOTP secret keys and account names are kept in the
+    encrypted vault on the device. While unlocked, an auto-fill record in session memory (tab id,
+    site origin, account id, TOTP period number and time; never a code) limits a site to 3 codes
+    per tab in 5 minutes and no repeated code; a lock removes it.
+  - **Website content**: ticked. A picture of the visible part of the current tab is decoded on
+    the device when you click the scan button, and on sites you allowed the auto-fill script reads
+    input-field attributes to find the code field.
+  - **Web history**: not ticked. The vault holds only the sites you chose for auto-fill, and the
+    session auto-fill record notes, for those sites only, when a code was given (removed on
+    lock); the extension keeps no list of pages visited and no page titles. What would change this is in
+    the [Tensions](chrome-web-store.md#tensions) of the other file; if you tick it there, tick it
+    here too.
+  - Everything else: not ticked. All certifications: ticked.
+
+  The Partner Center checkbox labels are shown only as a screenshot in the docs: **unverified**;
+  map them by meaning.
 - **Privacy Policy URL:** `https://github.com/2lab-ai/zauthenticator/blob/main/PRIVACY.md`. It
   must be reachable and up to date; the policy must say how data is collected, used and
   disclosed (policies 1.5.2 add: the controls users have over their data, which PRIVACY.md lists

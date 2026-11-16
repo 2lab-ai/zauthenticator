@@ -1,6 +1,6 @@
 # Privacy policy
 
-**zauthenticator** browser extension. Effective date: 2026-11-16.
+**zauthenticator** browser extension. Effective date: 2026-11-17.
 
 In short: zauthenticator keeps your data on your device, encrypted with your passphrase. The
 developer receives nothing. The extension has no server, no account, no analytics and no
@@ -26,15 +26,33 @@ PBKDF2-SHA-256 (600,000 iterations).
   session storage, in memory, until you lock or the browser quits. After 15 minutes without use,
   the next time the extension reads the key (opening the popup, a menu choice or an auto-fill
   request) it removes the key before any code is shown or filled.
-- **Backup files** that you export contain the vault exactly as stored, still encrypted. They are
-  saved where you choose, and the extension does not send them anywhere.
+- **The auto-fill record.** While the extension is unlocked, the same session storage (in memory,
+  not encrypted) also holds a short record of what auto-fill was given: for each tab and allowed
+  site that received a code, the tab number, the site's address (origin), the account's internal
+  id, the number of the TOTP period the code belonged to, and the time. It never holds a code. It
+  exists only so that a site gets at most 3 codes per tab in 5 minutes and never the same code
+  twice. Entries older than 5 minutes no longer count and are dropped the next time the record
+  is updated; choosing an account from the right-click menu clears the entries for that tab and
+  site; every lock removes the whole record together with the key, and it is gone when the
+  browser quits.
+- **Backup files** that you export contain the vault exactly as stored, still encrypted with the
+  same passphrase, so restoring one also needs that passphrase. They are saved where you choose,
+  and the extension does not send them anywhere.
 - **Codes you copy** are placed on your system clipboard, where other applications on your device
   can read them.
 
-On a site where you allowed auto-fill, the extension's script looks at the input fields of the
-page (attributes such as type, name, id, label, placeholder and autocomplete, and whether a field
-is empty) to find the code field. It does this inside the page and does not store or send what it
-reads.
+## What the extension reads from web pages
+
+- **A picture of the current tab, only when you scan it.** When you click the button to scan the
+  current page in the popup, the extension takes one picture (JPEG) of the visible part of that
+  tab. The browser allows this only for the tab where you just clicked the extension's toolbar
+  icon. The picture is decoded inside the popup by the QR decoder bundled with the extension and
+  is held in memory only for that decoding; it is never stored or sent. If it contains a valid
+  two-factor (otpauth) QR code, only the account read from it is added to your vault.
+- **Input fields on sites where you allowed auto-fill.** To find the code field, the auto-fill
+  script looks at the page's input fields (attributes such as type, name, id, label, placeholder
+  and autocomplete, and whether a field is empty). It does this inside the page and keeps none of
+  what it reads.
 
 ## What leaves the extension
 
@@ -42,6 +60,8 @@ Only the one-time code (6 to 8 digits), typed into a web page:
 
 - into the field you right-clicked, after you choose an account from the menu, or
 - into the code field of a site where you allowed auto-fill, while the extension is unlocked.
+  Until you submit, a newer code may replace it when the filled one expires or the site rejects
+  it.
 
 The page receives the code as if you had typed it, and its scripts can read it. The secret key,
 the account names and the passphrase never reach any page.

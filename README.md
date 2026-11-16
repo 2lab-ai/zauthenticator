@@ -14,7 +14,7 @@ the browser and keeps the secrets behind them on your device.
 - **Optional auto-fill, one site at a time.** You choose the sites. A site gets the 6–8 digit
   code and nothing else.
 
-![The zauthenticator popup listing accounts and their current codes](docs/images/popup-list.png)
+<img src="docs/images/popup-list.png" width="360" alt="The zauthenticator popup listing accounts and their current codes">
 
 [한국어 안내](#한국어) · [Privacy policy](PRIVACY.md) · [Security policy](SECURITY.md)
 
@@ -50,7 +50,8 @@ Things to know before you move or remove it:
 ### Set a passphrase
 
 The first time you open the popup, you choose a passphrase of 8 characters or more. It encrypts
-your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened.
+your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened,
+and neither can your backups, which are encrypted with the same passphrase.
 
 ### Add an account
 
@@ -75,11 +76,19 @@ Click a code to copy it. A countdown shows when the next code starts.
 2. The first time you do this on an `https` site, a small window asks whether to fill this
    account's code automatically on that exact site. Click **Allow**, then accept the browser's
    own prompt for access to that one site. **Not now**, or declining the prompt, stores nothing.
-3. On later visits, while zauthenticator is unlocked, the code field is filled for you. If the
-   site rejects an expired code, it fills a fresh one. It never submits a form and never changes a
-   field you typed into.
+3. On later visits, while zauthenticator is unlocked, the code field is filled for you.
 
-![The window that asks whether to fill codes automatically on a site](docs/images/popup-autofill-bind.png)
+After a fill, until you submit:
+
+- **The code is kept current, once.** When the filled code expires, it is replaced with the new
+  one, one time.
+- **A rejected code is replaced once.** If the site rejects the code, a fresh one is filled once;
+  the same code is never filled twice.
+- **It is capped.** In one tab, a site gets at most 3 codes in 5 minutes.
+- **It stops** as soon as you type or delete in the field yourself, when you leave the page, or
+  when zauthenticator locks. It never submits a form.
+
+<img src="docs/images/popup-autofill-bind.png" width="400" alt="The window that asks whether to fill codes automatically on a site">
 
 Auto-fill works only on the exact site you allowed: the same scheme, host and port, on the page
 itself or in a frame of that site inside another page. A subdomain or a look-alike domain gets
@@ -107,7 +116,7 @@ when the browser fully quits (on macOS, Cmd+Q; closing the windows is not enough
 locked nothing is filled, and the right-click menu offers **Unlock zauthenticator…** instead of
 your accounts.
 
-![The locked popup asking for the passphrase](docs/images/popup-locked.png)
+<img src="docs/images/popup-locked.png" width="360" alt="The locked popup asking for the passphrase">
 
 ## Privacy and security
 
@@ -115,8 +124,22 @@ your accounts.
 the browser's storage for this extension, inside a vault encrypted with a key made from your
 passphrase. The passphrase is never stored. After you unlock, the key is held in the browser's
 session memory until you lock or the browser quits; after 15 minutes without use it is removed
-the next time anything asks for it (see the limits below). Nothing is sent to the developer or
-anyone else; there is no server.
+the next time anything asks for it (see the limits below). While it is unlocked, session memory
+also holds a small auto-fill record: for each tab and allowed site that got a code, the tab
+number, the site's address, the account's internal id, which code period it was (the TOTP
+counter) and when; never a code. It exists only so that a site gets at most 3 codes per tab
+in 5 minutes and never the same code twice. Entries older than 5 minutes no longer count and are
+dropped the next time the record changes; choosing an account from the right-click menu clears
+that tab and site; locking removes the whole record. Nothing is sent to the developer or anyone
+else; there is no server.
+
+**What it reads from web pages.** Only when you click the button to scan
+the current page, the extension takes one picture of the visible part of that tab (the browser
+allows this for the tab where you just clicked the toolbar icon). The picture is decoded in the
+popup by the bundled QR decoder and held in memory only for that; it is never stored or sent.
+Only the account found in it, if it is a valid two-factor QR code, is added to your vault. On a
+site where you allowed auto-fill, the auto-fill script reads the attributes of the page's input
+fields (such as name, label and placeholder) to find the code field, and keeps none of it.
 
 **What the browser itself records.** Outside the encrypted vault, the browser keeps the list of
 sites you gave the extension access to (shown on the extension's details page) and the list of
@@ -140,7 +163,10 @@ secret key, the account name and your passphrase never reach the page.
 
 **Limits worth knowing:**
 
-- The passphrase cannot be recovered, and it cannot be changed yet (planned).
+- The passphrase cannot be recovered, and it cannot be changed yet (planned). An exported backup
+  is encrypted with the same passphrase, so restoring it needs that passphrase too: a backup
+  protects you against losing the device or the browser profile, not against forgetting the
+  passphrase.
 - The computer's clock is the only time source. If codes are rejected, make sure the date and
   time are set automatically.
 - There is no sync, by design. Each browser profile has its own vault; use export and import to
@@ -174,9 +200,9 @@ the release workflow runs the same job on the tagged commit before it publishes 
 | No network from the extension | The CSP of extension pages and the worker is exactly `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. The source has no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or `RTCPeerConnection`, and the stylesheet no `@import` or remote `url(`. The content script runs inside web pages, where that CSP does not apply; it is held to a default-deny list instead: it reads fields, fills the code field, dispatches `input`/`change`, watches for changes, sets timers and asks the worker for a code, and creates no element, writes no `src`/`href`/style/markup, and uses no `postMessage`, worker, dynamic `import()` or `chrome` API beyond `runtime.sendMessage` and `runtime.id`. The function injected for a menu fill (`fillFocused`) is held to the same list and writes only if the frame is still on the origin the menu was opened on. | Read `content_security_policy` in `extension/manifest.json`. `npm run check` fails unless the CSP equals that policy, and on any of those APIs in any file, the content script included. `npm run e2e` calls `fetch()` from an extension page and from the worker, expects both blocked, and fails on any http(s) request during the run other than its own locally answered test pages. |
 | Opens only its own pages | CSP does not govern navigation, so the gate also bans URL strings and navigation sinks (`window.open`, assigning `location`, links or forms pointing outside, frames, meta refresh). Opening a tab or window is done only in `extension/lib/nav.js` (the extension's own views), which the gate pins by sha256; elsewhere `chrome.windows` and every `chrome.tabs` method but `getCurrent` and `captureVisibleTab` are refused. | `npm run check`. `npm run e2e` records every page opened during the run and fails on any URL other than the extension's own pages, `about:blank` and its own test pages. |
 | No remote or dynamic code | `script-src 'self'` without `unsafe-eval`, `unsafe-inline` or `wasm-unsafe-eval`; no `eval(`, `new Function`, `importScripts`, string timers, `javascript:` URLs, inline scripts or `on*=` handlers. | `npm run check` |
-| Encrypted at rest | AES-GCM-256 with a key from PBKDF2-SHA-256 (600,000 iterations) over the NFC-normalized passphrase. `chrome.storage.local` holds only `{ v, kdf, iv, ct }`; auto-fill sites are inside the vault. | `npm run e2e` reads storage and the exported backup, and fails if a test secret appears in base32, hex, base64(url), as a byte list or raw bytes, if storage holds any key besides `local.vault` and `session.vaultKey`/`lastActiveAt`/`pendingBind`, or if a lock leaves anything in session storage. |
+| Encrypted at rest | AES-GCM-256 with a key from PBKDF2-SHA-256 (600,000 iterations) over the NFC-normalized passphrase. `chrome.storage.local` holds only `{ v, kdf, iv, ct }`; auto-fill sites are inside the vault. Outside the vault, the browser itself records the sites the extension was granted access to and the match list of its registered content script; and while unlocked, `chrome.storage.session.autofillServed` holds bound origins and account ids (with tab ids, TOTP period numbers and times; no codes, no secrets) unencrypted in the browser's session memory, removed on lock. | `npm run e2e` reads storage and the exported backup, and fails if a test secret appears in base32, hex, base64(url), as a byte list or raw bytes, if storage holds any key besides `local.vault` and `session.vaultKey`/`lastActiveAt`/`pendingBind`/`autofillServed`, or if a lock leaves anything in session storage. |
 | Minimal permissions | `storage`, `activeTab`, `contextMenus`, `scripting`, and optional `https://*/*` granted one site at a time. No `host_permissions`, no content scripts in the manifest, no web-accessible resources; the one content script (`content/autofill.js` with `lib/fieldfind.js`) is registered at run time for the allowed sites only. | `npm run check` fails on any other permission or host pattern, on those manifest keys, on a background other than the `background.js` module worker, on `chrome.scripting` outside `lib/autofill-worker.js`, and on `chrome.permissions` outside that file and `popup/popup.js`. |
-| Auto-fill only where you allowed it | Sites are bound by exact origin. The worker answers only this extension's own content script, from a frame whose origin is bound, while the vault is unlocked and not idle, and answers with the digits only. Auto-fill never submits a form and does not count as activity for the 15-minute lock. | `npm run e2e` part 3: a menu fill types the reference code; **Allow** stores the binding and registers the script for that origin only; a later visit is filled; another origin with the same page, a locked or idle vault, a removed site and a deleted account get nothing; no form is submitted. |
+| Auto-fill only where you allowed it | Sites are bound by exact origin. The worker answers only this extension's own content script, from a frame whose origin is bound, while the vault is unlocked and not idle, and answers with the code and how long it stays valid, never account names or secrets. Auto-fill never submits a form and does not count as activity for the 15-minute lock. | `npm run e2e` part 3: a menu fill types the reference code; **Allow** stores the binding and registers the script for that origin only; a later visit is filled; another origin with the same page, a locked or idle vault, a removed site and a deleted account get nothing; no form is submitted. |
 | Pinned third-party code | The only third-party code is the QR decoder jsQR 1.4.0, vendored unmodified, pinned by sha256, with its license beside it. | `cd extension/vendor && shasum -a 256 -c SHA256SUMS`; `npm run check` verifies the same. See [Third-party code](#third-party-code). |
 
 **Limits of these checks.** The gate reads source text: it is a tripwire for this repository's
@@ -279,14 +305,20 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 ### 사용법
 
 - **처음 열 때** 마스터 비밀번호(8자 이상)를 만들어요. 비밀번호는 복구할 수 없으니 잊지 않도록 해 주세요.
+  백업 파일도 같은 비밀번호로 암호화되기 때문에, 비밀번호를 잊으면 백업으로도 되살릴 수 없어요. 백업은 기기나
+  브라우저 프로필을 잃었을 때를 위한 거예요.
 - **계정 추가**: 지금 보고 있는 페이지의 QR 코드(툴바 아이콘을 눌러 스캔), QR 이미지, `otpauth://` 링크,
   설정 키 직접 입력 중 편한 방법을 쓰면 돼요.
 - **코드 복사**: 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
 - **사이트에 입력**: 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 **zauthenticator**에서 계정을
   고르면 현재 코드가 입력돼요(제출은 하지 않아요). `https` 사이트에서 처음 이렇게 하면 앞으로 이 사이트에서
   자동으로 입력할지 묻는 작은 창이 떠요. **허용**을 누르고 브라우저가 그 사이트 하나에 접근해도 되는지 물을 때
-  동의하면, 다음부터는 잠금이 풀려 있는 동안 코드가 자동으로 입력돼요. 사이트가 시간이 지난 코드를
-  거부하면 새 코드로 다시 입력해요. **나중에**를 누르거나 브라우저 권한을 거절하면 아무것도 저장하지 않아요.
+  동의하면, 다음부터는 잠금이 풀려 있는 동안 코드가 자동으로 입력돼요. **나중에**를 누르거나 브라우저 권한을
+  거절하면 아무것도 저장하지 않아요.
+- 자동으로 입력한 뒤 제출하기 전까지는 이렇게 해요. 입력한 코드가 만료되면 새 코드로 한 번 바꿔요.
+  사이트가 코드를 거부하면 새 코드로 한 번 다시 입력하고, 같은 코드를 두 번 넣지는 않아요. 한 탭에서 한
+  사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 그 페이지를 떠나면, 잠기면 바로
+  멈춰요. 폼을 제출하지는 않아요.
 - 자동 입력은 허용한 바로 그 사이트(같은 주소·포트)에서만 해요. 하위 도메인이나 비슷한 도메인에는
   입력하지 않아요. 코드 입력란이라는 표시가 있는 칸만 채우고, PIN이나 우편번호처럼 모양만 비슷한 칸은
   건드리지 않으니 그런 칸에는 오른쪽 클릭 메뉴로 넣어 주세요.
@@ -299,11 +331,20 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 
 ### 개인정보와 보안
 
+- 잠금이 풀려 있는 동안에는 브라우저 세션 메모리에 자동 입력 기록도 잠깐 둬요. 코드를 받은 탭과 허용한
+  사이트마다 탭 번호, 사이트 주소, 계정의 내부 ID, 몇 번째 코드 주기였는지와 그 시각을 적고, 코드 자체는 적지
+  않아요. 한 탭에서 한 사이트가 5분에 코드를 3개까지만 받고 같은 코드를 두 번 받지 않게 하려고만 써요. 5분이
+  지난 항목은 더 세지 않고 기록이 바뀔 때 지워지며, 오른쪽 클릭 메뉴로 계정을 고르면 그 탭과 사이트의 기록이
+  지워지고, 잠기면 기록 전체가 지워져요.
 - 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기의 브라우저 저장소에 암호화된 채로만 있어요. 개발자에게도,
   다른 누구에게도 보내지 않아요.
 - 브라우저는 확장 프로그램이 접근할 수 있는 사이트 목록과 자동 입력 스크립트가 등록된 사이트
   목록을 보관함 밖에 따로 기록해요. 브라우저 프로필을 읽을 수 있는 사람은 이 사이트 이름을 볼 수 있어요.
 - 사이트가 받는 건 입력된 6–8자리 코드뿐이에요. 그 사이트의 스크립트는 직접 입력했을 때처럼 이 코드를 읽을 수 있어요.
+- 팝업에서 **이 페이지 스캔** 버튼을 누를 때만 지금 탭에서 보이는 부분을 한 장 캡처해요. 이 이미지는 팝업 안에서 QR
+  디코더로 읽는 동안만 메모리에 있고, 저장하거나 보내지 않아요. 올바른 2단계 인증 QR 코드라면 거기서 찾은
+  계정만 보관함에 추가해요. 자동 입력을 허용한 사이트에서는 코드 입력란을 찾으려고 입력란의 속성(이름,
+  레이블, placeholder 등)을 읽어요.
 - 권한: `storage`(암호화된 보관함 저장), `activeTab`(툴바 아이콘이나 오른쪽 클릭 메뉴를 쓴 그 탭에서만 QR
   스캔·코드 입력), `contextMenus`(오른쪽 클릭 메뉴), `scripting`(코드 입력과 자동 입력 등록), 그리고 허용한
   사이트 하나씩만 받는 선택적 `https` 사이트 접근이에요. 설치할 때는 어떤 사이트 권한도 받지 않아요.
