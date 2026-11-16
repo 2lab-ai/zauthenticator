@@ -60,6 +60,7 @@ export function createListView() {
   // a row without its code.
   async function render() {
     const token = ++renderToken;
+    const gen = session.generation();
     const accounts = session.accounts();
     const next = new Map();
     const fragment = document.createDocumentFragment();
@@ -70,7 +71,9 @@ export function createListView() {
     }
     const now = Date.now();
     await Promise.all([...next.values()].map((row) => updateCode(row, now)));
-    if (token !== renderToken) return;
+    // A later render took over, or the session locked meanwhile (another page's lock can land
+    // before this page's clear()): these rows never reach the page.
+    if (token !== renderToken || session.generation() !== gen) return;
 
     for (const row of rows.values()) clearRowTimers(row);
     rows = next;
@@ -112,9 +115,10 @@ export function createListView() {
     return Number.isInteger(period) && period > 0 ? period : 30;
   }
 
-  // Computes the code at `now` and shows it, unless a later update took over the row meanwhile.
-  // Resolves to the code at `now` either way ('' for an invalid key).
+  // Computes the code at `now` and shows it, unless a later update took over the row or the
+  // session locked meanwhile. Resolves to the code at `now` either way ('' for an invalid key).
   async function updateCode(row, now) {
+    const gen = session.generation();
     const counter = Math.floor(now / 1000 / periodOf(row.account));
     row.counter = counter;
     let code = '';
@@ -123,7 +127,7 @@ export function createListView() {
     } catch {
       // Invalid stored key: shown as "Invalid key" below.
     }
-    if (row.counter !== counter) return code;
+    if (row.counter !== counter || session.generation() !== gen) return code;
     row.codeEl.dataset.code = code;
     row.codeEl.textContent = code ? groupCode(code) : t('codeUnavailable');
     row.el.classList.toggle('invalid', !code);
@@ -168,17 +172,20 @@ export function createListView() {
   // period that already ended (a tick is due or still computing, or timers were throttled).
   // The row is refreshed to show what was copied.
   async function copy(row) {
+    const gen = session.generation();
     const now = Date.now();
     const code = await updateCode(row, now);
     // Locked or re-rendered while the code was computed: this row is gone.
-    if (!code || rows.get(row.account.id) !== row) return;
+    if (!code || !stillShown(row, gen)) return;
     paint(row, now);
     try {
       await navigator.clipboard.writeText(code);
     } catch {
-      notice(t('copyFailed'), true);
+      if (stillShown(row, gen)) notice(t('copyFailed'), true);
       return;
     }
+    // Locked or re-rendered while the clipboard was written: nothing goes back on the page.
+    if (!stillShown(row, gen)) return;
     for (const other of rows.values()) {
       if (other !== row) other.el.classList.remove('copied');
     }
@@ -201,14 +208,20 @@ export function createListView() {
     }
     clearTimeout(row.confirmTimer);
     row.deleteEl.disabled = true;
+    const gen = session.generation();
     try {
       await session.deleteAccount(row.account.id);
+      // Locked meanwhile (the delete may or may not be stored): the page is already wiped,
+      // and no name, list or error goes back on it.
+      if (session.generation() !== gen) return;
       announce(t('deletedLive', displayName(row.account)));
       await render();
+      if (session.generation() !== gen) return;
       const first = listEl.querySelector('.account:not([hidden]) .delete');
       if (first && document.body.classList.contains('editing')) first.focus();
       else searchEl.focus();
     } catch (error) {
+      if (session.generation() !== gen) return;
       row.deleteEl.disabled = false;
       disarm(row);
       notice(t('deleteFailed', reason(error)), true);
@@ -251,6 +264,11 @@ export function createListView() {
     noticeTimer = setTimeout(() => {
       noticeEl.textContent = '';
     }, NOTICE_MS);
+  }
+
+  // → true while `row` is still on the page and the session has not locked since `gen`.
+  function stillShown(row, gen) {
+    return session.generation() === gen && rows.get(row.account.id) === row;
   }
 
   function clearRowTimers(row) {
