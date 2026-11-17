@@ -13,8 +13,9 @@
 //
 // CDP limits (not production behaviour): a virtual authenticator belongs to one tab, so the
 // #unlock view runs in the tab that enrolled (reloaded as popup.html#unlock; it still closes
-// itself after an unlock), and the toolbar popup's "open the unlock window" click is not run (a
-// test cannot open the toolbar popup); WebAuthn.Credential has no field for the hmac/PRF secret,
+// itself after an unlock), and the #unlock window the toolbar popup opens has no authenticator
+// with the credential (the toolbar popup itself is reached headless only: chrome.action.openPopup()
+// finds no active window in a headed run); WebAuthn.Credential has no field for the hmac/PRF secret,
 // so a credential exported with getCredentials and added back after a browser restart returns no
 // PRF (the stored slot is checked across the restart with the PRF of the real ceremony instead).
 // Phone over hybrid (QR + Bluetooth), Touch ID and security keys with a PIN are not reachable
@@ -26,8 +27,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ARTIFACTS,
+  HEADLESS,
   createReporter,
   ensureArtifactsDir,
+  extensionWorker,
   freshProfileDir,
   launch,
   openExtensionPage,
@@ -722,6 +725,157 @@ async function runVariant(rep, extDir, variant) {
         sealed.id === before.id && json(sealed.slots) === json(before.slots) && sealed.data.iv !== before.data.iv && byPrf.data?.accounts?.length === rows,
         `id ${sealed.id === before.id ? 'kept' : 'CHANGED'}, slots ${json(sealed.slots) === json(before.slots) ? 'unchanged' : 'CHANGED'}, data.iv ${sealed.data.iv !== before.data.iv ? 'fresh' : 'REUSED'}; reference passkey open ${byPrf.error ?? `${byPrf.data.accounts.length} accounts`} (rows ${rows})`,
       );
+    });
+  }
+
+  // Browser start: chrome.storage.session empty (no key, no lockGen). The ceremony capture writes
+  // the first lockGen (store.ensureLockGen()) as the ceremony starts; the unlock must still commit.
+  // The real assertion is held 1.5 s (a phone takes 10-25 s), so anything that write sets off in
+  // the open pages has run before the result returns. Same tab as the enrollment (its
+  // authenticator stays): first the toolbar popup's button (opens the #unlock window, no ceremony there), then
+  // the locked tab (the list opens in it), then the #unlock window (the other page shows the list;
+  // the window's own window.close() is recorded instead of done, so the tab and its authenticator
+  // stay for A1 below).
+  if (ok) {
+    ok = await step('cold-start-unlock', async () => {
+      const record = json(await vault(P));
+      const parsed = JSON.parse(record);
+      const accounts = (await opens(parsed, null, prf)).data?.accounts?.length;
+      const pages = watchers[watchers.length - 1].pages;
+      // Everything in chrome.storage.session goes, from an extension page, as at a browser start.
+      const coldSession = async () => {
+        await P.evaluate(() => chrome.storage.session.clear());
+        await state(P, 'locked');
+        await state(S, 'locked');
+        await P.waitForTimeout(500);
+        const sess = await session(P);
+        if (Object.keys(sess).length !== 0) throw new Error(`session not empty after clear(): [${Object.keys(sess)}]`);
+      };
+
+      // The toolbar popup: chrome.action.openPopup() from the worker; Playwright does not list the
+      // action popup as a page, so its DOM is reached through chrome.extension.getViews().
+      await coldSession();
+      await P.bringToFront();
+      const worker = await extensionWorker(context, id);
+      const popupOpened = await worker.evaluate(async () => {
+        try {
+          await chrome.action.openPopup();
+          return 'ok';
+        } catch (err) {
+          return err.message;
+        }
+      });
+      if (popupOpened !== 'ok') {
+        const why = `chrome.action.openPopup() rejected: ${popupOpened}`;
+        if (HEADLESS) rep.fail(tag('toolbar-popup-opens-unlock-window'), why);
+        else console.log(`INFO ${tag('toolbar-popup-opens-unlock-window')} not reachable in a headed run: ${why}`);
+      } else {
+        const shown = await P.waitForFunction(
+          () => chrome.extension.getViews({ type: 'popup' }).some((w) => w.document.body.dataset.state === 'locked' && !w.document.querySelector('#unlock-passkey').hidden),
+          null,
+          { timeout: 10000 },
+        ).then(
+          () => true,
+          () => false,
+        );
+        const before = pages.count();
+        const popup = await P.evaluate(() => {
+          const [view] = chrome.extension.getViews({ type: 'popup' });
+          if (!view) return null;
+          const result = { classes: view.document.documentElement.className, state: view.document.body.dataset.state };
+          view.document.querySelector('#unlock-passkey').click();
+          return result;
+        });
+        const win = await pages.waitForUrl((url) => url.endsWith(`/${POPUP}#unlock`), { after: before, timeout: 10000 });
+        const popupClosed = await P.waitForFunction(() => chrome.extension.getViews({ type: 'popup' }).length === 0, null, { timeout: 10000 }).then(
+          () => true,
+          () => false,
+        );
+        let winMode = 'none';
+        if (win) {
+          await state(win, 'locked');
+          await win.locator('#unlock-passkey').waitFor({ state: 'visible', timeout: 10000 });
+          winMode = await win.evaluate(() => (document.documentElement.classList.contains('window') ? 'window' : document.documentElement.className || 'popup'));
+        }
+        const after = await session(P);
+        rep.check(
+          tag('toolbar-popup-opens-unlock-window'),
+          shown && popup?.classes === '' && popup?.state === 'locked' && Boolean(win) && winMode === 'window' && popupClosed && Object.keys(after).length === 0,
+          `toolbar popup (classes ${json(popup?.classes)}, ${popup?.state}, passkey button shown ${shown}) -> click: #unlock window ${win ? `opened (${winMode} mode, locked, passkey button shown)` : 'NOT opened'}, popup ${popupClosed ? 'closed itself' : 'still open'}; session keys [${Object.keys(after)}] (no ceremony started in the popup)`,
+        );
+        if (win) await win.close();
+      }
+
+      for (const mode of ['tab', 'window']) {
+        await coldSession();
+        const shownMode = await openLockedView(S, mode === 'window' ? '#unlock' : '');
+        await S.waitForTimeout(300);
+        const atClick = await session(S);
+        // Every text the view's message lines show from the click on, and window.close() calls.
+        await S.evaluate(() => {
+          const lines = ['#unlock-passkey-error', '#unlock-passkey-status', '#unlock-error', '#list-notice'];
+          globalThis.zauthE2eLines = [];
+          globalThis.zauthE2eLinesObserver = new MutationObserver(() => {
+            for (const sel of lines) {
+              const text = document.querySelector(sel)?.textContent?.trim();
+              if (text) globalThis.zauthE2eLines.push(`${sel} ${text}`);
+            }
+          });
+          for (const sel of lines) globalThis.zauthE2eLinesObserver.observe(document.querySelector(sel), { childList: true, characterData: true, subtree: true });
+          globalThis.zauthE2eCloses = 0;
+          window.close = () => {
+            globalThis.zauthE2eCloses += 1;
+          };
+        });
+        const errorsBefore = errors.length;
+        const realGets = countRealGets(S);
+        await holdNextAssertion(S);
+        await ceremonyClick(S, '#unlock-passkey');
+        // Held, or ended before any assertion (an error line): the check below says which.
+        await S.waitForFunction(() => globalThis.zauthE2ePasskey?.held === true || document.querySelector('#unlock-passkey-error').textContent.trim() !== '', null, { timeout: 30000 });
+        const whileHeld = await session(P);
+        await S.waitForTimeout(1500);
+        await release(S);
+        const committed = await state(P, 'list').then(
+          () => true,
+          () => false,
+        );
+        if (mode === 'tab') await state(S, 'list').catch(() => {});
+        else await S.waitForFunction(() => globalThis.zauthE2eCloses > 0, null, { timeout: 10000 }).catch(() => {});
+        await S.waitForTimeout(500);
+        const seen = await S.evaluate(() => {
+          globalThis.zauthE2eLinesObserver.disconnect();
+          return {
+            lines: [...new Set(globalThis.zauthE2eLines)],
+            closes: globalThis.zauthE2eCloses,
+            state: document.body.dataset.state,
+            rows: document.querySelectorAll('.account').length,
+          };
+        });
+        const otherRows = await rowCount(P);
+        const otherNotice = (await P.locator('#list-notice').textContent()).trim();
+        const sess = await session(P);
+        const keys = Object.keys(sess).sort();
+        let dekRows = null;
+        try {
+          dekRows = openDataWithDek(parsed, Buffer.from(sess.vaultKey?.key ?? '', 'base64')).accounts.length;
+        } catch {
+          dekRows = null;
+        }
+        const quiet = seen.lines.every((line) => line === `#unlock-passkey-status ${msg.passkeyWorking}`) && ![msg.passkeyOrphan, msg.passkeyChanged].some((m) => otherNotice.includes(m));
+        const gets = realGets();
+        const view = mode === 'tab' ? seen.state === 'list' && seen.rows === accounts && seen.closes === 0 : seen.closes === 1;
+        rep.check(
+          tag(`cold-start-unlock-commits:${mode}`),
+          shownMode === mode && json(Object.keys(atClick)) === json([]) && json(Object.keys(whileHeld)) === json(['lockGen']) && validLockGen(whileHeld.lockGen) && whileHeld.lockGen === sess.lockGen &&
+            gets === 1 && committed && view && otherRows === accounts &&
+            json(keys) === json(['lastActiveAt', 'lockGen', 'vaultKey']) && sess.vaultKey?.v === 2 && sess.vaultKey?.id === parsed.id && dekRows === accounts &&
+            validLockGen(sess.lockGen) && Number.isFinite(sess.lastActiveAt) && json(await vault(P)) === record && quiet && errors.length === errorsBefore,
+          `${mode} view, session keys at the click [${Object.keys(atClick)}] (empty: no key, no lockGen); during the ceremony [${Object.keys(whileHeld)}] (${validLockGen(whileHeld.lockGen) ? `the capture's first lockGen, ${whileHeld.lockGen === sess.lockGen ? 'kept by the commit' : 'NOT the one stored after'}` : 'no lockGen written'}); real get() ${gets} with PRF; ${mode === 'tab' ? `this tab now ${seen.state} with ${seen.rows} rows` : `window.close() called ${seen.closes}x`}; other page ${committed ? 'list' : 'NOT unlocked'} with ${otherRows} rows (vault holds ${accounts}); session [${keys}] {v:${sess.vaultKey?.v}, id ${sess.vaultKey?.id === parsed.id ? '= record' : 'MISMATCH'}, key opens ${dekRows ?? 'NOTHING'} accounts}, lockGen ${validLockGen(sess.lockGen) ? '16 B' : json(sess.lockGen)}; record ${json(await vault(P)) === record ? 'byte-identical' : 'CHANGED'}; lines seen ${json(seen.lines)}; page errors +${errors.length - errorsBefore}`,
+        );
+        // A1 below starts from an unlocked vault, whatever this check found.
+        if ((await stateOf(P)) === 'locked') await passphraseUnlock(P);
+      }
     });
   }
 
