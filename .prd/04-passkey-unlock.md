@@ -115,10 +115,14 @@ Two more values decide whether a ceremony result may still be used:
   field. Computed when needed, never stored. Every `seal` changes it (new `data.iv`), so any edit,
   slot removal or import merge in any window changes `rev`; `id` does not. A v1 record hashes the
   same way over `{v,kdf,iv,ct}`.
-- `lockGen` = 16 random bytes in `chrome.storage.session`, replaced (never removed) by every lock
-  path inside `store.clearSessionKey()` — manual, idle, and the mismatch clear above. It is shared
-  by all windows and the worker, unlike the page-local `epoch`. After a browser start it is
-  absent until the first lock; absent at capture and absent at commit counts as equal.
+- `lockGen` = 16 random bytes in `chrome.storage.session`, replaced by every lock path inside
+  `store.clearSessionKey()` — manual, idle, and the mismatch clear above — in the same write that
+  nulls `vaultKey`. It is shared by all windows and the worker, unlike the page-local `epoch`.
+  After a browser start it is absent until the first lock or the first ceremony capture:
+  `store.ensureLockGen()` writes one under the vault lock before a capture is issued, and no
+  capture is issued when that write fails, so a capture never holds "absent". If a lock's write
+  fails, its removal step deletes `lockGen` too, so every issued capture stops matching
+  (trinity T2, 2026-11-17).
 
 ### Flows
 
@@ -209,7 +213,9 @@ Every unit codes against these signatures; a change goes into this section first
   included) reads as `null`, so an update leaves the vault locked. `setSessionKey(key, {v, id},
   activeAt)`.
 - `lockGen` (session, the sixth key): 16 random bytes, base64. `clearSessionKey()` writes a new
-  value and removes the other four session keys; `getLockGen()` → string or `null`.
+  value with `vaultKey: null` and removes the other four session keys (on a failed write it
+  removes `lockGen` too); `getLockGen()` → string or `null`; `ensureLockGen()` → the stored value,
+  writing a fresh one first when none is stored, throws when it cannot.
 
 ### popup/session.js (the worker imports it, so it never imports popup/passkey.js)
 
@@ -225,6 +231,9 @@ Every unit codes against these signatures; a change goes into this section first
 - `enrollPasskey(capture, passphrase, {cred, prfSalt, prf, label})` and
   `unlockWithPasskey(capture, prf)` → the commits of Flows; `SessionError('changed')` when `rev`,
   `lockGen` or (enroll) the session identity differ from `capture`; nothing is written then.
+  Once the enrolled record is saved, `enrollPasskey` never rejects: it resolves
+  `{saved: true, locked: false}`, or `{saved: true, locked: true}` when this page locked during
+  the save or the session key could not be written (the page then reads as locked).
 - `removePasskey(cred)` → under the vault lock, only while unlocked.
 - `exportRecord()` → `vault.exportCopy(stored record)` or `null`.
 

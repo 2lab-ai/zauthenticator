@@ -393,6 +393,33 @@ test('a lock of this page while the enrolled record is being saved: saved, resol
   assert.equal(a.isUnlocked(), false);
 });
 
+test('a failed session-key write after the enrolled record is saved: resolves saved and locked, never rejects', async (t) => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  const capture = await a.captureForCeremony();
+  const sessionSet = chrome.storage.session.set;
+  t.after(() => { chrome.storage.session.set = sessionSet; });
+  chrome.storage.session.set = async (items) => {
+    if (items.vaultKey) {
+      chrome.storage.session.set = sessionSet;
+      throw new Error('set failed');
+    }
+    return sessionSet(items);
+  };
+  const result = await a.enrollPasskey(capture, PASS, PASSKEY);
+  assert.deepEqual(result, { saved: true, locked: true });
+  const stored = await store.getRecord();
+  assert.equal(stored.v, 2);
+  assert.equal(stored.slots.length, 2, 'the slot is saved');
+  assert.equal(a.isUnlocked(), false);
+  const session = await store.getSessionKey();
+  assert.ok(session === null || session.v !== 2 || session.id !== stored.id, 'no session key for the new record');
+  // Every reader sees the vault locked.
+  assert.equal(await (await page()).readUnlocked(), null);
+  assert.equal(await (await page()).resume(), 'locked');
+});
+
 test('enrollPasskey with nothing changed resolves saved and unlocked', async () => {
   await seed();
   const a = await page();

@@ -590,10 +590,19 @@ export function enrollPasskey(capture, passphrase, options) {
     await ceremonyRecord(capture, true);
     const { gen } = captures.get(capture);
     await store.saveRecord(result.record);
-    // The slot is stored from here on. A lock of this page meanwhile ends it locked: no session
-    // key is written, or the one just written goes with the lock queued behind this call.
+    // The slot is stored from here on, so nothing below rejects. A lock of this page meanwhile ends
+    // it locked: no session key is written, or the one just written goes with the lock queued
+    // behind this call.
     if (gen !== epoch) return { saved: true, locked: true };
-    await store.setSessionKey(result.rawKey, vault.identity(result.record));
+    try {
+      await store.setSessionKey(result.rawKey, vault.identity(result.record));
+    } catch {
+      // The stored key (if any) is the old one: it reads as locked against the saved record (a
+      // migration changes the identity). This page drops its key; the session goes too if it can.
+      if (gen === epoch) forget();
+      try { await store.clearSessionKey(); } catch { /* checkedSession() clears it on next read */ }
+      return { saved: true, locked: true };
+    }
     if (gen !== epoch) return { saved: true, locked: true };
     remember(result.rawKey, result.record, current);
     return { saved: true, locked: false };
