@@ -74,3 +74,13 @@ Round 2 had picked a chromatic reference although the owner named none; the ui-u
 | BW1 | Popup tokens monochrome (accent/danger/warning = ink tiers), one `--radius` (0), no shadows, monochrome avatar (hueOf removed), non-colour signals for expiring code / warning / errors / delete, 2px ink focus at 2px offset | ✅ | 35b6906, c28623f, 9ea4761; contrast table in the commit review (all text ≥ 4.5:1, disabled+hover 4.74 / 6.25 measured from pixels) |
 | BW2 | Icon (black square, white z, ring ≥ 32 px, light keyline for dark toolbars), tiles, marquee, screenshot frame, demo site — 0 tinted pixels in every regenerated output | ✅ | 35b6906; 128 icon art at 16..111 (96 + 16 padding), tiles and screenshots 24-bit RGB |
 | BW3 | Gates on snapshot 9ea4761: unit 306/306, trust gate 0 FAIL, self-test 542/542, e2e 119/119; external review APPROVE (popup round 2 after the disabled-hover MUST-FIX; assets round 1) | ✅ | merge 5960300 |
+
+## R3b — closed (2026-11-17)
+
+Browser-drawn colour that the store screenshots never show (found before the owner's hand test).
+
+### Closed rows
+
+| ID | Item | Status | Receipt |
+|---|---|---|---|
+| BW4 | `accent-color` = ink; autofilled inputs keep the field fill and ink text (was #e8f0fe tint); selects use the customizable picker under `@supports (appearance: base-select)` — open lists 0 tinted pixels in light/dark, closed selects pixel-identical; forced colors keep a system-colour focus outline (ring 11.31:1 / 9.10:1) and the native arrows; `::selection` sets the text fill defensively | ✅ | 6c68d67, 3e20468, d506abe; gates on snapshot 3e20468: unit 306/306, trust gate 0 FAIL, self-test 542/542, e2e 119/119 (d506abe comment-only: trust gate 0 FAIL); gpt6-reviewer R2 APPROVE; merge c9dcace; cachy-z13 33 files hash-equal |
