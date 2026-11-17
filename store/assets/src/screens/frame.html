@@ -1,10 +1,11 @@
 <!doctype html>
 <!-- One 1280x800 store screenshot: scripts/build-screenshots.mjs fills the slot markers in the
-     body (icon, wordmark, headline, subhead, stage) and renders it at 1x. Background, glow and
-     subhead colour follow the promo tiles (marquee-1400x560.svg): #1c1d42 to #0e0f22 with a
-     #5470e0 glow, subhead #babde4. Text on the left (headline 54 px, subhead 24 px on one line,
-     nothing under 18 px), the capture on the right in a plain frame: the stage holds one .popup,
-     .window or .browser block. Square corners, full bleed. -->
+     body (icon, wordmark, headline, subhead, stage) and renders it at 1x. Black and white, like
+     the promo tiles (marquee-1400x560.svg): a flat black page, white headline, subhead in white
+     at 60% (#999999, 7.4:1 on black), greys only in the window chrome. Text on the left (headline
+     54 px, subhead 24 px on one line, nothing under 18 px), the capture on the right in a plain
+     frame: the stage holds one .popup, .window or .browser block. Square corners, no shadow, full
+     bleed. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -21,9 +22,7 @@
     width: 1280px;
     height: 800px;
     overflow: hidden;
-    background:
-      radial-gradient(560px 560px at 940px 410px, rgb(84 112 224 / 30%), rgb(84 112 224 / 0%)),
-      linear-gradient(135deg, #1c1d42 0%, #0e0f22 100%);
+    background: #000000;
     color: #ffffff;
     font-family: system-ui, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -70,7 +69,7 @@
 
   .sub {
     margin: 22px 0 0;
-    color: #babde4;
+    color: #999999;
     font-size: 24px;
     font-weight: 450;
     line-height: 1.42;
@@ -87,16 +86,9 @@
     place-items: center;
   }
 
-  .shadowed {
-    box-shadow:
-      0 0 0 1px rgb(255 255 255 / 10%),
-      0 34px 80px -12px rgb(0 0 0 / 60%),
-      0 12px 28px -6px rgb(0 0 0 / 30%);
-  }
-
+  /* Flat: the white capture on the black page needs no edge or shadow. */
   .popup {
     overflow: hidden;
-    border-radius: 14px;
     background: #ffffff;
   }
 
@@ -109,7 +101,6 @@
   .window,
   .browser {
     overflow: hidden;
-    border-radius: 12px;
     background: #ffffff;
   }
 
@@ -118,8 +109,8 @@
     align-items: center;
     gap: 8px;
     padding: 0 16px;
-    border-bottom: 1px solid #dddfe5;
-    background: #ececf0;
+    border-bottom: 1px solid #e6e6e6;
+    background: #f5f5f5;
   }
 
   .window .bar {
@@ -135,7 +126,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #cbced6;
+    background: #d1d1d1;
   }
 
   .address {
@@ -146,10 +137,9 @@
     height: 34px;
     margin-left: 14px;
     padding: 0 16px;
-    border: 1px solid #dddfe5;
-    border-radius: 17px;
+    border: 1px solid #d1d1d1;
     background: #ffffff;
-    color: #3d404a;
+    color: #666666;
     font-size: 18px;
   }
 
@@ -158,14 +148,14 @@
     width: 16px;
     height: 16px;
     fill: none;
-    stroke: #6b6f7a;
+    stroke: #666666;
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 
   .address .host {
-    color: #15161b;
+    color: #000000;
   }
 </style>
 </head>

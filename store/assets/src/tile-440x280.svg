@@ -1,24 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280">
   <!-- Small promo tile, 440x280 (Chrome Web Store, required; Edge Add-ons small promotional tile).
-       Icon, outlined wordmark and one tagline line on the brand's deep indigo; no screenshot.
+       Icon, outlined wordmark and one tagline line on black; no screenshot. Black and white:
+       white wordmark, tagline in white at 60% (#999999, 7.4:1 on black).
        The tagline is system-font text (see scripts/build-store-assets.mjs). -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="440" y2="280" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1c1d42"/>
-      <stop offset="1" stop-color="#0e0f22"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="220" cy="94" r="210" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#5470e0" stop-opacity="0.36"/>
-      <stop offset="1" stop-color="#5470e0" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="440" height="280" fill="url(#bg)"/>
-  <rect width="440" height="280" fill="url(#glow)"/>
+  <rect width="440" height="280" fill="#000000"/>
   <image href="icon.svg" x="178" y="52" width="84" height="84"/>
   <!-- wordmark.svg: 1308.69 x 145 units, baseline 144 units below its top. At 0.235: 307.54 x
        34.08 px, x-height 23.5 px, baseline at 158 + 144 * 0.235 = 191.84 -->
   <image href="wordmark.svg" x="66.23" y="158" width="307.54" height="34.08"/>
-  <text x="220" y="223.5" text-anchor="middle" fill="#babde4" font-size="14.5" font-weight="500"
+  <text x="220" y="223.5" text-anchor="middle" fill="#999999" font-size="14.5" font-weight="500"
         font-family="system-ui, -apple-system, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif"
         letter-spacing="0.1">Open-source 2FA codes. Offline. Encrypted.</text>
 </svg>

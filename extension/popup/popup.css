@@ -8,81 +8,65 @@
     "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
-  --bg: #ffffff;
-  --surface: #f7f8f8;
-  --raised: #ffffff;
-  --input: #ffffff;
-  --page: #f4f5f6;
-  --tab-card: #ffffff;
-  --text: #0b0c0e;
-  --muted: #6b6f76;
-  --hairline: #e6e7ea;
-  --hairline-strong: #d6d8dd;
-  --hover: #f3f4f5;
-  --press: #ebecee;
+  /* Black and white. A white canvas and black ink; hierarchy comes from ink tiers (the ink at an
+     opacity over the canvas, written out as opaque greys so every pair has one contrast ratio) and
+     from inversion (an ink fill with canvas text), never from a hue. Text uses the 100% and 60%
+     tiers only; the 44% tier and the lighter ones are for lines, tracks and fills. Dark mode is
+     the same system inverted: a black canvas and white ink. */
+  --canvas: #ffffff;
+  --ink: #000000;
+  --ink-80: #333333;
+  /* Secondary text: 5.7:1 on the canvas, 4.8:1 on the press tint. */
+  --ink-60: #666666;
+  /* Not for text (3.2:1 on the canvas): hover borders. */
+  --ink-44: #8f8f8f;
+  /* Lines and tints: ink 18% (control borders, the countdown track), 10% (hairlines), 8% (press)
+     and 4% (surfaces, hover). */
+  --hairline-strong: #d1d1d1;
+  --hairline: #e6e6e6;
+  --press: #ebebeb;
+  --surface: #f5f5f5;
 
-  --accent: #5e6ad2;
-  /* Darker on hover, so white text keeps at least 4.5:1. */
-  --accent-hover: #535fc9;
-  --on-accent: #ffffff;
-  /* Accent as text: #5e6ad2 is 4.4:1 on the surface grey, this one 5.4:1. */
-  --accent-text: #4f5bc4;
-  --accent-soft: #eef0fb;
-  --focus-halo: rgb(94 106 210 / 22%);
+  --bg: var(--canvas);
+  --raised: var(--canvas);
+  --input: var(--canvas);
+  --page: var(--surface);
+  /* The card of the full-tab layout is the canvas itself (html.tab body sets --bg to it). */
+  --tab-card: var(--canvas);
+  --text: var(--ink);
+  --muted: var(--ink-60);
+  --hover: var(--surface);
 
-  --danger: #ce2c31;
-  --danger-text: #c0292e;
-  --danger-soft: #fdeeee;
-  /* The code's last seconds: #f5a524 is 1.9:1 on white, amber-700 is 5.0:1. */
-  --warning: #b45309;
-  --warning-soft: #fdf3e3;
+  /* No colour accent: emphasis is the ink as a fill. Danger and warning are the ink too; their
+     states carry a glyph, a word, weight or inversion instead of a hue. */
+  --accent: var(--ink);
+  --accent-hover: var(--ink-80);
+  --on-accent: var(--canvas);
+  --danger: var(--ink);
+  --on-danger: var(--canvas);
+  --warning: var(--ink);
+  --on-warning: var(--canvas);
 
-  --avatar-bg-l: 0.94;
-  --avatar-bg-c: 0.045;
-  --avatar-fg-l: 0.47;
-  --avatar-fg-c: 0.13;
-
-  /* The one shadow level: the gate and bind cards, and the page card in a full tab. */
-  --shadow: 0 1px 2px rgb(15 17 23 / 5%), 0 8px 24px -6px rgb(15 17 23 / 10%);
+  /* Every corner in the popup: square. Circles (the countdown) are shapes, not corners. */
+  --radius: 0px;
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #08090a;
-    --surface: #121314;
-    --raised: #18191b;
-    --input: #0e0f10;
-    --page: #08090a;
-    --tab-card: #0f1012;
-    --text: #f7f8f8;
-    --muted: #8a8f98;
-    --hairline: #232428;
-    --hairline-strong: #2f3136;
-    --hover: #131416;
-    --press: #1a1b1e;
-
-    --accent: #5e6ad2;
-    --accent-hover: #535fc9;
-    --on-accent: #ffffff;
-    /* #5e6ad2 is 4.2:1 on #08090a; this one 7.5:1. */
-    --accent-text: #8f98f2;
-    --accent-soft: #191b33;
-    --focus-halo: rgb(94 106 210 / 20%);
-
-    --danger: #ce2c31;
-    --danger-text: #f2555a;
-    --danger-soft: #2a1213;
-    --warning: #f5a524;
-    --warning-soft: #2a1f0c;
-
-    --avatar-bg-l: 0.31;
-    --avatar-bg-c: 0.06;
-    --avatar-fg-l: 0.86;
-    --avatar-fg-c: 0.1;
-
-    --shadow: 0 1px 0 rgb(255 255 255 / 2%) inset, 0 8px 24px -6px rgb(0 0 0 / 55%);
+    --canvas: #000000;
+    --ink: #ffffff;
+    --ink-80: #cccccc;
+    /* 7.4:1 on the canvas, 5.8:1 on the press tint. */
+    --ink-60: #999999;
+    --ink-44: #707070;
+    /* Lines and tints on black need more ink than on white to read as the same weight: 24%,
+       15%, 12% and 8%. */
+    --hairline-strong: #3d3d3d;
+    --hairline: #262626;
+    --press: #1f1f1f;
+    --surface: #141414;
   }
 }
 
@@ -122,8 +106,8 @@ body {
   word-break: keep-all;
 }
 
-/* Opened as a full tab: a centred card on a quiet page. clip (not hidden) keeps the document as
-   the scroller, so the search row still sticks. */
+/* Opened as a full tab: a centred card on a quiet page, outlined, flat. clip (not hidden) keeps the
+   document as the scroller, so the search row still sticks. */
 html.tab {
   background: var(--page);
 }
@@ -134,10 +118,9 @@ html.tab body {
   width: min(420px, 100% - 32px);
   max-height: none;
   margin: 48px auto;
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
   overflow: clip;
-  box-shadow: var(--shadow);
 }
 
 html.tab main {
@@ -170,9 +153,16 @@ h2 {
   font-weight: 600;
 }
 
+/* 2px of ink, 2px away: on an ink-filled button the canvas-coloured gap separates the two, in both
+   schemes. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ink);
   outline-offset: 2px;
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--canvas);
 }
 
 .visually-hidden {
@@ -223,7 +213,6 @@ h2 {
   flex: none;
   width: 20px;
   height: 20px;
-  border-radius: 5px;
 }
 
 .brand-name {
@@ -259,7 +248,7 @@ body.no-accounts #edit-btn {
   height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -275,9 +264,10 @@ body.no-accounts #edit-btn {
   background: var(--press);
 }
 
+/* A toggle that is on (edit mode): inverted. */
 .icon-btn[aria-pressed="true"] {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .btn {
@@ -288,7 +278,7 @@ body.no-accounts #edit-btn {
   min-height: 34px;
   padding: 0 14px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--raised);
   color: var(--text);
   font: inherit;
@@ -300,11 +290,15 @@ body.no-accounts #edit-btn {
   transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 
-.btn:hover {
+/* Hover and press skip a disabled (busy) control, which keeps one look whether the pointer is on it
+   or not: Chromium matches :hover on a disabled button, and the busy opacity over a hover fill
+   would leave the label under 4.5:1. :where() keeps the guard out of the specificity, so these
+   rules still lose to .btn.primary as before. */
+.btn:where(:not(:disabled)):hover {
   background: var(--hover);
 }
 
-.btn:active {
+.btn:where(:not(:disabled)):active {
   background: var(--press);
 }
 
@@ -314,7 +308,7 @@ body.no-accounts #edit-btn {
   color: var(--on-accent);
 }
 
-.btn.primary:hover {
+.btn.primary:where(:not(:disabled)):hover {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
 }
@@ -335,6 +329,11 @@ body.no-accounts #edit-btn {
 .option:disabled {
   opacity: 0.55;
   cursor: progress;
+}
+
+/* The 60% tier under the busy opacity would fall to 2.3:1; the hint takes the ink instead (4.7:1). */
+.option:disabled .option-hint {
+  color: inherit;
 }
 
 /* ---- forms ---- */
@@ -360,7 +359,7 @@ select {
   min-height: 40px;
   padding: 8px 12px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--input);
   color: var(--text);
   font: inherit;
@@ -376,20 +375,21 @@ textarea::placeholder {
 input:hover,
 textarea:hover,
 select:hover {
-  border-color: color-mix(in srgb, var(--muted) 45%, var(--hairline-strong));
+  border-color: var(--ink-44);
 }
 
-/* Text fields: a 1px accent border (at least 3:1 against every surface it sits on) and a soft halo,
-   not an offset outline, which reads as a heavy double border around a bordered field (the search
-   field is focused every time the popup opens). File inputs have no border and keep the outline. */
+/* Text fields: a 2px ink ring on the field's own edge (its border turns ink and a 1px outline sits
+   just inside it), not one 2px away, which reads as a heavy double border around a bordered field
+   (the search field is focused every time the popup opens). File inputs have no border and keep
+   the outline. */
 input[type="text"]:focus-visible,
 input[type="password"]:focus-visible,
 input[type="search"]:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--focus-halo);
+  border-color: var(--ink);
+  outline: 1px solid var(--ink);
+  outline-offset: -2px;
 }
 
 select {
@@ -431,7 +431,7 @@ input[type="file"]::file-selector-button {
   margin-right: 10px;
   padding: 0 12px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--raised);
   color: var(--text);
   font: inherit;
@@ -449,25 +449,47 @@ input[type="file"]::file-selector-button:hover {
 .status {
   margin: 0 0 12px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text);
   font-size: 13px;
   white-space: pre-line;
 }
 
-.error {
-  background: var(--danger-soft);
-  color: var(--danger-text);
-}
-
+/* Information: ink on a tint. */
 .notice,
 .status {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--surface);
 }
 
+/* Errors: an outlined box, weight 500 and an alert glyph (a ring with "!"), so they differ from
+   information without a colour. */
+.error,
 .notice.is-error {
-  background: var(--danger-soft);
-  color: var(--danger-text);
+  display: flex;
+  gap: 8px;
+  border-color: var(--danger);
+  background: var(--bg);
+  font-weight: 500;
+}
+
+.error::before,
+.notice.is-error::before,
+.account.invalid .code::before {
+  content: "!";
+  flex: none;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .error:empty,
@@ -522,7 +544,7 @@ body[data-state="bind"] .view[data-view="bind"] {
 
 .card {
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--raised);
 }
 
@@ -542,7 +564,6 @@ html.window .view[data-view="bind"] .gate-card {
   padding: 4px 0 0;
   border: 0;
   background: none;
-  box-shadow: none;
 }
 
 html.window .view[data-view="bind"] .lead {
@@ -552,9 +573,8 @@ html.window .view[data-view="bind"] .lead {
 .gate-card {
   padding: 24px 20px 20px;
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--raised);
-  box-shadow: var(--shadow);
 }
 
 .gate-mark {
@@ -562,7 +582,6 @@ html.window .view[data-view="bind"] .lead {
   width: 48px;
   height: 48px;
   margin: 0 auto 16px;
-  border-radius: 12px;
 }
 
 .gate h1 {
@@ -578,18 +597,20 @@ html.window .view[data-view="bind"] .lead {
   text-wrap: pretty;
 }
 
+/* A warning: an ink-outlined box led by an inverted "!" square, its text at weight 500. */
 .warning {
   display: flex;
   gap: 10px;
   margin: -4px 0 16px;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
-  border-radius: 8px;
-  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
   font-size: 13px;
+  font-weight: 500;
 }
 
-.warning::before {
+.warning::before,
+#bind-replaces::before {
   content: "!";
   flex: none;
   display: grid;
@@ -597,18 +618,19 @@ html.window .view[data-view="bind"] .lead {
   width: 16px;
   height: 16px;
   margin-top: 1px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--warning);
-  color: var(--bg);
+  color: var(--on-warning);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
 }
 
-/* Errors of the passphrase forms: plain danger text right under the fields. */
+/* Errors of the passphrase forms: the glyph and the text right under the fields, no box. */
 .gate .error {
   margin: -4px 0 12px;
   padding: 0;
+  border: 0;
   background: none;
 }
 
@@ -703,7 +725,7 @@ body.no-accounts .search-row {
   position: relative;
   display: flex;
   align-items: center;
-  border-radius: 10px;
+  border-radius: var(--radius);
   transition: background-color 0.15s var(--ease);
 }
 
@@ -744,7 +766,7 @@ body.no-accounts .search-row {
   gap: 12px;
   padding: 12px 10px 12px 12px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: none;
   color: inherit;
   font: inherit;
@@ -756,15 +778,18 @@ body.no-accounts .search-row {
   outline-offset: -2px;
 }
 
+/* The monogram: the ink letter on a tinted tile with a hairline edge (the edge keeps the tile
+   apart from a hovered row, which has the same tint). */
 .avatar {
   flex: none;
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
-  background: oklch(var(--avatar-bg-l) var(--avatar-bg-c) var(--avatar-hue, 270));
-  color: oklch(var(--avatar-fg-l) var(--avatar-fg-c) var(--avatar-hue, 270));
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
   font-size: 14px;
   font-weight: 600;
   line-height: 1;
@@ -818,13 +843,21 @@ body.no-accounts .search-row {
   transition: color 0.15s var(--ease);
 }
 
+/* "Invalid key": the alert glyph (see .error) and weight 500 in place of the code. */
 .account.invalid .code {
-  color: var(--danger-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
   font-family: var(--font);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0;
   word-spacing: normal;
+}
+
+.account.invalid .code::before {
+  margin-top: 0;
 }
 
 /* Countdown: a ring that drains with the period (--progress, set by list.js) around the seconds
@@ -852,12 +885,11 @@ body.no-accounts .search-row {
 }
 
 .ring-track {
-  stroke: var(--hairline);
+  stroke: var(--hairline-strong);
 }
 
 .ring-value {
   stroke: var(--accent);
-  stroke-linecap: round;
   stroke-dasharray: 100px 100px;
   stroke-dashoffset: calc((1 - var(--progress, 1)) * 100px);
   transition: stroke-dashoffset 0.2s var(--ease), stroke 0.15s var(--ease);
@@ -872,21 +904,31 @@ body.no-accounts .search-row {
   line-height: 1;
 }
 
-/* The code's last seconds: code, ring and seconds turn amber (the seconds stay readable). */
-.account.expiring .code,
+/* The code's last seconds: the countdown inverts, a filled ink disc with the seconds in bold canvas
+   colour and the remaining arc drawn in canvas colour inside it. */
+.account.expiring .timer {
+  border-radius: 50%;
+  background: var(--warning);
+}
+
 .account.expiring .remaining {
-  color: var(--warning);
+  color: var(--on-warning);
+  font-weight: 700;
+}
+
+.account.expiring .ring-track {
+  stroke: transparent;
 }
 
 .account.expiring .ring-value {
-  stroke: var(--warning);
+  stroke: var(--on-warning);
 }
 
 .account.invalid .timer {
   visibility: hidden;
 }
 
-/* Copied: the label line gives way to a short chip, the code takes the accent. */
+/* Copied: the label line gives way to a short inverted chip with a check mark. */
 .copied-badge {
   display: none;
   align-items: center;
@@ -894,9 +936,9 @@ body.no-accounts .search-row {
   width: fit-content;
   height: 18px;
   padding: 0 7px 0 5px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
@@ -917,10 +959,6 @@ body.no-accounts .search-row {
   animation: chip-in 0.18s var(--ease);
 }
 
-.account.copied .code {
-  color: var(--accent-text);
-}
-
 @keyframes chip-in {
   from {
     opacity: 0;
@@ -928,7 +966,8 @@ body.no-accounts .search-row {
   }
 }
 
-/* Edit mode: a danger icon button at the row end; the first click arms it ("Delete?"). */
+/* Edit mode: a trash icon button at the row end; the first click arms it: inverted, with the word
+   "Delete" next to the icon. */
 .delete {
   display: none;
   flex: none;
@@ -940,9 +979,9 @@ body.no-accounts .search-row {
   margin-right: 8px;
   padding: 0 7px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: transparent;
-  color: var(--danger-text);
+  color: var(--danger);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -960,8 +999,8 @@ body.no-accounts .search-row {
   display: none;
 }
 
-.delete:hover {
-  background: var(--danger-soft);
+.delete:where(:not(:disabled)):hover {
+  background: var(--hover);
 }
 
 body.editing .account .delete {
@@ -972,11 +1011,6 @@ body.editing .account .timer {
   display: none;
 }
 
-/* Without the ring the seconds are gone, so the amber would be colour alone. */
-body.editing .account.expiring .code {
-  color: var(--text);
-}
-
 .account.confirming .code {
   display: none;
 }
@@ -984,7 +1018,7 @@ body.editing .account.expiring .code {
 .account.confirming .delete {
   padding: 0 10px 0 8px;
   background: var(--danger);
-  color: #ffffff;
+  color: var(--on-danger);
 }
 
 .account.confirming .delete .icon {
@@ -1016,6 +1050,12 @@ body.editing .account.expiring .code {
   margin: 0 auto 16px;
 }
 
+/* The art's rects take the radius token over their rx attributes. */
+.art-card,
+.art-digit {
+  rx: var(--radius);
+}
+
 .art-card {
   fill: var(--raised);
   stroke: var(--hairline-strong);
@@ -1033,7 +1073,7 @@ body.editing .account.expiring .code {
 
 .art-ring-track {
   fill: none;
-  stroke: var(--hairline);
+  stroke: var(--hairline-strong);
   stroke-width: 2.5;
 }
 
@@ -1041,7 +1081,6 @@ body.editing .account.expiring .code {
   fill: none;
   stroke: var(--accent);
   stroke-width: 2.5;
-  stroke-linecap: round;
 }
 
 .art-plus-bg {
@@ -1089,7 +1128,7 @@ body.editing .account.expiring .code {
   gap: 12px;
   padding: 10px 8px 10px 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: none;
   color: inherit;
   font: inherit;
@@ -1112,11 +1151,11 @@ body.editing .account.expiring .code {
   opacity: 0;
 }
 
-.option:hover {
+.option:where(:not(:disabled)):hover {
   background: var(--hover);
 }
 
-.option:active {
+.option:where(:not(:disabled)):active {
   background: var(--press);
 }
 
@@ -1130,9 +1169,10 @@ body.editing .account.expiring .code {
   place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .option-text {
@@ -1167,7 +1207,7 @@ body.editing .account.expiring .code {
   margin-top: 12px;
   padding: 20px 16px;
   border: 1.5px dashed var(--hairline-strong);
-  border-radius: 12px;
+  border-radius: var(--radius);
   text-align: center;
   transition: border-color 0.15s var(--ease), background-color 0.15s var(--ease);
 }
@@ -1190,9 +1230,10 @@ html.tab .drop-zone {
   font-size: 13px;
 }
 
+/* An image dragged over the page, or the file picker is the way in: the dashed border turns ink. */
 .drop-zone.dragover {
   border-color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--surface);
 }
 
 body.file-mode .drop-zone {
@@ -1244,7 +1285,7 @@ body.file-mode .drop-zone {
   align-items: center;
   gap: 4px;
   padding: 2px 6px 2px 2px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
@@ -1320,7 +1361,7 @@ body.file-mode .drop-zone {
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--muted);
 }
@@ -1398,7 +1439,7 @@ body.file-mode .drop-zone {
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--muted);
 }
@@ -1435,24 +1476,26 @@ body.file-mode .drop-zone {
   line-height: 18px;
 }
 
+/* Removing a site: the word says it; hovering inverts the button. */
 .binding-remove {
   flex: none;
   height: 30px;
   padding: 0 10px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--raised);
-  color: var(--danger-text);
+  color: var(--danger);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease);
+  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
-.binding-remove:hover {
-  border-color: color-mix(in srgb, var(--danger-text) 35%, var(--hairline-strong));
-  background: var(--danger-soft);
+.binding-remove:where(:not(:disabled)):hover {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-danger);
 }
 
 .binding-remove:disabled {
@@ -1502,7 +1545,7 @@ body.file-mode .drop-zone {
 .version {
   padding: 2px 8px;
   border: 1px solid var(--hairline);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--muted);
   font-family: var(--mono);
@@ -1521,9 +1564,9 @@ body.file-mode .drop-zone {
   width: 44px;
   height: 44px;
   margin: 0 auto 14px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .bind-badge .icon {
@@ -1535,7 +1578,7 @@ body.file-mode .drop-zone {
   margin: 0 0 12px;
   padding: 12px 14px 14px;
   border: 1px solid var(--hairline);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--surface);
 }
 
@@ -1550,17 +1593,17 @@ body.file-mode .drop-zone {
   font-weight: 500;
 }
 
-/* The exact origin is what the user agrees to: large, never cut off. */
+/* The exact origin is what the user agrees to: large, never cut off, outlined in ink. */
 .bind-site {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 12px;
   padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
 }
 
 .bind-site .icon {
@@ -1593,25 +1636,17 @@ body.file-mode .drop-zone {
   overflow-wrap: anywhere;
 }
 
+/* "Replaces <account> on this site": a warning, drawn like .warning (the "!" square is shared). */
 #bind-replaces {
   display: flex;
   gap: 10px;
   margin: 0 0 12px;
   padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  color: var(--muted);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  color: var(--text);
   font-size: 13px;
-}
-
-#bind-replaces::before {
-  content: "";
-  flex: none;
-  width: 6px;
-  height: 6px;
-  margin-top: 7px;
-  border-radius: 50%;
-  background: var(--warning);
+  font-weight: 500;
 }
 
 .bind-hint {
