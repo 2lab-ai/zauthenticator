@@ -21,3 +21,26 @@ Spec approved (trinity R3 unanimous) and gate A0 passed with an iPhone (Apple Pa
 | R-z13 | Edge 153 on cachy-z13: UVPA false, hybridTransport true, extension:prf true; IR camera /dev/video2; no howdy/fprintd; Bluetooth powered | zbrain workflow/home/rog-flow-z13.md (2026-11-17 bullet) |
 | R-docs | Primary-source research (Chromium @7d2c6b8, W3C, Apple/Google/Microsoft/Yubico docs) | 04-passkey-unlock.md Platform facts |
 | R-probe2 | Both probe 0.0.2 result JSONs as pasted by the owner | session transcript 2026-11-17 (not in repo) |
+
+## R1 — closed
+
+Build merged to main 2026-11-17; every work unit reviewed and re-gated on a snapshot.
+
+### Closed rows
+
+Integration branch `feat/v0.3-passkey`, worktree `.worktrees/feat-v0.3-passkey`. Each unit owns
+only its files; the dispatcher re-runs every gate on a `git archive` snapshot and commits.
+
+| ID | Files | Needs | Status |
+|---|---|---|---|
+| WU-V | extension/lib/vault.js, test/vault.test.mjs | contracts | ✅ vault 30/30; trinity T1 unanimous APPROVE R1 (be30988); P1 probes run by dispatcher (cred 16/20/64/1023 B round trip, v1 revision key-order independent) |
+| WU-G | scripts/check-policy.mjs (rule `credentials-api`, PINNED_POLICY, self-test cases) | contracts | ✅ self-test 562/562, check 22 PASS; gpt6-reviewer APPROVE |
+| WU-S | extension/lib/store.js, extension/popup/session.js, test/session.test.mjs, test/autofill-worker.test.mjs fixture adaptation | WU-V APIs | ✅ trinity T2 R1 2×REJECT (absent lockGen at capture + failed lock write → stale unlock commits) → f21b6dd ensureLockGen, RED→GREEN; R2 unanimous APPROVE. a3e45aa: saved enrollment never rejects (fable residual). bac5fd8/b622854 pin both-writes-fail (gpt6-reviewer R2 APPROVE); unit 362/362 |
+| WU-U | extension/popup/passkey.js (new), popup.js, popup.html, settings.js, format.js, popup.css, _locales/{en,ko}/messages.json, test/passkey.test.mjs | WU-S APIs, WU-G | ✅ R1 REJECT (hidden passphrase kept; orphan notice lost) + unlock-cancel bug → fixed, passkey 24/24; R2 APPROVE. Manifest 0.3.0 bump refused by the auto-mode classifier → stays 0.2.0 until the release gate |
+| WU-E | e2e/passkey.e2e.mjs (new, run from e2e/popup.e2e.mjs), e2e/reference.mjs, e2e/autofill.e2e.mjs session-shape assertions | WU-U | ✅ R1 REJECT (no-op v2 import passes; window removal race never delivers; A3 import/idle/identity unpinned) → 79cd635, mutants fail each new test; R2 APPROVE; variant filter rejects unknown names |
+| WU-D | README.md, PRIVACY.md, store/listing/*, 04 → shipped | WU-U | ✅ R1 REJECT (passphrase-only backup overclaim) → fixed; README/PRIVACY version-scoped (main PRIVACY backs the v0.2.0 submission); R2 REJECT (2 wording lines) → fixed; R3 APPROVE. 04 status → shipped |
+
+Result: trinity T1 (vault) unanimous R1; trinity T2 (session) R1 2×REJECT → f21b6dd → R2 unanimous;
+one gpt6-reviewer per change-set (UI R2, gate R1, docs R3, e2e R2, a3e45aa/bac5fd8 R2). Snapshot
+gates on 79cd635: unit 362/362, check 22 PASS, self-test 562/562, e2e 199/199 (baseline 306 · 542 · 119).
+The About string (d60779c) no longer says the key comes from the passphrase alone.

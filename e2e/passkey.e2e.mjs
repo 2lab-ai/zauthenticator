@@ -1084,13 +1084,29 @@ async function runVariant(rep, extDir, variant) {
   fs.rmSync(profile, { recursive: true, force: true });
 }
 
+// The variants to run: all of them when E2E_PASSKEY_VARIANTS is unset, else exactly the named
+// ones. A set value naming an unknown variant, or none, is a FAIL line naming the valid ones (so
+// a typo cannot turn the suite into zero checks). → the variants, or null after that FAIL
+function selectedVariants(rep) {
+  const raw = process.env.E2E_PASSKEY_VARIANTS;
+  if (raw === undefined) return VARIANTS;
+  const valid = VARIANTS.map((v) => v.name);
+  const names = raw.split(',').map((name) => name.trim()).filter(Boolean);
+  const unknown = names.filter((name) => !valid.includes(name));
+  if (names.length === 0 || unknown.length > 0) {
+    rep.fail('passkey-variants', `E2E_PASSKEY_VARIANTS=${json(raw)} ${names.length === 0 ? 'selects no variant' : `names unknown variant(s) ${unknown.join(', ')}`}; valid: ${valid.join(', ')} (unset runs all)`);
+    return null;
+  }
+  console.log(`INFO passkey variants ${names.join(', ')} (E2E_PASSKEY_VARIANTS)`);
+  return VARIANTS.filter((v) => names.includes(v.name));
+}
+
 export async function runPasskey(rep) {
+  const variants = selectedVariants(rep);
+  if (!variants) return;
   ensureArtifactsDir();
   const extDir = realExtensionDir(process.env.E2E_EXTENSION || path.join(REPO_ROOT, 'extension'));
-  const only = (process.env.E2E_PASSKEY_VARIANTS ?? '').split(',').filter(Boolean);
-  for (const variant of VARIANTS) {
-    if (only.length === 0 || only.includes(variant.name)) await runVariant(rep, extDir, variant);
-  }
+  for (const variant of variants) await runVariant(rep, extDir, variant);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
