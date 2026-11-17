@@ -15,5 +15,5 @@ Status: round 0 (spec). Next: trinity review of 04-passkey-unlock.md → WU spli
 | ID | Item | Status |
 |---|---|---|
 | P0 | Edge extension origin scheme for WebAuthn (`chrome-extension://` vs `edge-extension://`) measured on the Z13 | 🟡 running |
-| P1 | trinity on the spec | 🔴 |
+| P1 | trinity on the spec — R1 3×REJECT (same holes), spec revision 2 written, R2 running | 🟡 |
 | P2 | Owner hand test: phone over QR from Edge on the Z13 accepts the extension RP ID and returns PRF | 🚪 owner |
