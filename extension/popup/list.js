@@ -305,26 +305,13 @@ export function createListView() {
   return { render, start, stop, clear, notice, focus };
 }
 
-// The monogram in front of an account: the first letter of its issuer (or label) on a tint whose
-// hue comes from a hash of that name, so an account keeps its colour. Text and a CSS variable only.
+// The monogram in front of an account: the first letter of its issuer (or label). Text only.
 export function paintAvatar(el, account) {
   const name = text(account.issuer).trim() || text(account.label).trim();
   const first = [...name][0] ?? '';
   setText(el, first.toLocaleUpperCase());
-  el.style.setProperty('--avatar-hue', String(hueOf(name.toLocaleLowerCase())));
 }
 
 export function clearAvatar(el) {
   setText(el, '');
-  el.style.removeProperty('--avatar-hue');
-}
-
-// FNV-1a over the code points → 0..359.
-function hueOf(name) {
-  let hash = 0x811c9dc5;
-  for (const ch of name) {
-    hash ^= ch.codePointAt(0);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash % 360;
 }
