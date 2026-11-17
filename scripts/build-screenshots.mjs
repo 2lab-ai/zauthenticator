@@ -43,9 +43,10 @@
 //    rendered at 1280x800, deviceScaleFactor 1, in a page whose network requests are all aborted.
 //    Every capture is decoded here, checked opaque and written as RGB.
 //
-// The amber "last seconds" state (5 s or less) needs one row whose period ends while the others'
-// do not. All 30 s codes roll over together, so that one account uses 30 s and the others 60 s,
-// and the list is captured with 3-4 s left on it (the 60 s codes then show 33-34 s).
+// The "last seconds" state (5 s or less, drawn as an inverted countdown) needs one row whose period
+// ends while the others' do not. All 30 s codes roll over together, so that one account uses 30 s
+// and the others 60 s, and the list is captured with 3-4 s left on it (the 60 s codes then show
+// 33-34 s).
 //
 // Language: macOS Chromium ignores --lang (see e2e/harness.mjs); the script stops unless
 // chrome.i18n.getMessage('lang') is 'en'. Text uses the system UI fonts, so exact pixels depend on
@@ -72,10 +73,10 @@ const BIND_VIEWPORT = { width: 400, height: 572 };
 // maximum height -> 720 px of the 800).
 const POPUP_SCALE = 1.2;
 
-// Made-up accounts. `amber` marks the one 30 s account (see the header).
+// Made-up accounts. `expiring` marks the one 30 s account (see the header).
 const ACCOUNTS = [
   { issuer: 'Acme Cloud', label: 'ops@acme.example', period: 60 },
-  { issuer: 'Contoso Mail', label: 'jane@contoso.example', period: 30, amber: true },
+  { issuer: 'Contoso Mail', label: 'jane@contoso.example', period: 30, expiring: true },
   { issuer: 'Example ID', label: 'j.doe@example.com', period: 60 },
   { issuer: 'Fabrikam Git', label: 'jdoe', period: 60 },
   { issuer: 'Northwind Bank', label: 'j.doe', period: 60, digits: 8 },
@@ -491,23 +492,23 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
 
     // The list with exactly one code in its last seconds: 26.3 s into a minute, the 30 s code has
     // 3.7 s left and the 60 s codes 33.7 s (at 56.3 s every code would have 3.7 s left).
-    const amberCount = () => popup.evaluate(() => document.querySelectorAll('.account.expiring').length);
+    const expiringCount = () => popup.evaluate(() => document.querySelectorAll('.account.expiring').length);
     // The "Accounts added" notice from the Add view clears itself after a few seconds.
     await popup.waitForFunction(() => document.querySelector('#list-notice').textContent === '', null, { timeout: 30000 });
     for (let attempt = 0; ; attempt++) {
       const into = Date.now() % 60000;
       await sleep((26300 - into + 60000) % 60000);
       await sleep(250); // the list ticks 15 ms after each second
-      const before = await amberCount();
+      const before = await expiringCount();
       await assertNotClipped(popup, ['.account .issuer', '.account .label'], 'list');
       const shot = await captureBody(popup, 'list');
-      const after = await amberCount();
+      const after = await expiringCount();
       const notice = await popup.evaluate(() => document.querySelector('#list-notice').textContent);
       if (before === 1 && after === 1 && notice === '') {
         shots.list = shot;
         break;
       }
-      if (attempt === 2) throw new Error(`expected one amber row and no notice, saw ${before} then ${after} rows, notice "${notice}"`);
+      if (attempt === 2) throw new Error(`expected one expiring row and no notice, saw ${before} then ${after} rows, notice "${notice}"`);
     }
 
     // Locked.
@@ -614,12 +615,12 @@ function img(shot, scale) {
 const DOTS = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
 const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>';
 
-const popupStage = (shot) => `<div class="popup shadowed">${img(shot, POPUP_SCALE)}</div>`;
-const windowStage = (shot) => `<div class="window shadowed"><div class="bar">${DOTS}</div>${img(shot, POPUP_SCALE)}</div>`;
+const popupStage = (shot) => `<div class="popup">${img(shot, POPUP_SCALE)}</div>`;
+const windowStage = (shot) => `<div class="window"><div class="bar">${DOTS}</div>${img(shot, POPUP_SCALE)}</div>`;
 function browserStage(shot) {
   const url = new URL(DEMO_URL);
   const address = `<div class="address">${LOCK}<span><span class="host">${url.host}</span>${url.pathname}</span></div>`;
-  return `<div class="browser shadowed"><div class="bar">${DOTS}${address}</div>${img(shot, 1)}</div>`;
+  return `<div class="browser"><div class="bar">${DOTS}${address}</div>${img(shot, 1)}</div>`;
 }
 
 function svgFile(name) {

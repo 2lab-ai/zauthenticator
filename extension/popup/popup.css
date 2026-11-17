@@ -290,11 +290,15 @@ body.no-accounts #edit-btn {
   transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 
-.btn:hover {
+/* Hover and press skip a disabled (busy) control, which keeps one look whether the pointer is on it
+   or not: Chromium matches :hover on a disabled button, and the busy opacity over a hover fill
+   would leave the label under 4.5:1. :where() keeps the guard out of the specificity, so these
+   rules still lose to .btn.primary as before. */
+.btn:where(:not(:disabled)):hover {
   background: var(--hover);
 }
 
-.btn:active {
+.btn:where(:not(:disabled)):active {
   background: var(--press);
 }
 
@@ -304,7 +308,7 @@ body.no-accounts #edit-btn {
   color: var(--on-accent);
 }
 
-.btn.primary:hover {
+.btn.primary:where(:not(:disabled)):hover {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
 }
@@ -995,7 +999,7 @@ body.no-accounts .search-row {
   display: none;
 }
 
-.delete:hover {
+.delete:where(:not(:disabled)):hover {
   background: var(--hover);
 }
 
@@ -1147,11 +1151,11 @@ body.editing .account .timer {
   opacity: 0;
 }
 
-.option:hover {
+.option:where(:not(:disabled)):hover {
   background: var(--hover);
 }
 
-.option:active {
+.option:where(:not(:disabled)):active {
   background: var(--press);
 }
 
@@ -1488,7 +1492,7 @@ body.file-mode .drop-zone {
   transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
-.binding-remove:hover {
+.binding-remove:where(:not(:disabled)):hover {
   border-color: var(--danger);
   background: var(--danger);
   color: var(--on-danger);
