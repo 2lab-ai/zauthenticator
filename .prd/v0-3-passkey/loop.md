@@ -1,6 +1,6 @@
 # v0-3-passkey — loop
 
-Status: round 0 (spec). Next: trinity review of 04-passkey-unlock.md → WU split → code.
+Status: round 0 (spec approved). Next: A0 owner phone probe on the Z13 (P2) → WU split → code.
 
 ## Receipts behind 04 (2026-11-17)
 
@@ -15,5 +15,5 @@ Status: round 0 (spec). Next: trinity review of 04-passkey-unlock.md → WU spli
 | ID | Item | Status |
 |---|---|---|
 | P0 | Edge extension origin scheme for WebAuthn (`chrome-extension://` vs `edge-extension://`) measured on the Z13 | 🟡 running |
-| P1 | trinity on the spec — R1 3×REJECT → rev 2 → R2 2 APPROVE + 1 REJECT (M1 rev vs id, M2 wording) → rev 3 → R3 running | 🟡 |
+| P1 | trinity on the spec — R1 3×REJECT → rev 2 → R2 2 APPROVE + 1 REJECT (M1 rev vs id, M2 wording) → rev 3 → R3 unanimous APPROVE (grok-4.7, gpt-6-astra, fable) | ✅ |
 | P2 | Owner hand test: phone over QR from Edge on the Z13 accepts the extension RP ID and returns PRF | 🚪 owner |

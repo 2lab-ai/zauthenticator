@@ -2,7 +2,8 @@
 
 Status: planned (v0.3). Workstream: [v0-3-passkey/](v0-3-passkey/ssot.md).
 Revision 3 (2026-11-17): R1 3×REJECT (same holes, envelope kept) → rev 2 → R2 grok APPROVE,
-fable APPROVE, gpt-6 REJECT (record revision vs identity; storage-writer wording) → rev 3.
+fable APPROVE, gpt-6 REJECT (record revision vs identity; storage-writer wording) → rev 3 →
+**R3 unanimous APPROVE** (non-blocking notes folded: rev encoding, lockGen absent at start).
 Record-format code waits for gate A0 (owner phone probe).
 
 ## Problem
@@ -106,11 +107,14 @@ in a wrong key.
 
 Two more values decide whether a ceremony result may still be used:
 - `rev` = SHA-256 of the canonical serialization of the **whole** stored record (`data`,
-  `slots`, headers). Every `seal` changes it (new `data.iv`), so any edit, slot removal or import
-  merge in any window changes `rev`; `id` does not.
+  `slots`, headers): the same fixed-key-order, no-whitespace JSON as the AAD, covering every
+  field. Computed when needed, never stored. Every `seal` changes it (new `data.iv`), so any edit,
+  slot removal or import merge in any window changes `rev`; `id` does not. A v1 record hashes the
+  same way over `{v,kdf,iv,ct}`.
 - `lockGen` = 16 random bytes in `chrome.storage.session`, replaced (never removed) by every lock
   path inside `store.clearSessionKey()` — manual, idle, and the mismatch clear above. It is shared
-  by all windows and the worker, unlike the page-local `epoch`.
+  by all windows and the worker, unlike the page-local `epoch`. After a browser start it is
+  absent until the first lock; absent at capture and absent at commit counts as equal.
 
 ### Flows
 
