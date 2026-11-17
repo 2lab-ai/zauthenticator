@@ -9,6 +9,7 @@
 // race steps holds the real assertion until another page has changed or locked the vault.
 //
 //   E2E_HEADLESS=1 node e2e/passkey.e2e.mjs     # alone; npm run e2e runs it after popup + autofill
+//   E2E_PASSKEY_VARIANTS=internal-prf ...        # only the named variants (comma-separated)
 //
 // CDP limits (not production behaviour): a virtual authenticator belongs to one tab, so the
 // #unlock view runs in the tab that enrolled (reloaded as popup.html#unlock; it still closes
@@ -34,7 +35,7 @@ import {
   watchNetwork,
   watchPages,
 } from './harness.mjs';
-import { decryptRecord } from './reference.mjs';
+import { base32ToBytes, decryptRecord, encryptRecordV2, openDataWithDek, referenceTotp } from './reference.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const POPUP = 'popup/popup.html';
@@ -120,11 +121,11 @@ async function lock(page) {
   await state(page, 'locked');
 }
 
-async function importRecord(page, record) {
+async function importRecord(page, record, passphrase = PASSPHRASE) {
   await page.click('#settings-btn');
   await state(page, 'settings');
   await page.setInputFiles('#import-file', { name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(json(record)) });
-  await page.fill('#import-pass', PASSPHRASE);
+  await page.fill('#import-pass', passphrase);
   await page.click('#import-submit');
   try {
     await state(page, 'list');
@@ -132,6 +133,32 @@ async function importRecord(page, record) {
     const shown = await page.locator('#import-error').textContent().catch(() => '?');
     throw new Error(`import did not return to the list (#import-error ${json(shown)}): ${err.message.split('\n')[0]}`);
   }
+}
+
+// The code `page` shows on the row labelled `label`, against the reference TOTP of the base32
+// `secret` at the page's clock, read away from a period boundary. → { ok, detail }
+async function rowCode(page, label, secret, params) {
+  const key = base32ToBytes(secret);
+  const periodMs = params.period * 1000;
+  let last = 'no reading';
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const snap = await page.evaluate((want) => {
+      const row = Array.from(document.querySelectorAll('.account')).find((r) => r.querySelector('.label')?.textContent?.includes(want));
+      return { now: Date.now(), code: row?.querySelector('.code')?.dataset.code ?? null, issuer: row?.querySelector('.issuer')?.textContent?.trim() ?? null };
+    }, label);
+    const into = snap.now % periodMs;
+    if (snap.code === null) {
+      last = `no row labelled ${json(label)}`;
+    } else if (into < 1000 || periodMs - into < 1000) {
+      last = 'too close to a period boundary';
+    } else {
+      const expected = referenceTotp(key, snap.now, params);
+      if (snap.code === expected) return { ok: true, detail: `row ${json(`${snap.issuer} ${label}`)} shows ${snap.code} = reference` };
+      last = `row shows ${json(snap.code)}, reference ${expected}`;
+    }
+    await page.waitForTimeout(1200);
+  }
+  return { ok: false, detail: last };
 }
 
 // Adds a CDP virtual authenticator to `page`'s tab (and `credentials`, exported earlier).
@@ -645,6 +672,40 @@ async function runVariant(rep, extDir, variant) {
         hook.creates === 0 && hook.gets === 0 && passkeySlot(now)?.cred === passkeySlot(enrolled).cred && now.id === enrolled.id,
         `imported the exported backup and a v2 record with a passkey slot: WebAuthn create() ${hook.creates}, get() ${hook.gets}; live passkey slot ${passkeySlot(now)?.cred === passkeySlot(enrolled).cred ? 'kept' : 'LOST'}`,
       );
+
+      // A5: a v2 backup of another vault (its own id, data key, passphrase and passkey slot, built
+      // by e2e/reference.mjs) imports by merge through its passphrase: its new account appears and
+      // stays; this vault keeps its id and slots; no WebAuthn call.
+      const plain = await decryptRecord(now, PASSPHRASE);
+      const { id: _id, ...template } = plain.accounts[0];
+      const added = { ...template, issuer: 'IndependentV2', label: 'import-v2@example.test', secret: 'MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U' };
+      const params = { algorithm: String(template.algorithm ?? 'sha1').toLowerCase().replace('-', ''), digits: template.digits ?? 6, period: template.period ?? 30 };
+      const backupPassphrase = 'e2e passkey independent v2 backup';
+      const other = encryptRecordV2({ accounts: [added] }, backupPassphrase);
+      const fixture = [await opens(other.record, backupPassphrase), await opens(other.record, null, other.prf)];
+      const fixtureOk = fixture.every((o) => json(o.data) === json({ accounts: [added] })) && other.record.id !== now.id;
+      const rows = await rowCount(P);
+      await importRecord(P, other.record, backupPassphrase);
+      const listed = await P.waitForFunction((n) => document.querySelectorAll('.account').length === n, rows + 1, { timeout: 10000 }).then(
+        () => true,
+        () => false,
+      );
+      const calls = await hookState(P);
+      const shown = await rowCode(P, added.label, added.secret, params);
+      const merged = await vault(P);
+      await P.reload();
+      await state(P, 'list');
+      const reopened = await rowCode(P, added.label, added.secret, params);
+      const stored = await vault(P);
+      const has = (d) => Boolean(d?.accounts?.some((a) => a.issuer === added.issuer && a.label === added.label && a.secret === added.secret));
+      const byPass = await opens(stored, PASSPHRASE);
+      const byPrf = await opens(stored, null, prf);
+      const kept = stored.id === now.id && stored.slots.length === 2 && json(stored.slots) === json(now.slots) && json(stored) === json(merged);
+      rep.check(
+        tag('import-independent-v2-merges-new-account'),
+        fixtureOk && listed && shown.ok && reopened.ok && has(byPass.data) && has(byPrf.data) && kept && calls.creates === 0 && calls.gets === 0,
+        `backup of another vault (id ${other.record.id === now.id ? 'SAME' : 'differs'}, own passkey slot, own passphrase; reference opens both its slots ${fixtureOk}): rows ${rows} -> ${listed ? rows + 1 : 'unchanged'}; ${shown.detail}; after reopening the page ${reopened.detail}; stored record holds it (passphrase slot ${has(byPass.data)}, this vault's passkey slot ${has(byPrf.data)}); id and slots ${kept ? 'unchanged' : 'CHANGED'}; WebAuthn create() ${calls.creates}, get() ${calls.gets}`,
+      );
     });
   }
 
@@ -754,6 +815,50 @@ async function runVariant(rep, extDir, variant) {
     });
   }
 
+  // A3: a session envelope {key, v, id} whose key is this vault's data key but whose id is not
+  // the record's reads as locked, and the reader clears it like a lock.
+  if (ok) {
+    await step('session-identity-mismatch', async () => {
+      const before = await session(Q);
+      const record = await vault(Q);
+      let dekOpens = false;
+      try {
+        openDataWithDek(record, Buffer.from(before.vaultKey?.key ?? '', 'base64'));
+        dekOpens = true;
+      } catch {
+        dekOpens = false;
+      }
+      const wrongId = randomBytes(16).toString('base64');
+      await Q.evaluate(
+        ({ key, id: otherId }) =>
+          chrome.storage.session.set({ vaultKey: { key, v: 2, id: otherId }, pendingBind: { origin: 'https://seed.test', accountId: 'e2e-seed', at: Date.now() } }),
+        { key: before.vaultKey?.key, id: wrongId },
+      );
+      const R = await openPage();
+      const opened = await state(R, 'locked', 10000).then(
+        () => 'locked',
+        async () => stateOf(R),
+      );
+      const other = await state(Q, 'locked', 10000).then(
+        () => 'locked',
+        async () => stateOf(Q),
+      );
+      let sess = await session(R);
+      for (let i = 0; i < 25 && json(Object.keys(sess)) !== json(['lockGen']); i += 1) {
+        await R.waitForTimeout(200);
+        sess = await session(R);
+      }
+      rep.check(
+        tag('session-identity-mismatch-locks'),
+        dekOpens && before.vaultKey?.v === 2 && before.vaultKey?.id === record.id && opened === 'locked' && other === 'locked' &&
+          json(Object.keys(sess)) === json(['lockGen']) && validLockGen(sess.lockGen) && sess.lockGen !== before.lockGen && json(await vault(R)) === json(record),
+        `session {key: the data key (reference opens the payload with it: ${dekOpens}), v:2, id: another id} + a pendingBind: newly opened page ${opened}, open page ${other}; session keys after [${Object.keys(sess)}] (lockGen ${sess.lockGen !== before.lockGen ? 'replaced' : 'NOT replaced'}); record ${json(await vault(R)) === json(record) ? 'unchanged' : 'CHANGED'}`,
+      );
+      await R.close();
+      if ((await stateOf(Q)) === 'locked') await passphraseUnlock(Q);
+    });
+  }
+
   if (ok) {
     await step('remove', async () => {
       const T = await openPage('#settings');
@@ -783,8 +888,10 @@ async function runVariant(rep, extDir, variant) {
     });
   }
 
-  // A3 for unlock: a second enrollment on the v2 record (no migration), then the #unlock ceremony
-  // held while another page edits, cycles the lock, or removes the passkey.
+  // A3 for unlock: a second enrollment on the v2 record (no migration), then the unlock ceremony
+  // held while another page cycles the lock, edits, imports, idle-locks or removes the passkey
+  // (in a locked tab, which survives), then the #unlock window races (lockGen; removal, which
+  // closes the window).
   if (ok && variant.full) {
     let prf2 = null;
     const passkeyOk = await step('re-enroll-v2', async () => {
@@ -807,8 +914,10 @@ async function runVariant(rep, extDir, variant) {
       await lock(Q);
     });
     // Holds the real assertion of an unlock started from the locked view of S2, run as the #unlock
-    // window ('window') or as a tab ('tab'). → the working status shown while it is held
+    // window ('window') or as a tab ('tab'). Each race starts from a locked vault, whatever the
+    // step before it left. → the working status shown while it is held
     const unlockHeld = async (mode) => {
+      if ((await stateOf(Q)) !== 'locked') await lock(Q);
       const shownMode = await openLockedView(S2, mode === 'window' ? '#unlock' : '');
       if (shownMode !== mode) throw new Error(`locked view runs as ${shownMode}, not ${mode}`);
       await holdNextAssertion(S2);
@@ -816,9 +925,12 @@ async function runVariant(rep, extDir, variant) {
       await waitHeld(S2);
       return (await S2.locator('#unlock-passkey-status').textContent()).trim();
     };
-    // `closes`: the other page's unlock closes the #unlock window (its one job is done), so the
-    // held result dies with it; otherwise the view says the vault changed.
-    const afterRelease = async (name, working, expected, how, closes = false) => {
+    // Releases the held assertion and checks that it was discarded. `closes`: the other page's
+    // unlock closes the #unlock window (its one job is done), so the held result dies with it;
+    // otherwise the page survives, the release reaches it and its locked view says the vault
+    // changed. `also`: [ok, detail] for the race's own precondition (the change really happened).
+    const afterRelease = async (name, working, expected, how, { closes = false, also = [true, ''] } = {}) => {
+      if (!closes) await state(S2, 'locked', 15000).catch(() => {});
       const released = await release(S2);
       const shown = S2.isClosed()
         ? '(window closed)'
@@ -831,25 +943,14 @@ async function runVariant(rep, extDir, variant) {
       await Q.waitForTimeout(500);
       const now = await vault(Q);
       const sess = await session(Q);
-      const view = closes ? S2.isClosed() : shown === msg.passkeyChanged && (await stateOf(S2)) === 'locked';
+      const view = closes ? S2.isClosed() : released && shown === msg.passkeyChanged && (await stateOf(S2)) === 'locked';
       rep.check(
         tag(name),
-        working === msg.passkeyWorking && view && json(now) === expected && !sess.vaultKey && validLockGen(sess.lockGen) && (await stateOf(Q)) === 'locked',
-        `${how}; status while held ${json(working)}; held assertion ${released ? 'released' : 'never returned (window gone)'}; #unlock-passkey-error ${json(shown)}${S2.isClosed() ? '' : ` on ${await stateOf(S2)}`}; record ${json(now) === expected ? 'as the other page left it' : 'CHANGED'}, session keys [${Object.keys(sess)}], other page ${await stateOf(Q)}`,
+        also[0] && working === msg.passkeyWorking && view && json(now) === expected && !sess.vaultKey && json(Object.keys(sess)) === json(['lockGen']) && validLockGen(sess.lockGen) && (await stateOf(Q)) === 'locked',
+        `${how}${also[1] ? `; ${also[1]}` : ''}; status while held ${json(working)}; held assertion ${released ? 'released into the live page' : 'never returned (window gone)'}; #unlock-passkey-error ${json(shown)}${S2.isClosed() ? '' : ` on ${await stateOf(S2)}`}; record ${json(now) === expected ? 'byte-identical to what the other page left' : 'CHANGED'}, session keys [${Object.keys(sess)}], other page ${await stateOf(Q)}`,
       );
     };
     if (passkeyOk) {
-      // Only the session commit can catch this one: the unlock window stays on its locked view (a
-      // storage hint that changes nothing must not drop the ceremony), and the record is the same.
-      await step('race-unlock-lockgen', async () => {
-        const working = await unlockHeld('window');
-        const before = json(await vault(Q));
-        await Q.evaluate(async () => {
-          const bytes = crypto.getRandomValues(new Uint8Array(16));
-          await chrome.storage.session.set({ lockGen: btoa(String.fromCharCode(...bytes)) });
-        });
-        await afterRelease('race-unlock-window-lockgen-discarded', working, before, '#unlock window; lockGen replaced during the held get() (what a lock in any other context leaves; record and lock state unchanged)');
-      });
       await step('race-unlock-lock-cycle', async () => {
         const working = await unlockHeld('tab');
         const before = json(await vault(Q));
@@ -864,10 +965,51 @@ async function runVariant(rep, extDir, variant) {
         await lock(Q);
         await afterRelease('race-unlock-tab-edit-discarded', working, json(await vault(Q)), 'locked tab; unlock + account edit + lock in another page during the held get()');
       });
-      // Last: the window closes itself when the other page unlocks, and takes the tab's virtual
-      // authenticator with it.
-      await step('race-unlock-remove', async () => {
-        const working = await unlockHeld('window');
+      await step('race-unlock-import', async () => {
+        const plain = await decryptRecord(await vault(Q), PASSPHRASE);
+        const { id: _id, ...template } = plain.accounts[0];
+        const entry = { ...template, issuer: 'UnlockRaceImport', label: 'unlock-import@example.test', secret: 'KRUGS4ZANFZSAYJAORSXG5BAMV4GC3LQ' };
+        const backup = sealV1({ accounts: [entry] }, PASSPHRASE);
+        const working = await unlockHeld('tab');
+        const before = json(await vault(Q));
+        await passphraseUnlock(Q);
+        const rows = await rowCount(Q);
+        await importRecord(Q, backup);
+        const listed = await Q.waitForFunction((n) => document.querySelectorAll('.account').length === n, rows + 1, { timeout: 10000 }).then(
+          () => true,
+          () => false,
+        );
+        await lock(Q);
+        const merged = json(await vault(Q));
+        await afterRelease('race-unlock-tab-import-discarded', working, merged, 'locked tab; unlock + import merge of a backup with a new account + lock in another page during the held get()', {
+          also: [listed && merged !== before, `merge ${listed && merged !== before ? `added the account (rows ${rows} -> ${rows + 1}) and resealed` : 'DID NOT change the vault'}`],
+        });
+      });
+      await step('race-unlock-idle', async () => {
+        const working = await unlockHeld('tab');
+        const before = json(await vault(Q));
+        await passphraseUnlock(Q);
+        await state(S2, 'list', 15000);
+        // The product's idle path: lastActiveAt in the past in the extension's session storage, then
+        // the open page's own idle check (popup.js runs session.lockIfIdle() every 30 s and when the
+        // page becomes visible; the visibilitychange is dispatched here instead of waited for).
+        await Q.bringToFront();
+        await Q.evaluate((ms) => chrome.storage.session.set({ lastActiveAt: Date.now() - ms }), IDLE_PAST_MS);
+        const visible = await Q.evaluate(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+          return document.visibilityState;
+        });
+        const idled = await state(Q, 'locked', 10000).then(
+          () => true,
+          () => false,
+        );
+        await afterRelease('race-unlock-tab-idle-lock-discarded', working, before, 'locked tab; unlock, then an idle lock (lastActiveAt 16 min ago, lockIfIdle on visibilitychange) in another page during the held get()', {
+          also: [idled, `other page ${idled ? `idle-locked itself (visibilityState ${visible})` : 'did NOT idle-lock'}`],
+        });
+      });
+      await step('race-unlock-tab-remove', async () => {
+        const working = await unlockHeld('tab');
+        const before = await vault(Q);
         await passphraseUnlock(Q);
         const T = await openPage('#settings');
         await state(T, 'settings');
@@ -878,9 +1020,56 @@ async function runVariant(rep, extDir, variant) {
         await T.close();
         await lock(Q);
         const removed = await vault(Q);
-        await afterRelease('race-unlock-window-remove-discarded', working, json(removed), '#unlock window; unlock + passkey removal + lock in another page during the held get()', true);
-        rep.check(tag('race-unlock-remove-no-slot'), !hasPasskey(await vault(Q)) && (await opens(await vault(Q), null, prf2)).error !== undefined, 'the removed slot stays removed');
+        await afterRelease('race-unlock-tab-remove-discarded', working, json(removed), 'locked tab; unlock + passkey removal + lock in another page during the held get()', {
+          also: [hasPasskey(before) && !hasPasskey(removed), `the other page ${hasPasskey(before) && !hasPasskey(removed) ? 'removed the slot' : 'did NOT remove the slot'}`],
+        });
       });
+      // A passkey again, from the same tab and authenticator, for the two #unlock window races.
+      const againOk = await step('re-enroll-for-window-races', async () => {
+        if ((await stateOf(Q)) === 'locked') await passphraseUnlock(Q);
+        await state(S2, 'list', 15000);
+        await S2.click('#settings-btn');
+        await state(S2, 'settings');
+        await S2.locator('#passkey-add').waitFor({ state: 'visible', timeout: 15000 });
+        await instrument(S2);
+        await S2.fill('#passkey-pass', PASSPHRASE);
+        await ceremonyClick(S2, '#passkey-add');
+        await S2.locator('#passkey-registered').waitFor({ state: 'visible', timeout: 30000 });
+        prf2 = Buffer.from((await hookState(S2)).getPrf ?? []);
+        const byPrf = await opens(await vault(Q), null, prf2);
+        if (!byPrf.data) throw new Error(`the new passkey slot does not open with its PRF: ${byPrf.error}`);
+        await lock(Q);
+      });
+      if (againOk) {
+        // Only the session commit can catch this one: the unlock window stays on its locked view (a
+        // storage hint that changes nothing must not drop the ceremony), and the record is the same.
+        await step('race-unlock-lockgen', async () => {
+          const working = await unlockHeld('window');
+          const before = json(await vault(Q));
+          await Q.evaluate(async () => {
+            const bytes = crypto.getRandomValues(new Uint8Array(16));
+            await chrome.storage.session.set({ lockGen: btoa(String.fromCharCode(...bytes)) });
+          });
+          await afterRelease('race-unlock-window-lockgen-discarded', working, before, '#unlock window; lockGen replaced during the held get() (what a lock in any other context leaves; record and lock state unchanged)');
+        });
+        // Last: the window closes itself when the other page unlocks, and takes the tab's virtual
+        // authenticator with it.
+        await step('race-unlock-remove', async () => {
+          const working = await unlockHeld('window');
+          await passphraseUnlock(Q);
+          const T = await openPage('#settings');
+          await state(T, 'settings');
+          await T.locator('#passkey-registered').waitFor({ state: 'visible', timeout: 15000 });
+          await T.click('#passkey-remove');
+          await T.click('#passkey-remove-confirm');
+          await T.locator('#passkey-add').waitFor({ state: 'visible', timeout: 15000 });
+          await T.close();
+          await lock(Q);
+          const removed = await vault(Q);
+          await afterRelease('race-unlock-window-remove-discarded', working, json(removed), '#unlock window; unlock + passkey removal + lock in another page during the held get()', { closes: true });
+          rep.check(tag('race-unlock-remove-no-slot'), !hasPasskey(await vault(Q)) && (await opens(await vault(Q), null, prf2)).error !== undefined, 'the removed slot stays removed');
+        });
+      }
     }
   }
 
@@ -898,7 +1087,10 @@ async function runVariant(rep, extDir, variant) {
 export async function runPasskey(rep) {
   ensureArtifactsDir();
   const extDir = realExtensionDir(process.env.E2E_EXTENSION || path.join(REPO_ROOT, 'extension'));
-  for (const variant of VARIANTS) await runVariant(rep, extDir, variant);
+  const only = (process.env.E2E_PASSKEY_VARIANTS ?? '').split(',').filter(Boolean);
+  for (const variant of VARIANTS) {
+    if (only.length === 0 || only.includes(variant.name)) await runVariant(rep, extDir, variant);
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
