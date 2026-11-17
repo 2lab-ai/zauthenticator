@@ -420,6 +420,79 @@ test('a failed session-key write after the enrolled record is saved: resolves sa
   assert.equal(await (await page()).resume(), 'locked');
 });
 
+// Every session write fails from the moment the enrolled record is saved: the session-key write
+// and the lock that follows it both fail. Session storage is left exactly as it was before the
+// enrollment, and this page holds no key.
+function failSessionWritesAfterSave(t) {
+  const { set: sessionSet, remove: sessionRemove } = chrome.storage.session;
+  const localSet = chrome.storage.local.set;
+  let failing = false;
+  const restore = () => {
+    failing = false;
+    Object.assign(chrome.storage.session, { set: sessionSet, remove: sessionRemove });
+    chrome.storage.local.set = localSet;
+  };
+  t.after(restore);
+  chrome.storage.session.set = async (items) => {
+    if (failing) throw new Error('set failed');
+    return sessionSet(items);
+  };
+  chrome.storage.session.remove = async (keys) => {
+    if (failing) throw new Error('remove failed');
+    return sessionRemove(keys);
+  };
+  chrome.storage.local.set = async (items) => {
+    await localSet(items);
+    failing = true;
+  };
+  return restore;
+}
+
+test('v2 re-enroll, then the session-key write and the lock both fail: saved, this page locked, shared session exactly as before', async (t) => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+  await a.removePasskey((await a.passkeyState()).slot.cred);
+  const envelope = structuredClone(areas.session.get('vaultKey'));
+  const generation = areas.session.get('lockGen');
+  assert.equal(envelope.v, 2);
+  const capture = await a.captureForCeremony();
+  const restore = failSessionWritesAfterSave(t);
+  const result = await a.enrollPasskey(capture, PASS, PASSKEY);
+  restore();
+  assert.deepEqual(result, { saved: true, locked: true });
+  const stored = await store.getRecord();
+  assert.equal(stored.slots.length, 2, 'the slot is saved');
+  assert.equal(stored.id, envelope.id, 'a v2 enrollment keeps the record identity');
+  assert.equal(a.isUnlocked(), false);
+  assert.deepEqual(areas.session.get('vaultKey'), envelope, 'no new key written');
+  assert.equal(areas.session.get('lockGen'), generation, 'the lock did not happen');
+  // The pre-enrollment session (same DEK, same identity) still opens the vault in another page.
+  assert.equal(await (await page()).resume(), 'list');
+});
+
+test('v1 → v2 enrollment, then the session-key write and the lock both fail: saved, every page locked', async (t) => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  const envelope = structuredClone(areas.session.get('vaultKey'));
+  assert.equal(envelope.v, 1);
+  const capture = await a.captureForCeremony();
+  const restore = failSessionWritesAfterSave(t);
+  const result = await a.enrollPasskey(capture, PASS, PASSKEY);
+  restore();
+  assert.deepEqual(result, { saved: true, locked: true });
+  const stored = await store.getRecord();
+  assert.equal(stored.v, 2);
+  assert.equal(stored.slots.length, 2, 'the slot is saved');
+  assert.equal(a.isUnlocked(), false);
+  assert.deepEqual(areas.session.get('vaultKey'), envelope, 'no new key written');
+  // The old v1 envelope does not belong to the v2 record: another page reads locked and clears it.
+  assert.equal(await (await page()).resume(), 'locked');
+  assert.equal(areas.session.has('vaultKey'), false);
+});
+
 test('enrollPasskey with nothing changed resolves saved and unlocked', async () => {
   await seed();
   const a = await page();

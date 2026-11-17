@@ -597,10 +597,13 @@ export function enrollPasskey(capture, passphrase, options) {
     try {
       await store.setSessionKey(result.rawKey, vault.identity(result.record));
     } catch {
-      // The stored key (if any) is the old one: it reads as locked against the saved record (a
-      // migration changes the identity). This page drops its key; the session goes too if it can.
+      // locked: true means this page dropped its key and a lock of the shared session was
+      // attempted. If that lock also fails, the shared session stays exactly as it was before the
+      // enrollment: after a v1 → v2 migration its key no longer matches the record and every
+      // reader treats it as locked; after a v2 enrollment (same DEK, same id) it still opens the
+      // vault, as it did before.
       if (gen === epoch) forget();
-      try { await store.clearSessionKey(); } catch { /* checkedSession() clears it on next read */ }
+      try { await store.clearSessionKey(); } catch { /* the shared session stays as it was */ }
       return { saved: true, locked: true };
     }
     if (gen !== epoch) return { saved: true, locked: true };
