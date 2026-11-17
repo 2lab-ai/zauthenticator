@@ -4,8 +4,8 @@ Status: done (2026-11-16) — closed rows and the review log are in [loop.done.m
 
 ## Next
 
-1. Owner hand test of main 161f0b4 on cachy-z13 Edge (installed, 33 files hash-equal; reload the extension):
-   new popup, auto-fill, a rejected code refilled with a fresh one.
+1. Owner hand test of main (black & white UI merged 2026-11-17 as 5960300) on cachy-z13 Edge
+   (reload the extension): black & white popup and icon, auto-fill, a rejected code refilled with a fresh one.
 2. Release `v0.2.0` (tag → release workflow attaches `zauthenticator-0.2.0.zip`) — owner gate, after 1.
 3. Store submission (Chrome Web Store, Edge Add-ons) by the owner from `store/listing/` + `store/assets/`.
 

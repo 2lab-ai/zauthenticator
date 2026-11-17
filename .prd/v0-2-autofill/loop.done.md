@@ -60,3 +60,17 @@ Review log (external, per unit):
   fixed → APPROVE), store/shots 8fa2684.
 - Gates on main 161f0b4 (snapshot ×2 + CI 43909203862): unit 306/306, policy 21/21, self-test 542/542,
   e2e 119/119 (CI headed).
+
+## R3 — closed (2026-11-17)
+
+Owner correction after round 2's indigo (Linear-style) redesign: "아니 블랙&화이트 모던 ui로 해달라고".
+Round 2 had picked a chromatic reference although the owner named none; the ui-ux default reference
+(`openai`: #fff / #000, no hue, opacity tiers, inversion, flat, square) is what this round applies.
+
+### Closed rows
+
+| ID | Item | Status | Receipt |
+|---|---|---|---|
+| BW1 | Popup tokens monochrome (accent/danger/warning = ink tiers), one `--radius` (0), no shadows, monochrome avatar (hueOf removed), non-colour signals for expiring code / warning / errors / delete, 2px ink focus at 2px offset | ✅ | 35b6906, c28623f, 9ea4761; contrast table in the commit review (all text ≥ 4.5:1, disabled+hover 4.74 / 6.25 measured from pixels) |
+| BW2 | Icon (black square, white z, ring ≥ 32 px, light keyline for dark toolbars), tiles, marquee, screenshot frame, demo site — 0 tinted pixels in every regenerated output | ✅ | 35b6906; 128 icon art at 16..111 (96 + 16 padding), tiles and screenshots 24-bit RGB |
+| BW3 | Gates on snapshot 9ea4761: unit 306/306, trust gate 0 FAIL, self-test 542/542, e2e 119/119; external review APPROVE (popup round 2 after the disabled-hover MUST-FIX; assets round 1) | ✅ | merge 5960300 |
