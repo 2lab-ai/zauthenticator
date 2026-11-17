@@ -164,9 +164,12 @@ h2 {
   outline-offset: 2px;
 }
 
+/* The text fill too: an autofilled field sets -webkit-text-fill-color (below), which would
+   otherwise keep selected text in the ink, on the ink. */
 ::selection {
   background: var(--ink);
   color: var(--canvas);
+  -webkit-text-fill-color: var(--canvas);
 }
 
 .visually-hidden {
@@ -420,6 +423,13 @@ select {
   cursor: pointer;
 }
 
+/* Forced colours drop the drawn chevron (a background gradient): the browser's own arrow returns. */
+@media (forced-colors: active) {
+  select {
+    appearance: auto;
+  }
+}
+
 /* Where the browser lets a page draw the select's list (customizable select), the open list is
    drawn here too: square, a 1px ink edge, the option under the pointer or the keyboard inverted,
    the chosen one with a check mark, no system blue. The closed select keeps the look above (its
@@ -438,6 +448,12 @@ select {
 
   select::picker-icon {
     display: none;
+  }
+
+  @media (forced-colors: active) {
+    select::picker-icon {
+      display: revert;
+    }
   }
 
   select:open {
@@ -474,6 +490,16 @@ select {
     outline: none;
     background: var(--accent);
     color: var(--on-accent);
+  }
+
+  /* Forced colours replace the inversion with the system's colours, so the focused option gets a
+     system-colour ring instead. */
+  @media (forced-colors: active) {
+    option:hover,
+    option:focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
   }
 }
 
