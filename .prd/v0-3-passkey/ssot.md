@@ -15,5 +15,5 @@
 
 - Behaviour, record format and flows in [../04-passkey-unlock.md](../04-passkey-unlock.md).
 - Done = merged on main, gates green locally and in CI (unit, trust gate, self-test, e2e with
-  virtual authenticators), external review approved, owner hand test on the Z13 with a phone,
+  virtual authenticators), external review approved, owner hand test on the owner's Linux laptop with a phone,
   release `v0.3.0` published (release tag = owner gate).

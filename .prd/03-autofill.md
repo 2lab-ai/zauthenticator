@@ -190,13 +190,13 @@ Manual checks (not automatable): the native permission prompt in S2; the browser
 
 ## Fresh code and retry after a failed attempt (v0.2.0, from the user's hand test)
 
-User report (verbatim, 2026-11-16, cachy-z13 Edge, v0.2.0 = main e474db8): "잘 작동되는데, 첫번째 시도에서 시간 지난 2fa 입력해서 실패남 이거 한번 실패난경우 다시 입력하도록해줘"
+User report (verbatim, 2026-11-16, the owner's Linux Edge, v0.2.0 = main e474db8): "잘 작동되는데, 첫번째 시도에서 시간 지난 2fa 입력해서 실패남 이거 한번 실패난경우 다시 입력하도록해줘"
 
 Cause (code at main 90ddb49): the code is computed once when the field is found (worker `handleMessage`,
 `totp(account, Date.now())`) and the content script stops after the first fill
 (`content/autofill.js:98-102`) and never asks again for a field it filled (`seen`, :36/:79/:110). A code
 filled late in its period, or submitted after the period ended, is expired; if the site rejects it and
-clears or re-renders the field, nothing fills it again. Clocks were checked: cachy-z13 within 1 s of the
+clears or re-renders the field, nothing fills it again. Clocks were checked: the owner's Linux laptop within 1 s of the
 reference, NTP synchronized.
 
 Contract (S3 additions):

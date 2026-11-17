@@ -43,7 +43,7 @@ Review log (external, per unit):
 
 ## Round 2 (2026-11-16) — user hand test
 
-- Manual checks done by the user on cachy-z13 Edge with v0.2.0 (main e474db8): "잘 작동되는데" — context
+- Manual checks done by the user on the owner's Linux Edge with v0.2.0 (main e474db8): "잘 작동되는데" — context
   menu fill, bind window + native permission prompt and auto-fill on revisit observed working.
 - Open: first attempt submitted an expired code → fresh-code + retry contract in 03-autofill.md
   ("Fresh code and retry after a failed attempt"). Tag v0.2.0 after this lands.
@@ -83,11 +83,11 @@ Browser-drawn colour that the store screenshots never show (found before the own
 
 | ID | Item | Status | Receipt |
 |---|---|---|---|
-| BW4 | `accent-color` = ink; autofilled inputs keep the field fill and ink text (was #e8f0fe tint); selects use the customizable picker under `@supports (appearance: base-select)` — open lists 0 tinted pixels in light/dark, closed selects pixel-identical; forced colors keep a system-colour focus outline (ring 11.31:1 / 9.10:1) and the native arrows; `::selection` sets the text fill defensively | ✅ | 6c68d67, 3e20468, d506abe; gates on snapshot 3e20468: unit 306/306, trust gate 0 FAIL, self-test 542/542, e2e 119/119 (d506abe comment-only: trust gate 0 FAIL); gpt6-reviewer R2 APPROVE; merge c9dcace; cachy-z13 33 files hash-equal |
+| BW4 | `accent-color` = ink; autofilled inputs keep the field fill and ink text (was #e8f0fe tint); selects use the customizable picker under `@supports (appearance: base-select)` — open lists 0 tinted pixels in light/dark, closed selects pixel-identical; forced colors keep a system-colour focus outline (ring 11.31:1 / 9.10:1) and the native arrows; `::selection` sets the text fill defensively | ✅ | 6c68d67, 3e20468, d506abe; gates on snapshot 3e20468: unit 306/306, trust gate 0 FAIL, self-test 542/542, e2e 119/119 (d506abe comment-only: trust gate 0 FAIL); gpt6-reviewer R2 APPROVE; merge c9dcace; the owner's Linux laptop 33 files hash-equal |
 
 ## Release — closed (2026-11-17)
 
-Owner: "정규 릴리즈 ㄱ" (2026-11-17), after the black & white build was installed on cachy-z13. The owner
+Owner: "정규 릴리즈 ㄱ" (2026-11-17), after the black & white build was installed on the owner's Linux laptop. The owner
 gave the release order; a separate hand-test report was not given.
 
 ### Closed rows
@@ -95,4 +95,4 @@ gave the release order; a separate hand-test report was not given.
 | ID | Item | Status | Receipt |
 |---|---|---|---|
 | REL1 | Tag `v0.2.0` (annotated) on main 0d77324 → release workflow run 44012726616: tag-version, verify (ci.yml), publish all success | ✅ | https://github.com/2lab-ai/zauthenticator/releases/tag/v0.2.0, published 2026-11-17T03:51:39Z |
-| REL2 | Asset `zauthenticator-0.2.0.zip` (150,831 bytes), sha256 6b4c554e1e5a45c7a1782847d82b1ffc03779ecfad570cd9836d091104b346ee = release notes; unzipped == `git archive v0.2.0 extension` (33 files) == cachy-z13 `~/.local/share/zauthenticator` (sha256 per file) | ✅ | dispatcher download + diff |
+| REL2 | Asset `zauthenticator-0.2.0.zip` (150,831 bytes), sha256 6b4c554e1e5a45c7a1782847d82b1ffc03779ecfad570cd9836d091104b346ee = release notes; unzipped == `git archive v0.2.0 extension` (33 files) == the owner's Linux laptop `~/.local/share/zauthenticator` (sha256 per file) | ✅ | dispatcher download + diff |

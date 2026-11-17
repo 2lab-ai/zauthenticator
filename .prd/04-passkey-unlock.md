@@ -38,13 +38,13 @@ user verification (required here) the value cannot be reproduced without that ve
 | An extension page can call `create()`/`get()`; with `rp.id` omitted (or = the bare extension ID) the RP ID that reaches the authenticator is the string `chrome-extension://<id>`; a web domain or the full `chrome-extension://` string as `rp.id` is a SecurityError | spike, Chromium 159, CDP virtual authenticator; Chromium `chrome_web_authentication_delegate.cc` L116-124, L231 @7d2c6b8 |
 | PRF returns 32 bytes on `get()` (and on `create()` for native-PRF / hmac-secret-mc authenticators); same salt → same bytes | spike (hasPrf; hasHmacSecret without -mc: `enabled` on create, bytes on get) |
 | Credentials are bound to one extension ID; Chrome Web Store, Edge Add-ons and the unpacked install differ | spike; Microsoft Q&A 1508048 |
-| Edge 153 on the Z13 (CachyOS): no platform authenticator (`isUserVerifyingPlatformAuthenticatorAvailable()` false), `hybridTransport` true, `extension:prf` true | z13 probe, headless fresh profile |
+| Edge 153 on the owner's Linux laptop: no platform authenticator (`isUserVerifyingPlatformAuthenticatorAvailable()` false), `hybridTransport` true, `extension:prf` true | owner-device probe, headless fresh profile |
 | Linux has no OS passkey store in Chromium; Edge's passkey sync is documented for Windows/iOS/Android only | Chromium `crypto/user_verifying_key.cc` @7d2c6b8; microsoft.com/edge/features/passkeys |
-| The Z13 has a 5 MP IR camera (`/dev/video2`); no face/fingerprint software installed; Howdy is PAM-only (WebAuthn PR #1125 closed unmerged 2026-11-14); credentialsd v0.4.0 has no platform authenticator and no native Chromium support | z13 probe; howdy #782/#1125; credentialsd #6/#8/#245 |
+| The owner's laptop has an IR camera; no face/fingerprint software installed; Howdy is PAM-only (WebAuthn PR #1125 closed unmerged 2026-11-14); credentialsd v0.4.0 has no platform authenticator and no native Chromium support | z13 probe; howdy #782/#1125; credentialsd #6/#8/#245 |
 | iCloud Keychain gives PRF in Chromium on macOS 15+ (M132); phones give PRF over hybrid in Chromium; iOS fixed a hybrid vs on-device PRF mismatch in 18.4, one open mismatch report remains | `icloud_keychain.mm` L256-258; blink-dev msg11227; Apple forum 764730/774112 |
 | YubiKey 5 / Bio: hmac-secret; PRF requires UV, so a FIDO2 PIN (or the Bio fingerprint) | Yubico PRF guide; WebAuthn L3 §prf |
 | The toolbar popup is only protected against Chrome's own web-modal dialogs; Bitwarden tells Linux users to pop the extension out first | `extension_popup.cc` L379-383; bitwarden.com/help/login-with-passkeys |
-| Gate A0, measured: from Edge 153 on Linux over hybrid, an iPhone saving to Apple Passwords accepts the `chrome-extension://` RP ID and returns PRF 32 B on create and on both gets, all equal (create 23.4 s, gets 10.3 s and 15.4 s). An Android phone saving to Samsung Pass accepts the RP ID but returns no PRF on create (`enabled` false) or on either get (create 15 s, gets 8.3 s and 8.6 s). Google Password Manager over hybrid is not measured | owner probe 0.0.2 (v0-3-passkey/loop.md P2, P3) |
+| Gate A0, measured: from Edge 153 on Linux over hybrid, an iPhone saving to Apple Passwords accepts the `chrome-extension://` RP ID and returns PRF 32 B on create and on both gets, all equal. An Android phone saving to Samsung Pass accepts the RP ID but returns no PRF on create (`enabled` false) or on either get. Google Password Manager over hybrid is not measured | owner probe 0.0.2 (v0-3-passkey/loop.md P2, P3) |
 
 ## Threat model (what this does and does not change)
 
@@ -257,7 +257,7 @@ Every unit codes against these signatures; a change goes into this section first
 
 ## Acceptance
 
-- **A0 (gate before record-format code):** the owner's probe on the Z13 Edge with their phone:
+- **A0 (gate before record-format code):** the owner's probe on their Linux Edge with their phone:
   create ok, two gets ok, PRF 32 bytes, both equal; seconds per ceremony recorded. If it fails:
   owner chooses security key with PIN / Mac only / stop, and the phone wording is removed. If it
   works but is slow: the seconds are shown to the owner and the build proceeds; a security key or
