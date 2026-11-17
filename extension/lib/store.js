@@ -16,8 +16,9 @@
 // lockGen with vaultKey set to null, then removes vaultKey and the other three, so none of those
 // four outlives a lock. lockGen does outlive a lock, by design: it holds no secret, only random
 // bytes that let a passkey ceremony see that a lock happened while it ran. It is absent after a
-// browser start until the first lock. If writing the new lockGen fails, the removal takes lockGen
-// too, so a ceremony captured with a lockGen no longer matches.
+// browser start until the first lock or the first ceremony capture (ensureLockGen() writes one, so
+// no capture is ever issued without it). If writing the new lockGen fails, the removal takes
+// lockGen too, so every issued capture no longer matches.
 
 export const RECORD_KEY = 'vault';
 export const SESSION_KEY = 'vaultKey';
@@ -95,6 +96,18 @@ export async function clearSessionKey() {
     failure ??= error;
   }
   if (failure) throw failure;
+}
+
+// → the stored lock generation, writing a fresh one first when none is stored (a browser start).
+// Throws when it cannot be read or written: a ceremony capture is never issued without one, so a
+// lock whose generation write fails (and whose removal then takes lockGen) never looks like no
+// lock. Call under the vault lock.
+export async function ensureLockGen() {
+  const current = await getLockGen();
+  if (current !== null) return current;
+  const fresh = base64FromBytes(crypto.getRandomValues(new Uint8Array(16)));
+  await chrome.storage.session.set({ [LOCK_GEN_KEY]: fresh });
+  return fresh;
 }
 
 export async function getLockGen() {

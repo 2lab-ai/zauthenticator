@@ -542,7 +542,8 @@ export function captureForCeremony() {
     if (!record) throw new SessionError('no-vault');
     const identity = vault.identity(record);
     const stored = await checkedSession(record);
-    const capture = { rev: await vault.revision(record), lockGen: await store.getLockGen(), identity, slot: vault.passkeySlot(record) };
+    // Never null (store.ensureLockGen()); when it cannot be written no capture is issued.
+    const capture = { rev: await vault.revision(record), lockGen: await store.ensureLockGen(), identity, slot: vault.passkeySlot(record) };
     captures.set(capture, { gen, key: rawKey, rev: capture.rev, lockGen: capture.lockGen, identity: { ...identity }, session: stored && !isStale(await store.getLastActive()) && rawKey && sameBytes(stored.key, rawKey) });
     return capture;
   });
@@ -550,7 +551,10 @@ export function captureForCeremony() {
 
 async function ceremonyRecord(capture, enroll) {
   const initial = captures.get(capture);
-  if (!initial || initial.gen !== epoch || (enroll && (!initial.session || rawKey !== initial.key))) throw new SessionError('changed');
+  if (!initial || typeof initial.lockGen !== 'string' || initial.gen !== epoch ||
+      (enroll && (!initial.session || rawKey !== initial.key))) {
+    throw new SessionError('changed');
+  }
   const record = await store.getRecord();
   if (!record || await vault.revision(record) !== initial.rev || await store.getLockGen() !== initial.lockGen ||
       !sameIdentity(vault.identity(record), initial.identity) || initial.gen !== epoch) throw new SessionError('changed');
@@ -581,12 +585,18 @@ export function enrollPasskey(capture, passphrase, options) {
   return exclusive(async () => {
     const record = await ceremonyRecord(capture, true);
     const result = await vault.addPasskeySlot(record, passphrase, options);
+    const current = loaded(await vault.open(result.rawKey, result.record));
+    // The last check before anything is written: 'changed' always means nothing was stored.
     await ceremonyRecord(capture, true);
+    const { gen } = captures.get(capture);
     await store.saveRecord(result.record);
-    if (captures.get(capture).gen !== epoch) throw new SessionError('changed');
+    // The slot is stored from here on. A lock of this page meanwhile ends it locked: no session
+    // key is written, or the one just written goes with the lock queued behind this call.
+    if (gen !== epoch) return { saved: true, locked: true };
     await store.setSessionKey(result.rawKey, vault.identity(result.record));
-    if (captures.get(capture).gen !== epoch) throw new SessionError('changed');
-    remember(result.rawKey, result.record, loaded(await vault.open(result.rawKey, result.record)));
+    if (gen !== epoch) return { saved: true, locked: true };
+    remember(result.rawKey, result.record, current);
+    return { saved: true, locked: false };
   });
 }
 

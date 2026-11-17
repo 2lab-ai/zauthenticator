@@ -306,6 +306,115 @@ test('ceremony is rejected when generation write fails during a lock', async (t)
   assert.deepEqual(await store.getRecord(), before);
 });
 
+// The next chrome.storage.session.set() throws once; every other call goes through.
+function failNextSessionSet(t) {
+  const original = chrome.storage.session.set;
+  t.after(() => { chrome.storage.session.set = original; });
+  chrome.storage.session.set = async () => {
+    chrome.storage.session.set = original;
+    throw new Error('set failed');
+  };
+}
+
+// T2: after a browser start lockGen is absent. A capture must never carry that absence, or a lock
+// whose generation write fails (and whose removal then takes lockGen) would look like no lock.
+test('fresh browser session: unlock capture survives no lock whose generation write failed', async (t) => {
+  await seed();
+  const a = await page(); const b = await page();
+  await a.resume();
+  await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+  areas.session.clear(); // browser restart: locked, no lockGen yet
+  const a2 = await page();
+  assert.equal(await a2.resume(), 'locked');
+  const capture = await a2.captureForCeremony();
+  assert.equal(typeof capture.lockGen, 'string');
+  assert.equal(atob(capture.lockGen).length, 16);
+  await b.unlock(PASS);
+  failNextSessionSet(t);
+  await assert.rejects(b.lock(), /set failed/);
+  assert.equal(areas.session.has('lockGen'), false, 'the failure path removed lockGen');
+  const before = structuredClone([...areas.local]);
+  await assert.rejects(a2.unlockWithPasskey(capture, PASSKEY.prf), (e) => e.code === 'changed');
+  assert.equal(areas.session.has('vaultKey'), false, 'no session key after the user locked');
+  assert.deepEqual([...areas.local], before);
+  assert.equal(a2.isUnlocked(), false);
+});
+
+test('fresh browser session: enroll capture survives no lock whose generation write failed', async (t) => {
+  await seed();
+  areas.session.delete('lockGen');
+  const a = await page(); const b = await page();
+  await a.resume(); await b.resume();
+  const capture = await a.captureForCeremony();
+  assert.equal(typeof capture.lockGen, 'string');
+  failNextSessionSet(t);
+  await assert.rejects(b.lock(), /set failed/);
+  assert.equal(areas.session.has('lockGen'), false, 'the failure path removed lockGen');
+  // The user unlocks again with the passphrase while page a still waits on the phone.
+  await b.unlock(PASS);
+  const before = structuredClone([...areas.local]);
+  await assert.rejects(a.enrollPasskey(capture, PASS, PASSKEY), (e) => e.code === 'changed');
+  assert.deepEqual([...areas.local], before, 'nothing written');
+});
+
+// Once the record with the new slot is saved, enrollPasskey never reports 'changed' ("nothing
+// written"): a lock of this page during the save resolves as saved and locked, with no session key
+// written for it.
+test('a lock of this page while the enrolled record is being saved: saved, resolves, no session key written', async (t) => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  const capture = await a.captureForCeremony();
+  const keyWrites = [];
+  const sessionSet = chrome.storage.session.set;
+  const localSet = chrome.storage.local.set;
+  t.after(() => {
+    chrome.storage.session.set = sessionSet;
+    chrome.storage.local.set = localSet;
+  });
+  chrome.storage.session.set = async (items) => {
+    if (items.vaultKey) keyWrites.push(items.vaultKey);
+    return sessionSet(items);
+  };
+  let locking;
+  chrome.storage.local.set = async (items) => {
+    chrome.storage.local.set = localSet;
+    locking = a.lock(); // the user locks this page while the save is in flight
+    return localSet(items);
+  };
+  const result = await a.enrollPasskey(capture, PASS, PASSKEY);
+  await locking;
+  assert.deepEqual(result, { saved: true, locked: true });
+  const stored = await store.getRecord();
+  assert.equal(stored.v, 2);
+  assert.equal(stored.slots.length, 2, 'the slot is saved');
+  assert.deepEqual(keyWrites, [], 'no session key written after the lock');
+  assert.equal(areas.session.has('vaultKey'), false);
+  assert.equal(a.isUnlocked(), false);
+});
+
+test('enrollPasskey with nothing changed resolves saved and unlocked', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  assert.deepEqual(await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY), { saved: true, locked: false });
+  assert.equal(a.isUnlocked(), true);
+});
+
+test('capture refuses to issue when the generation cannot be written', async (t) => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  failNextSessionSet(t);
+  await assert.rejects(a.captureForCeremony(), /set failed/);
+  assert.equal(areas.session.has('lockGen'), false);
+  // An existing generation is kept, not replaced, by a capture.
+  const first = await a.captureForCeremony();
+  const second = await a.captureForCeremony();
+  assert.equal(second.lockGen, first.lockGen);
+  assert.equal(await store.getLockGen(), first.lockGen);
+});
+
 test('activity recorded by another page while the idle decision waits keeps the session', async () => {
   await seed();
   const a = await page();
