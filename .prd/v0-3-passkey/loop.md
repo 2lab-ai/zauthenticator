@@ -7,8 +7,8 @@ loop.done.md.
 
 | ID | Item | Status |
 |---|---|---|
-| G1 | z13 install of the merged main (same folder `~/.local/share/zauthenticator`, per-file SHA-256 equal to the snapshot) | 🟡 |
-| G2 | A6 owner hand test: export a backup first, then enroll with the iPhone (Apple Passwords), lock, unlock with the passkey, restart Edge, unlock with the passkey, unlock with the passphrase | 🚪 owner |
+| G1 | Owner-device install of the merged main (same unpacked folder, so the extension id and vault stay; per-file SHA-256 equal to the snapshot) | 🟡 |
+| G2 | A6 owner hand test: export a backup first, then enroll with the owner's phone, lock, unlock with the passkey, restart Edge, unlock with the passkey, unlock with the passphrase | 🚪 owner |
 | G3 | v0.3.0 tag + manifest version 0.3.0 (owner approval; the manifest bump was refused by the auto-mode classifier for a coder) | 🚪 owner |
 
 ## Build facts
