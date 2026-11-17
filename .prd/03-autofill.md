@@ -1,6 +1,6 @@
 # 03 — Auto-fill OTP into web pages
 
-Status: shipped (2026-11-16, v0.2.0) — the implemented auto-fill contract, not a future target; workstream record in [v0-2-autofill/](v0-2-autofill/).
+Status: shipped (v0.2.0, released 2026-11-17) — the implemented auto-fill contract, not a future target; workstream record in [v0-2-autofill/](v0-2-autofill/).
 
 ## User request (verbatim, 2026-11-16)
 
