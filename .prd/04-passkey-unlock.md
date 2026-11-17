@@ -1,8 +1,9 @@
 # 04 — Passkey unlock
 
 Status: planned (v0.3). Workstream: [v0-3-passkey/](v0-3-passkey/ssot.md).
-Revision 2 (2026-11-17) after trinity R1 (grok-4.7, gpt-6-astra, fable: all REJECT on the same
-holes, envelope kept). Record-format code waits for gate A0 (owner phone probe).
+Revision 3 (2026-11-17): R1 3×REJECT (same holes, envelope kept) → rev 2 → R2 grok APPROVE,
+fable APPROVE, gpt-6 REJECT (record revision vs identity; storage-writer wording) → rev 3.
+Record-format code waits for gate A0 (owner phone probe).
 
 ## Problem
 
@@ -22,8 +23,8 @@ user verification (required here) the value cannot be reproduced without that ve
 - Non-goal: removing the passphrase (one lost authenticator would lose every code; owner decision,
   irreversible class). Non-goal: face unlock on Linux (nothing exposes the IR camera to browser
   WebAuthn). Non-goal: syncing; pages still make no network requests. Non-goal (v0.3): changing
-  the passphrase (no such flow exists today; when added it must rotate the DEK, re-encrypt, and
-  drop every passkey slot).
+  the passphrase (no such flow exists today; when added it must draw a new DEK **and a new `id`**,
+  re-encrypt, and drop every passkey slot, so a session holding the old DEK no longer matches).
 
 ## Platform facts (measured or sourced 2026-11-17; receipts in v0-3-passkey/loop.md)
 
@@ -50,9 +51,9 @@ user verification (required here) the value cannot be reproduced without that ve
   boundary against code running in an extension context, which can wrap its own slots.
 - **The DEK is long-lived.** Removing a passkey slot removes it from this record only; earlier
   copies (backups, disk images) keep their slots. Nothing here revokes a copy.
-- **Out of scope: storage-write attackers.** One who can write `chrome.storage.local` can delete
-  slots (forcing the passphrase) or roll the record back (reviving a removed slot); that is
-  equivalent to extension compromise.
+- **Storage-only writers** can cause denial of service, remove slots, or replay older valid
+  records (reviving a removed slot); this design does not provide rollback resistance. Storage
+  write alone does not bypass AES-GCM confidentiality: it yields no DEK, KEK or PRF output.
 - The UV flag check in the extension is auxiliary; the protection is the authenticator's
   UV-bound PRF secret.
 
@@ -97,15 +98,28 @@ user verification (required here) the value cannot be reproduced without that ve
 ### Session key
 
 `chrome.storage.session` keeps the key with its record identity: `{ key, v, id }` (v1: `id`
-absent). Every reader (pages and the auto-fill worker, both already under the
-`zauthenticator-vault` Web Lock) compares it with the stored record; on mismatch it clears the
-session and treats the vault as locked. A crash between save and session update therefore ends
-in "locked", never in a wrong key.
+absent). Identity answers only "does this key belong to this vault". Every reader (pages and the
+auto-fill worker, both already under the `zauthenticator-vault` Web Lock via `withVaultState` /
+`readUnlocked`) compares it with the stored record; on mismatch it clears the session and treats
+the vault as locked. A crash between save and session update therefore ends in "locked", never
+in a wrong key.
+
+Two more values decide whether a ceremony result may still be used:
+- `rev` = SHA-256 of the canonical serialization of the **whole** stored record (`data`,
+  `slots`, headers). Every `seal` changes it (new `data.iv`), so any edit, slot removal or import
+  merge in any window changes `rev`; `id` does not.
+- `lockGen` = 16 random bytes in `chrome.storage.session`, replaced (never removed) by every lock
+  path inside `store.clearSessionKey()` — manual, idle, and the mismatch clear above. It is shared
+  by all windows and the worker, unlike the page-local `epoch`.
 
 ### Flows
 
 - **Ceremony surface:** always the own window (`popup.html#passkey`), never the toolbar popup.
-- **Enroll** (Settings → "Unlock with a passkey" → "Add"): re-enter the passphrase. `create()`
+  A ceremony starts only from a user click inside an extension page; no message (content script,
+  worker) starts one. Each ceremony captures `rev` and `lockGen` (and, for enrollment, the session
+  identity) at its start.
+- **Enroll** (Settings → "Unlock with a passkey" → "Add"; the text says the browser will ask
+  twice): re-enter the passphrase. `create()`
   with `rp: {name}` (no `id`), random user id, `residentKey:'required'`,
   `userVerification:'required'`, `authenticatorAttachment:'cross-platform'` when UVPA is false,
   `hints: ['hybrid','security-key']`, algs [-8, -7, -257], `prf.eval.first = prfSalt`. Then
@@ -113,24 +127,27 @@ in "locked", never in a wrong key.
   `create()` also returned bytes they must be equal. Any failure: nothing stored, message says the
   passkey may remain on the phone/key and how to delete it.
 - **Commit** (inside the `zauthenticator-vault` lock, before it is released): re-read the
-  record; abort ("the vault changed — start again") if it is not the record the ceremony started
-  from (same `id`, or for v1 the same `ct`) or the session generation moved (lock, idle lock,
-  import); build via `addPasskeySlot` (fresh DEK when migrating v1); verify before save;
-  `saveRecord`; set the session `{key: DEK, v: 2, id}`; update the page state.
+  record, `lockGen` and the session; abort with nothing written ("the vault changed — start
+  again") unless the current `rev` and `lockGen` equal the captured ones and the session still
+  holds the same identity; build via `addPasskeySlot` (fresh DEK when migrating v1); verify
+  before save; `saveRecord`; set the session `{key: DEK, v: 2, id}`; update the page state.
 - **Unlock** (locked view shows "Unlock with passkey" when the record has a passkey slot): own
   window; `get()` with `allowCredentials` = the slot's `cred`, UV required,
-  `prf.eval.first = prfSalt`; unwrap; open; set the session; the toolbar popup refreshes. A result
-  that arrives after the window's generation moved is discarded. Failure leaves it locked with a
-  message; the passphrase field stays.
-- **Remove** (Settings, unlocked): `removePasskeySlot`; text: "Removed from this browser. Old
-  backups are not affected. Delete the passkey on your phone or key too."
+  `prf.eval.first = prfSalt`. Then, inside the vault lock: abort with nothing written unless the
+  current `rev` and `lockGen` equal the captured ones; unwrap; open; set the session; the toolbar
+  popup refreshes. Failure leaves it locked with a message; the passphrase field stays.
+- **Remove** (Settings, unlocked): `removePasskeySlot`, saved under the vault lock like every
+  mutation; text: "Removed from this browser. Old backups are not affected. Delete the passkey on
+  your phone or key too."
 - **Backups:** export writes `exportCopy(record)`. The backup still shares the DEK with the live
   vault (stated in the UI help and PRIVACY). Import keeps today's semantics: while unlocked,
   decrypt the file through its passphrase slot (v1 or v2) and merge its accounts under the
   current key; the backup record is never saved. `looksLikeRecord` accepts the v2 shape.
-- **Feature detection:** passkey controls appear only when `PublicKeyCredential` exists and
-  `getClientCapabilities()['extension:prf']` is true (or the capability call is missing and a
-  ceremony reports PRF). `minimum_chrome_version` stays 116.
+- **Feature detection:** when `PublicKeyCredential.getClientCapabilities` exists, the passkey
+  controls appear only if it reports `extension:prf` true. When that call does not exist, the
+  "Add" control is shown and the enrollment ceremony decides (no PRF → the refusal message,
+  nothing stored). Without `PublicKeyCredential` nothing is shown. `minimum_chrome_version`
+  stays 116.
 
 ### Trust gate
 
@@ -142,17 +159,22 @@ permission; CSP unchanged.
 
 - **A0 (gate before record-format code):** the owner's probe on the Z13 Edge with their phone:
   create ok, two gets ok, PRF 32 bytes, both equal; seconds per ceremony recorded. If it fails:
-  owner chooses security key with PIN / Mac only / stop, and the phone wording is removed.
+  owner chooses security key with PIN / Mac only / stop, and the phone wording is removed. If it
+  works but is slow: the seconds are shown to the owner and the build proceeds; a security key or
+  a longer idle lock are added only if the owner asks.
 - A1 e2e (CDP virtual authenticators `hasPrf` internal and `hasHmacSecret` usb without `-mc`):
   enroll → edit an account (seal) → lock → unlock with the passkey → lock → unlock with the
   passphrase; both still work after the seal.
 - A2 an authenticator without PRF is refused; the stored record is byte-identical afterwards.
-- A3 lock (manual and idle) or a vault change during the ceremony → result discarded, record
-  unchanged; session `{v,id}` mismatch → locked.
+- A3 during an enrollment or unlock ceremony, each of these in another window → result
+  discarded, nothing written: an account edit, a passkey removal, a manual lock, an idle lock, an
+  import merge just before `get()` returns; also a lock-unlock-lock cycle while the unlock window
+  waits. Session `{v,id}` mismatch → locked.
 - A4 unit: tamper each AAD field / `wrapped` / `iv` → unwrap fails; records with zero or two
   passphrase slots, two passkey slots, or out-of-bound sizes are rejected before any KDF; seal
-  keeps `id`+`slots` and changes `data.iv`; remove refuses the passphrase slot; `exportCopy`
-  leaves the live record unchanged.
+  keeps `id`+`slots` and changes `data.iv` and `rev`; remove refuses the passphrase slot;
+  `exportCopy` leaves the live record unchanged; importing a v2 backup that carries a passkey
+  slot makes no WebAuthn call.
 - A5 a v1 vault is never rewritten until a passkey is enrolled; a v2 backup imports by merge.
 - A6 gates green (unit, trust gate with the new rule, self-test, e2e), external review, README /
   PRIVACY / store disclosures updated, owner hand test (enroll with the phone, lock, unlock,
