@@ -4,7 +4,7 @@
 //   referenceTotp   RFC 4226/6238 HOTP/TOTP
 //   decryptRecord   the vault record format of the extension/lib/vault.js header comment
 
-import { createDecipheriv, createHmac, pbkdf2 } from 'node:crypto';
+import { createDecipheriv, createHmac, hkdfSync, pbkdf2 } from 'node:crypto';
 import { promisify } from 'node:util';
 
 export function base32ToBytes(input) {
@@ -52,17 +52,40 @@ function deriveKey(passphrase, salt, iterations) {
 // Key = PBKDF2-SHA-256(UTF-8(NFC(passphrase)), salt, iterations, 32 bytes); AES-256-GCM with the
 // 12-byte iv; additional data = the header JSON in exactly the documented key order; ct ends
 // with the 16-byte tag. → the decrypted data object; throws when the record does not open.
-export async function decryptRecord(record, passphrase) {
-  const { v, kdf, iv, ct } = record ?? {};
+function decryptGcm(key, iv, ct, aad) {
+  const sealed = Buffer.from(ct, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
+  decipher.setAAD(Buffer.from(JSON.stringify(aad), 'utf8'));
+  decipher.setAuthTag(sealed.subarray(sealed.length - GCM_TAG_BYTES));
+  return Buffer.concat([decipher.update(sealed.subarray(0, sealed.length - GCM_TAG_BYTES)), decipher.final()]);
+}
+
+// Independently unwraps the selected v2 slot and authenticates both the slot and data AAD.
+// The optional PRF is the authenticator's actual output, not a substitute for WebAuthn.
+export async function decryptRecord(record, passphrase, prf = null) {
+  const { v } = record ?? {};
+  if (v === 2) {
+    const slot = record.slots.find((s) => s.type === (prf ? 'passkey' : 'passphrase'));
+    if (!slot) throw new Error('missing slot');
+    let key;
+    let aad;
+    if (prf) {
+      if (prf.length !== 32) throw new Error('invalid PRF');
+      key = Buffer.from(hkdfSync('sha256', prf, Buffer.alloc(0), Buffer.from('zauthenticator vault v2 passkey kek'), 32));
+      aad = { v: 2, id: record.id, type: 'passkey', cred: slot.cred, prfSalt: slot.prfSalt, label: slot.label, createdAt: slot.createdAt };
+    } else {
+      const { name, hash, iterations, salt } = slot.kdf;
+      if (name !== 'PBKDF2' || hash !== 'SHA-256') throw new Error('invalid KDF');
+      key = await deriveKey(passphrase, salt, iterations);
+      aad = { v: 2, id: record.id, type: 'passphrase', kdf: { name, hash, iterations, salt } };
+    }
+    const dek = decryptGcm(key, slot.iv, slot.wrapped, aad);
+    return JSON.parse(decryptGcm(dek, record.data.iv, record.data.ct, { v: 2, id: record.id }).toString('utf8'));
+  }
+  const { kdf, iv, ct } = record ?? {};
   if (v !== 1 || kdf?.name !== 'PBKDF2' || kdf?.hash !== 'SHA-256' || !Number.isInteger(kdf?.iterations) || typeof kdf?.salt !== 'string') {
     throw new Error(`not a v1 PBKDF2/SHA-256 record: ${JSON.stringify({ v, kdf })}`);
   }
   const key = await deriveKey(passphrase, kdf.salt, kdf.iterations);
-  const aad = `{"v":1,"kdf":{"name":"PBKDF2","hash":"SHA-256","iterations":${kdf.iterations},"salt":${JSON.stringify(kdf.salt)}}}`;
-  const sealed = Buffer.from(ct, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
-  decipher.setAAD(Buffer.from(aad, 'utf8'));
-  decipher.setAuthTag(sealed.subarray(sealed.length - GCM_TAG_BYTES));
-  const plain = Buffer.concat([decipher.update(sealed.subarray(0, sealed.length - GCM_TAG_BYTES)), decipher.final()]);
-  return JSON.parse(plain.toString('utf8'));
+  return JSON.parse(decryptGcm(key, iv, ct, { v: 1, kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: kdf.iterations, salt: kdf.salt } }).toString('utf8'));
 }

@@ -10,9 +10,9 @@ only its files; the dispatcher re-runs every gate on a `git archive` snapshot an
 
 | ID | Files | Needs | Status |
 |---|---|---|---|
-| WU-V | extension/lib/vault.js, test/vault.test.mjs | contracts | 🟡 vault 30/30; internal open → openRecord (navigation tripwire); awaits trinity |
+| WU-V | extension/lib/vault.js, test/vault.test.mjs | contracts | 🟡 vault 30/30; trinity T1 unanimous APPROVE R1 (be30988); P1 probes run by dispatcher (cred 16/20/64/1023 B round trip, v1 revision key-order independent) |
 | WU-G | scripts/check-policy.mjs (rule `credentials-api`, PINNED_POLICY, self-test cases) | contracts | 🟡 self-test 562/562, check 22 PASS; gpt6-reviewer APPROVE |
-| WU-S | extension/lib/store.js, extension/popup/session.js, test/session.test.mjs, test/autofill-worker.test.mjs fixture adaptation | WU-V APIs | 🟡 session+worker 115/115 (worker assertions unchanged, fixture drains rebuild); awaits trinity |
+| WU-S | extension/lib/store.js, extension/popup/session.js, test/session.test.mjs, test/autofill-worker.test.mjs fixture adaptation | WU-V APIs | 🟡 trinity T2 R1 2×REJECT (absent lockGen at capture + failed lock write → stale unlock commits) → f21b6dd ensureLockGen, RED→GREEN; R2 unanimous APPROVE. a3e45aa: saved enrollment never rejects (fable residual). unit 360/360 |
 | WU-U | extension/popup/passkey.js (new), popup.js, popup.html, settings.js, format.js, popup.css, _locales/{en,ko}/messages.json, test/passkey.test.mjs | WU-S APIs, WU-G | 🟡 R1 REJECT (hidden passphrase kept; orphan notice lost) + unlock-cancel bug → fixed, passkey 24/24; R2 APPROVE. Manifest 0.3.0 bump refused by the auto-mode classifier → stays 0.2.0 until the release gate |
 | WU-E | e2e/passkey.e2e.mjs (new, run from e2e/popup.e2e.mjs), e2e/reference.mjs, e2e/autofill.e2e.mjs session-shape assertions | WU-U | 🔴 |
 | WU-D | README.md, PRIVACY.md, store/listing/*, 04 → shipped | WU-U | 🟡 R1 REJECT (passphrase-only backup overclaim) → fixed; README/PRIVACY version-scoped (main PRIVACY backs the v0.2.0 submission); R2 REJECT (2 wording lines) → fixed; R3 APPROVE. 04 → shipped after merge |

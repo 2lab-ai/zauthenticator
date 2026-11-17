@@ -48,7 +48,7 @@ const POPUP = 'popup/popup.html';
 const PASSPHRASE = 'e2e autofill passphrase (test only)';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
 // .prd/03-autofill.md, "Cross-unit contract": session storage holds a subset of these keys.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'autofillServed'];
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'autofillServed', 'lockGen'];
 const OTP = 'https://otp.test';
 const EVIL = 'https://evil.test';
 const HOST = 'https://host.test';
@@ -331,17 +331,18 @@ export async function runAutofill({ rep, extensionDir }) {
       },
       { accountId: st.idA, more: extra },
     );
-  // A lock leaves chrome.storage.session empty: no key, no activity time, no pending bind.
+  // A lock leaves only a non-secret 16-byte lock generation in session storage.
   // `seeded` is what seedPendingBind() read back before the lock, or 'real' when the step had a
   // pending offer of its own; without one the check could not fail and does not pass.
   async function checkSessionEmpty(name, how, seeded = 'real') {
+    const locked = (s) => Object.keys(s).length === 1 && typeof s.lockGen === 'string' && /^[A-Za-z0-9+/]{22}==$/.test(s.lockGen) && Buffer.from(s.lockGen, 'base64').length === 16;
     const session = await poll(async () => {
       const s = (await storage()).session;
-      return Object.keys(s).length === 0 ? s : null;
+      return locked(s) ? s : null;
     }, 5000);
     const now = session ?? (await storage()).session;
     const before = seeded === 'real' ? 'a real pendingBind before' : `pendingBind seeded before: ${seeded ? 'yes' : 'NO (check not meaningful)'}`;
-    rep.check(name, Boolean(seeded) && Object.keys(now).length === 0, `${how}; ${before}; session keys after [${Object.keys(now)}] (must be empty)`);
+    rep.check(name, Boolean(seeded) && locked(now), `${how}; ${before}; session keys after [${Object.keys(now)}] (only 16-byte lockGen)`);
   }
   // Menu fill on a fresh page at `url` (its top-frame #otp field), then the #bind window.
   // → { rec, value, expected, at, win }
