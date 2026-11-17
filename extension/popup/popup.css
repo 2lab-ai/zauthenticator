@@ -327,6 +327,11 @@ body.no-accounts #edit-btn {
   cursor: progress;
 }
 
+/* The 60% tier under the busy opacity would fall to 2.3:1; the hint takes the ink instead (4.7:1). */
+.option:disabled .option-hint {
+  color: inherit;
+}
+
 /* ---- forms ---- */
 
 .field {
