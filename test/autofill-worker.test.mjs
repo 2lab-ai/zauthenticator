@@ -169,17 +169,24 @@ const binding = (origin, accountId) => ({ origin, accountId, createdAt: 1 });
 
 // Stores a vault holding `data` and, unless locked, its session key with the given activity time.
 async function seed(data, { locked = false, lastActive = Date.now() } = {}) {
+  // A handler starts a menu rebuild without waiting for it (handleMessage, handleMenuClick). Let
+  // the last one finish before storage is replaced outside the vault lock: a rebuild that read the
+  // old record and then this new key (v1 keys carry no record id) would lock the new session. Its
+  // calls belong to the previous step, not to what the test records next.
+  const mark = calls.length;
+  await worker.rebuildMenu();
+  calls.length = mark;
   areas.local.clear();
   areas.session.clear();
   const { record, rawKey } = await vault.create(PASS, data, { iterations: 1000 });
   areas.local.set('vault', record);
-  if (!locked) await store.setSessionKey(rawKey, lastActive);
+  if (!locked) await store.setSessionKey(rawKey, { v: 1 }, lastActive);
   return rawKey;
 }
 
 // Writes new vault data with the stored key, as an extension page's mutation would.
 async function rewrite(change) {
-  const key = await store.getSessionKey();
+  const key = (await store.getSessionKey()).key;
   const record = await store.getRecord();
   const data = await vault.open(key, record);
   change(data);
@@ -1032,7 +1039,7 @@ test('lock → unregistered; unlock (the key written) → registered again, not 
   await worker.onStorageChanged({ vaultKey: { oldValue: 'x' } }, 'session');
   assert.deepEqual(registered, []);
   calls.length = 0;
-  await store.setSessionKey(key);
+  await store.setSessionKey(key, { v: 1 });
   await worker.onStorageChanged({ vaultKey: { newValue: 'x' }, lastActiveAt: { newValue: 1 } }, 'session');
   assert.deepEqual(named('register').map((c) => c[1]), [[SCRIPT(['https://a.test/*', 'https://b.test/*'])]]);
 });
@@ -1083,7 +1090,7 @@ test('session key removed (lock) → unlock item; key written (unlock) → accou
   await store.clearSessionKey();
   await worker.onStorageChanged({ vaultKey: { oldValue: 'x' } }, 'session');
   assert.deepEqual([...menu.keys()], ['zauthenticator', 'unlock']);
-  await store.setSessionKey(key);
+  await store.setSessionKey(key, { v: 1 });
   await worker.onStorageChanged({ vaultKey: { newValue: 'x' }, lastActiveAt: { newValue: 1 } }, 'session');
   assert.deepEqual([...menu.keys()], ['zauthenticator', 'acct:acc-a']);
 });

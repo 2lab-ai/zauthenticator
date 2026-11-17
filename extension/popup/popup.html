@@ -72,6 +72,9 @@
           <p id="unlock-error" class="error" role="alert"></p>
           <button type="submit" id="unlock-submit" class="btn primary block" data-i18n="unlockSubmit">Unlock</button>
         </form>
+        <button type="button" id="unlock-passkey" class="btn block passkey-unlock" data-i18n="passkeyUnlock" hidden>Unlock with passkey</button>
+        <p id="unlock-passkey-status" class="status" role="status"></p>
+        <p id="unlock-passkey-error" class="error" role="alert"></p>
       </div>
     </section>
 
@@ -247,6 +250,34 @@
         </button>
         <h1 id="settings-title" data-i18n="settingsTitle">Settings</h1>
       </div>
+
+      <section id="passkey-section" class="group" aria-labelledby="passkey-title" hidden>
+        <h2 id="passkey-title" class="group-title" data-i18n="passkeyTitle">Unlock with a passkey</h2>
+        <div class="card passkey-card">
+          <p class="hint" data-i18n="passkeyHint">Keep your passphrase as a recovery method. Your browser will ask twice when adding a passkey.</p>
+          <div id="passkey-popup">
+            <button type="button" id="passkey-open-tab" class="btn" data-i18n="openTabBtn">Open in a tab</button>
+          </div>
+          <div id="passkey-tab" hidden>
+            <form id="passkey-form" novalidate>
+              <div class="field"><label for="passkey-pass" data-i18n="passkeyPass">Re-enter passphrase</label><input id="passkey-pass" type="password" autocomplete="current-password" required></div>
+              <div class="field"><label for="passkey-label" data-i18n="passkeyLabel">Label (optional)</label><input id="passkey-label" type="text" maxlength="64" autocomplete="off"></div>
+              <button type="submit" id="passkey-add" class="btn" data-i18n="passkeyAdd">Add passkey</button>
+            </form>
+            <div id="passkey-registered" hidden>
+              <p id="passkey-name"></p>
+              <button type="button" id="passkey-remove" class="btn" data-i18n="passkeyRemove">Remove passkey</button>
+              <div id="passkey-confirm" hidden>
+                <p class="hint" data-i18n="passkeyRemoveConfirm">Remove this passkey from this browser?</p>
+                <button type="button" id="passkey-remove-cancel" class="btn" data-i18n="passkeyCancel">Cancel</button>
+                <button type="button" id="passkey-remove-confirm" class="btn primary" data-i18n="passkeyRemove">Remove passkey</button>
+              </div>
+            </div>
+          </div>
+          <p id="passkey-status" class="status" role="status"></p>
+          <p id="passkey-error" class="error" role="alert"></p>
+        </div>
+      </section>
 
       <section class="group" aria-labelledby="backup-title">
         <h2 id="backup-title" class="group-title" data-i18n="backupTitle">Backup</h2>

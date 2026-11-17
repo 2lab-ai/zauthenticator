@@ -1656,6 +1656,39 @@ body.file-mode .drop-zone {
   display: none;
 }
 
+/* Passkey controls use the same flat, high-contrast settings cards. */
+.passkey-card {
+  padding: 16px;
+}
+
+.passkey-card > .hint,
+#passkey-name,
+#passkey-confirm .hint {
+  margin-bottom: 12px;
+}
+
+#passkey-confirm {
+  margin-top: 12px;
+}
+
+#passkey-confirm .btn + .btn {
+  margin-left: 8px;
+}
+
+.passkey-card .status,
+.passkey-card .error {
+  margin: 12px 0 0;
+}
+
+.passkey-unlock {
+  margin-top: 12px;
+}
+
+.passkey-unlock + .status,
+.passkey-unlock ~ .error {
+  margin-top: 12px;
+}
+
 /* ---- bind window ---- */
 
 .bind-badge {

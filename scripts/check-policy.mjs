@@ -86,6 +86,8 @@ const MANIFEST_POLICY = Object.freeze({
   // tab. Every other chrome.tabs member (create, update, duplicate, goBack, goForward, reload,
   // ...) and all of chrome.windows fail the `navigation` rule outside lib/nav.js.
   tabsMethodsOutsideNav: ['getCurrent', 'captureVisibleTab'],
+  // Only this extension module may touch navigator.credentials or PublicKeyCredential.
+  credentialsFiles: ['popup/passkey.js'],
   // The only files (paths inside the extension) that may name chrome.scripting at all; any
   // reference elsewhere fails the `scripting-api` rule.
   scriptingFiles: ['lib/autofill-worker.js'],
@@ -242,6 +244,7 @@ const RULES = [
   'nav-wrapper',
   'scripting-api',
   'permissions-api',
+  'credentials-api',
   'content-script-sinks',
   'inline-script',
   'locales-url',
@@ -538,6 +541,28 @@ function scopedApiHits(text, label, rel) {
     // A member both scans see is reported once.
     hits.scripting = [...new Set(hits.scripting)];
   }
+  return hits;
+}
+
+// Outside the passkey module, navigator may only be used as navigator.<other member>.
+// This catches credentials access, aliases and computed access without resolving variables.
+// PublicKeyCredential is refused as an identifier or literal property name. Like the other
+// lexical rules this is a tripwire, not proof against dynamically constructed property names.
+function credentialsApiHits(text, label, rel) {
+  if (MANIFEST_POLICY.credentialsFiles.includes(rel)) return [];
+  const { tokens, problems } = jsTokens(text, { escapes: true });
+  const hits = problems.map((p) => `${label}:${lineOf(text, p.i)} ${p.what} (the file cannot be read for credentials access)`);
+  tokens.forEach((tok, k) => {
+    const where = `${label}:${lineOf(text, tok.i)}`;
+    if ((tok.t === 'id' || tok.t === 'str' || tok.t === 'tpl') && tok.v === 'PublicKeyCredential') {
+      hits.push(`${where} PublicKeyCredential outside ${MANIFEST_POLICY.credentialsFiles.join(', ')}`);
+    }
+    if (tok.t !== 'id' || tok.v !== 'navigator') return;
+    const member = isDot(tokens[k + 1]) && tokens[k + 2]?.t === 'id' ? tokens[k + 2].v : null;
+    if (!member || member === 'credentials') {
+      hits.push(`${where} navigator.${member ?? '(alias or computed access)'} outside ${MANIFEST_POLICY.credentialsFiles.join(', ')}`);
+    }
+  });
   return hits;
 }
 
@@ -1411,6 +1436,10 @@ function runChecks(extDir) {
   const navigation = [];
   const scripting = [];
   const permissionsUse = [];
+  const credentialsUse = [];
+  for (const f of files.filter((item) => item.kind === 'file' && item.rel.endsWith('.js'))) {
+    credentialsUse.push(...credentialsApiHits(fs.readFileSync(f.abs, 'utf8'), label(f.rel), f.rel));
+  }
   const inline = [];
   for (const f of scanned) {
     const text = fs.readFileSync(f.abs, 'utf8');
@@ -1465,6 +1494,13 @@ function runChecks(extDir) {
     permissionsUse.length === 0
       ? `chrome.permissions only in ${MANIFEST_POLICY.permissionsFiles.join(', ')}; elsewhere only chrome.permissions.{${MANIFEST_POLICY.permissionsMembersAnywhere.join(', ')}}`
       : permissionsUse.join('; '),
+  );
+  record(
+    'credentials-api',
+    credentialsUse.length === 0,
+    credentialsUse.length === 0
+      ? `navigator.credentials and PublicKeyCredential only in ${MANIFEST_POLICY.credentialsFiles.join(', ')} (all .js files)`
+      : credentialsUse.join('; '),
   );
   // The content script and the functions injected into pages: held to the content-script lists,
   // registered and injected under no other name.
@@ -1560,6 +1596,7 @@ const PINNED_POLICY = {
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   navWrapperSha256: 'b0f323da96fc1cad5cbd0e15d64d7caf2c279bf29902c2a7112bd65fcb945822',
   tabsMethodsOutsideNav: ['captureVisibleTab', 'getCurrent'],
+  credentialsFiles: ['popup/passkey.js'],
   scriptingFiles: ['lib/autofill-worker.js'],
   scriptingMethods: [
     'unregisterContentScripts', 'updateContentScripts', 'registerContentScripts', 'getRegisteredContentScripts',
@@ -1629,6 +1666,8 @@ const PIN_MUTATIONS = [
   ['extensionPagesCsp', (p) => (p.extensionPagesCsp = p.extensionPagesCsp.replace("img-src 'self' data: blob:", 'img-src *'))],
   ['navWrapperSha256', (p) => (p.navWrapperSha256 = `${p.navWrapperSha256.slice(0, -1)}0`)],
   ['tabsMethodsOutsideNav', (p) => p.tabsMethodsOutsideNav.push('create')],
+  ['credentialsFiles', (p) => p.credentialsFiles.push('background.js')],
+  ['credentialsFiles', (p) => p.credentialsFiles.pop()],
   ['scriptingFiles', (p) => p.scriptingFiles.push('background.js')],
   ['scriptingFiles', (p) => (p.scriptingFiles = ['popup/popup.js'])],
   ['scriptingMethods', (p) => p.scriptingMethods.push('insertCSS')],
@@ -2056,6 +2095,24 @@ const WEAKER_DIRECTIVES = [
 // [name, mutate(fixture), expected failing rules]
 const CASES = [
   ['clean', () => {}, []],
+  ['ok-passkey-module', addJs('popup/passkey.js', 'const api = navigator.credentials; const supported = typeof PublicKeyCredential !== "undefined";\n'), []],
+  ['credentials-worker', appendJs('background.js', 'navigator.credentials.get({});\n'), ['credentials-api']],
+  ['credentials-lib-alias', addJs('lib/credentials.js', 'const c = navigator.credentials;\n'), ['credentials-api']],
+  ['credentials-navigator-alias', addJs('lib/credentials.js', 'const n = navigator; n.credentials.get({});\n'), ['credentials-api']],
+  ['credentials-destructure', addJs('lib/credentials.js', 'const { credentials } = navigator;\n'), ['credentials-api']],
+  ['credentials-optional', addJs('lib/credentials.js', 'navigator?.credentials?.get();\n'), ['credentials-api']],
+  ['credentials-computed', addJs('lib/credentials.js', "navigator['credentials'].get();\n"), ['credentials-api']],
+  ['credentials-computed-variable', addJs('lib/credentials.js', 'navigator[key].get();\n'), ['credentials-api']],
+  ['credentials-comment-split', addJs('lib/credentials.js', 'navigator /* split */ . credentials.get();\n'), ['credentials-api']],
+  ['credentials-public-key', addJs('popup/other.js', 'const supported = typeof PublicKeyCredential !== "undefined";\n'), ['credentials-api']],
+  ['credentials-public-key-global', addJs('popup/other.js', 'window.PublicKeyCredential;\n'), ['credentials-api']],
+  ['credentials-public-key-alias', addJs('lib/other.js', 'const keyType = PublicKeyCredential;\n'), ['credentials-api']],
+  ['credentials-public-key-computed', addJs('lib/other.js', "window?.['PublicKeyCredential'];\n"), ['navigation', 'credentials-api']],
+  ['credentials-global-navigator-alias', addJs('lib/other.js', 'const n = globalThis.navigator; n.credentials.get();\n'), ['credentials-api']],
+  ['credentials-optional-computed', addJs('lib/other.js', "navigator?.['credentials'];\n"), ['credentials-api']],
+  ['ok-credentials-unrelated-navigator', addJs('lib/other.js', "const s = navigator.locks; const text = 'navigator.credentials';\n"), []],
+  ['credentials-content', appendContent('navigator.credentials.get();\n'), ['credentials-api', 'content-script-sinks']],
+  ['credentials-vendor', addJs('vendor/jsQR.js', 'navigator.credentials.get();\n'), ['credentials-api']],
   ['ok-homepage-exact', (fx) => (fx.manifest.homepage_url = HOMEPAGE_URL), []],
   ['ok-vendor-exempt-from-scan', addJs('vendor/jsQR.js', "fetch('https://x.test/'); eval('1'); new WebSocket('wss://x'); window.open('https://x.test/');\n"), []],
   ['ok-word-boundaries', addJs('lib/words.js', '// prefetch(x) retrieval(y) refetch(z) reopen(x) geolocation = 1\nconst fetched = 1; const evaluate = () => 0; const opener = window.opener?.closed;\n'), []],
@@ -2361,7 +2418,7 @@ const CASES = [
     [],
   ],
   // Fails closed: a file it cannot read is a hit. An escape inside a string is readable.
-  ['global-escaped-identifier', appendJs('popup/settings.js', 'export const api = (c) => wind\\u006fw[c];\n'), ['navigation'], /cannot be read for global-object access/],
+  ['global-escaped-identifier', appendJs('popup/settings.js', 'export const api = (c) => wind\\u006fw[c];\n'), ['navigation', 'credentials-api'], /cannot be read for global-object access/],
   ['ok-global-string-escape', appendJs('popup/settings.js', "export const dot = '\\u00b7';\n"), []],
 
   // chrome.scripting: lib/autofill-worker.js only, by path, any reference.
@@ -2453,7 +2510,7 @@ const CASES = [
   ['content-comment-between', appendContent('field /* x */ .src = u;\n'), ['content-script-sinks'], /\.src is not on/],
   ['content-newline-between', appendContent('field\n  .src = u;\n'), ['content-script-sinks'], /\.src is not on/],
   // What the tokenizer cannot read also fails the global-object scan (navigation), which reads every .js file.
-  ['content-escaped-identifier', appendContent('field.\\u0073rc = u;\n'), ['navigation', 'content-script-sinks'], /backslash outside a string/],
+  ['content-escaped-identifier', appendContent('field.\\u0073rc = u;\n'), ['navigation', 'credentials-api', 'content-script-sinks'], /backslash outside a string/],
   ['content-string-escape', appendContent("const key = '\\x73rc';\nfield[key] = u;\n"), ['content-script-sinks'], /escape \\x in a string/],
   ['content-sink-name-string', appendContent("const key = 'src';\nfield[key] = u;\n"), ['content-script-sinks'], /"src" names a URL or markup sink/],
   // A line comment ends at U+2028 as at '\n': what follows on the same line is code.
@@ -2478,9 +2535,9 @@ const CASES = [
   ['content-attributes-write', appendContent('Array.from(field.attributes).forEach((a) => { a.value = u; });\n'), ['content-script-sinks'], /\.attributes is not on/],
   // A '/' that may be division or a regular expression is not guessed at: either guess can put
   // later code inside a literal the scan skips.
-  ['content-slash-after-paren', appendContent("if (field) /'/.test(code); field.src = u; const q = '/';\n"), ['navigation', 'content-script-sinks'], /'\/' right after '\)'/],
+  ['content-slash-after-paren', appendContent("if (field) /'/.test(code); field.src = u; const q = '/';\n"), ['navigation', 'credentials-api', 'content-script-sinks'], /'\/' right after '\)'/],
   ['content-slash-after-brace', appendContent('if (code) { look(); } /x/.test(code);\n'), ['content-script-sinks'], /'\/' right after '\}'/],
-  ['content-slash-after-of', appendContent('const of = 4;\nconst half = of / 2;\n'), ['navigation', 'content-script-sinks'], /'\/' right after 'of'/],
+  ['content-slash-after-of', appendContent('const of = 4;\nconst half = of / 2;\n'), ['navigation', 'credentials-api', 'content-script-sinks'], /'\/' right after 'of'/],
   ['ok-content-array-destructuring-and-literals', appendContent("const [first, second] = [1, 2];\nconst opts = { once: true, bubbles: false };\nconst half = code.length / 2;\nfunction take(a, [b] = []) { return a + b + first + second + half; }\nwindow.addEventListener('load', look, opts);\n"), []],
   // Acting on the page: other events, clicks and submissions.
   ['content-custom-event', appendContent("field.dispatchEvent(new CustomEvent('x', { detail: code }));\n"), ['content-script-sinks'], /new CustomEvent \(/],
@@ -2492,8 +2549,8 @@ const CASES = [
   ['content-protocol-relative-string', appendContent("const beacon = '//collect.example/p';\n"), ['content-script-sinks'], /protocol-relative URL/],
   ['content-css-url-string', appendContent("const css = 'background: url(/p)';\n"), ['content-script-sinks'], /holds a CSS url\(/],
   // What the scan cannot read fails rather than passing unread.
-  ['content-unterminated-string', appendContent("const s = 'abc;\n"), ['navigation', 'content-script-sinks'], /unterminated string literal/],
-  ['content-unterminated-comment', appendContent('/* never closed\nfield.src = u;\n'), ['navigation', 'content-script-sinks'], /unterminated comment/],
+  ['content-unterminated-string', appendContent("const s = 'abc;\n"), ['navigation', 'credentials-api', 'content-script-sinks'], /unterminated string literal/],
+  ['content-unterminated-comment', appendContent('/* never closed\nfield.src = u;\n'), ['navigation', 'credentials-api', 'content-script-sinks'], /unterminated comment/],
   // Both files are held to it, lib/fieldfind.js as much as content/autofill.js.
   ['content-fieldfind-scanned', appendJs('lib/fieldfind.js', "globalThis.parent.postMessage(1, '*');\n"), ['content-script-sinks'], /fieldfind\.js:\d+ \.parent is not on/],
   // Must stay clean: the listeners, timers and reads the content script may add; sink names in
@@ -2555,7 +2612,7 @@ const CASES = [
   ['registration-shorthand', editWorker('js: CONTENT_SCRIPTS', 'js'), ['content-script-sinks'], /js named other than as the js: key/],
   ['registration-member-assignment', appendJs('lib/autofill-worker.js', "export function widen(script) { script.js = ['content/other.js']; }\n"), ['content-script-sinks'], /js named other than as the js: key/],
   ['registration-without-js-key', editWorker(', js: CONTENT_SCRIPTS', ''), ['content-script-sinks'], /(?:register|update)ContentScripts without a js: key/],
-  ['registration-unreadable', appendJs('lib/autofill-worker.js', 'const broken = `x;\n'), ['navigation', 'content-script-sinks'], /cannot be read/],
+  ['registration-unreadable', appendJs('lib/autofill-worker.js', 'const broken = `x;\n'), ['navigation', 'credentials-api', 'content-script-sinks'], /cannot be read/],
   ['content-script-file-missing', (fx) => delete fx.files['lib/fieldfind.js'], ['content-script-sinks'], /missing \(listed in contentScriptFiles\)/],
   // A write to a computed member: refused unless into an object the file made (const x = {},
   // bound nowhere else); a computed read followed by an allowed member stays allowed.

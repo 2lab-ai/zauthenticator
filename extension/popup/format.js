@@ -72,7 +72,9 @@ export function backupFileName(date = new Date()) {
 export function looksLikeRecord(value) {
   return Boolean(
     value && typeof value === 'object' &&
-    value.kdf && typeof value.kdf === 'object' &&
-    typeof value.iv === 'string' && typeof value.ct === 'string'
+    ((value.kdf && typeof value.kdf === 'object' &&
+      typeof value.iv === 'string' && typeof value.ct === 'string') ||
+     (value.v === 2 && value.data && typeof value.data === 'object' &&
+      typeof value.data.iv === 'string' && typeof value.data.ct === 'string' && Array.isArray(value.slots)))
   );
 }

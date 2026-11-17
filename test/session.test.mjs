@@ -19,8 +19,9 @@ function area(m) {
     async remove(keys) { await hop(); for (const k of (Array.isArray(keys) ? keys : [keys])) m.delete(k); },
   };
 }
+const listeners = new Set();
 globalThis.chrome = {
-  storage: { local: area(areas.local), session: area(areas.session), onChanged: { addListener() {}, removeListener() {} } },
+  storage: { local: area(areas.local), session: area(areas.session), onChanged: { addListener(fn) { listeners.add(fn); }, removeListener(fn) { listeners.delete(fn); } } },
 };
 // Web Locks mock: one FIFO queue per name.
 const tails = new Map();
@@ -54,11 +55,11 @@ async function seed(data = { accounts: [] }) {
   areas.session.clear();
   const { record, rawKey } = await vault.create(PASS, data, { iterations: 1000 });
   await store.saveRecord(record);
-  await store.setSessionKey(rawKey);
+  await store.setSessionKey(rawKey, { v: 1 });
   return record;
 }
 async function reopen() {
-  return vault.open(await store.getSessionKey(), await store.getRecord());
+  return vault.open((await store.getSessionKey()).key, await store.getRecord());
 }
 // Holds the vault Web Lock until release() is called.
 function holdLock() {
@@ -69,6 +70,241 @@ function holdLock() {
   navigator.locks.request('zauthenticator-vault', () => { acquired(); return held; });
   return { ready, release };
 }
+
+test('session keys carry vault identity and legacy strings are rejected', async () => {
+  areas.session.clear();
+  const key = new Uint8Array(32).fill(7);
+  await store.setSessionKey(key, { v: 1 });
+  assert.deepEqual(await store.getSessionKey(), { key, v: 1 });
+  areas.session.set('vaultKey', btoa('x'.repeat(32)));
+  assert.equal(await store.getSessionKey(), null);
+});
+
+test('every lock replaces shared lock generation', async () => {
+  areas.session.clear();
+  assert.equal(await store.getLockGen(), null);
+  await store.clearSessionKey();
+  const first = await store.getLockGen();
+  assert.equal(atob(first).length, 16);
+  await store.clearSessionKey();
+  assert.notEqual(await store.getLockGen(), first);
+});
+
+test('ceremony capture is invalidated by another page edit or lock cycle', async () => {
+  await seed();
+  const a = await page();
+  const b = await page();
+  assert.equal(await a.resume(), 'list');
+  assert.equal(await b.resume(), 'list');
+  const editCapture = await a.captureForCeremony();
+  await b.addAccounts([ACC]);
+  await assert.rejects(a.enrollPasskey(editCapture, PASS, {}), (e) => e.code === 'changed');
+  const lockCapture = await a.captureForCeremony();
+  await b.lock();
+  await b.unlock(PASS);
+  await b.lock();
+  await assert.rejects(a.enrollPasskey(lockCapture, PASS, {}), (e) => e.code === 'changed');
+});
+
+test('enrollment precheck rejects bad passphrase without changing stored record', async () => {
+  const record = await seed();
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  await assert.rejects(a.checkPassphrase('incorrect'), (e) => e.code === 'bad-passphrase');
+  assert.equal(await a.checkPassphrase(PASS), true);
+  assert.deepEqual(await store.getRecord(), record);
+});
+
+test('worker refuses and clears mismatched session identity', async () => {
+  await seed();
+  const value = areas.session.get('vaultKey');
+  areas.session.set('vaultKey', { ...value, v: 2, id: btoa('x'.repeat(16)) });
+  assert.equal(await (await page()).readUnlocked(), null);
+  assert.equal(areas.session.has('vaultKey'), false);
+});
+
+const PASSKEY = { cred: new Uint8Array([1, 2, 3]), prfSalt: new Uint8Array(32).fill(4), prf: new Uint8Array(32).fill(5), label: 'phone' };
+
+test('migration invalidates an old page resume and export excludes passkeys', async () => {
+  await seed();
+  const a = await page();
+  const b = await page();
+  await a.resume(); await b.resume();
+  const capture = await b.captureForCeremony();
+  const g = a.generation();
+  // Queued in page a with the old v1 key behind page b's migration.
+  const enrolling = b.enrollPasskey(capture, PASS, PASSKEY);
+  const stale = a.addAccounts([ACC]);
+  await enrolling;
+  await assert.rejects(stale, (e) => e.code === 'locked');
+  assert.equal((await store.getRecord()).v, 2);
+  assert.equal(await a.resume(), 'list');
+  assert.notEqual(a.generation(), g, 'the old key is dropped');
+  assert.deepEqual(await a.addAccounts([ACC]), { added: 1, duplicates: 0, invalid: 0 });
+  assert.equal((await store.getRecord()).v, 2);
+  const live = await store.getRecord();
+  const exported = await b.exportRecord();
+  assert.equal(live.slots.length, 2);
+  assert.equal(exported.slots.length, 1);
+  // readBackup stays passphrase-only and reads a v2 record through its passphrase slot.
+  assert.equal((await b.readBackup(live, PASS)).length, 1);
+  assert.deepEqual(live.slots[1].type, 'passkey');
+  assert.equal(exported.id, live.id);
+  await b.lock();
+  const unlockCapture = await b.captureForCeremony();
+  await b.unlockWithPasskey(unlockCapture, PASSKEY.prf);
+  assert.equal(b.isUnlocked(), true);
+});
+
+test('a remote slot removal refreshes an unchanged ciphertext', async () => {
+  await seed();
+  const a = await page(); const b = await page();
+  await a.resume();
+  await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+  await b.resume();
+  const slot = (await b.passkeyState()).slot;
+  await b.removePasskey(slot.cred);
+  assert.equal(await a.refresh(), 'changed');
+  assert.equal((await a.passkeyState()).slot, null);
+});
+
+test('unlock ceremony is rejected after an idle lock in another page', async () => {
+  await seed();
+  const a = await page(); const b = await page();
+  await a.resume();
+  await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+  await b.resume();
+  const capture = await a.captureForCeremony();
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await b.lockIfIdle(), true);
+  await assert.rejects(a.unlockWithPasskey(capture, PASSKEY.prf), (e) => e.code === 'changed');
+});
+
+test('a failed lock generation write still removes the key', async (t) => {
+  await seed();
+  const original = chrome.storage.session.set;
+  t.after(() => { chrome.storage.session.set = original; });
+  chrome.storage.session.set = async () => { throw new Error('set failed'); };
+  await assert.rejects(store.clearSessionKey(), /set failed/);
+  assert.equal(areas.session.has('vaultKey'), false);
+});
+
+test('a failed removal invalidates the stored key and changes generation', async (t) => {
+  await seed();
+  const original = chrome.storage.session.remove;
+  t.after(() => { chrome.storage.session.remove = original; });
+  chrome.storage.session.remove = async () => { throw new Error('remove failed'); };
+  await assert.rejects(store.clearSessionKey(), /remove failed/);
+  assert.equal(await store.getSessionKey(), null);
+  assert.equal(atob(await store.getLockGen()).length, 16);
+});
+
+// A3: the unlock window (page a, locked) waits in get() while another window (page b) acts.
+test('unlock capture is invalidated by edit, removal, manual/idle lock, import merge and lock-unlock-lock elsewhere', async () => {
+  const backup = (await vault.create('backup pass 123', { accounts: [{ ...ACC, issuer: 'Imported' }] }, { iterations: 1000 })).record;
+  const actions = {
+    edit: (b) => b.addAccounts([ACC]),
+    remove: async (b) => b.removePasskey((await b.passkeyState()).slot.cred),
+    manualLock: (b) => b.lock(),
+    idleLock: async (b) => {
+      areas.session.set('lastActiveAt', STALE());
+      assert.equal(await b.lockIfIdle(), true);
+    },
+    importMerge: async (b) => b.addAccounts(await b.readBackup(backup, 'backup pass 123')),
+    lockUnlockLock: async (b) => { await b.lock(); await b.unlock(PASS); await b.lock(); },
+  };
+  for (const [name, act] of Object.entries(actions)) {
+    await seed();
+    const a = await page(); const b = await page();
+    await a.resume();
+    await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+    await a.lock();
+    await b.unlock(PASS);
+    const capture = await a.captureForCeremony();
+    assert.ok(capture.slot, name);
+    await act(b);
+    const before = structuredClone([...areas.local]);
+    const sessionBefore = areas.session.get('vaultKey');
+    await assert.rejects(a.unlockWithPasskey(capture, PASSKEY.prf), (e) => e.code === 'changed', name);
+    assert.deepEqual([...areas.local], before, `${name}: nothing written`);
+    assert.deepEqual(areas.session.get('vaultKey'), sessionBefore, `${name}: session untouched`);
+    assert.equal(a.isUnlocked(), false, name);
+  }
+});
+
+test('unlock with the passkey from a locked window with nothing changed: unlocked with the record identity; a wrong PRF stays locked', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+  await a.lock();
+  const capture = await a.captureForCeremony();
+  await assert.rejects(a.unlockWithPasskey(capture, new Uint8Array(32)), (e) => e.code === 'bad-passkey');
+  assert.equal(areas.session.has('vaultKey'), false);
+  await a.unlockWithPasskey(capture, PASSKEY.prf);
+  assert.equal(a.isUnlocked(), true);
+  const stored = await store.getSessionKey();
+  assert.deepEqual({ v: stored.v, id: stored.id }, vault.identity(await store.getRecord()));
+});
+
+test('stale unlocked sessions cannot enroll and wrong passphrase cannot add a slot', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  const capture = await a.captureForCeremony();
+  const before = await store.getRecord();
+  await assert.rejects(a.enrollPasskey(capture, 'wrong', PASSKEY), (e) => e.code === 'bad-passphrase');
+  assert.deepEqual(await store.getRecord(), before);
+  areas.session.set('lastActiveAt', STALE());
+  await assert.rejects(a.enrollPasskey(capture, PASS, PASSKEY), (e) => e.code === 'changed');
+  assert.deepEqual(await store.getRecord(), before);
+});
+
+test('watch reports both session unlock and lock', () => {
+  const changes = [];
+  const unwatch = store.watch((change) => changes.push(change));
+  for (const listener of listeners) listener({ vaultKey: { newValue: { v: 1, key: 'x' } } }, 'session');
+  for (const listener of listeners) listener({ vaultKey: { oldValue: { v: 1, key: 'x' } } }, 'session');
+  unwatch();
+  assert.deepEqual(changes, [{ locked: false }, { locked: true }]);
+});
+
+test('malformed session envelopes never unlock a page or worker', async () => {
+  for (const value of [null, {}, { key: btoa('x'.repeat(32)), v: 1, extra: true }, { key: '!!!', v: 1 }, { key: btoa('x'.repeat(32)), v: 2, id: 'bad' }]) {
+    await seed();
+    areas.session.set('vaultKey', value);
+    assert.equal(await (await page()).readUnlocked(), null);
+    assert.equal(areas.session.has('vaultKey'), false);
+  }
+});
+
+test('refresh reports locked when another record invalidates its identity', async () => {
+  await seed();
+  const a = await page(); const b = await page();
+  await a.resume(); await b.resume();
+  await b.enrollPasskey(await b.captureForCeremony(), PASS, PASSKEY);
+  // Crash between saving the migrated record and replacing the old envelope.
+  areas.session.set('vaultKey', { key: btoa('x'.repeat(32)), v: 1 });
+  assert.equal(await a.refresh(), 'locked');
+  assert.equal(a.isUnlocked(), false);
+});
+
+test('ceremony is rejected when generation write fails during a lock', async (t) => {
+  await seed();
+  const a = await page(); const b = await page();
+  await a.resume(); await b.resume();
+  await a.enrollPasskey(await a.captureForCeremony(), PASS, PASSKEY);
+  await a.lock();
+  const capture = await a.captureForCeremony();
+  const before = await store.getRecord();
+  const original = chrome.storage.session.set;
+  t.after(() => { chrome.storage.session.set = original; });
+  chrome.storage.session.set = async () => { throw new Error('set failed'); };
+  await assert.rejects(b.lock(), /set failed/);
+  chrome.storage.session.set = original;
+  await assert.rejects(a.unlockWithPasskey(capture, PASSKEY.prf), (e) => e.code === 'changed');
+  assert.deepEqual(await store.getRecord(), before);
+});
 
 test('activity recorded by another page while the idle decision waits keeps the session', async () => {
   await seed();
@@ -619,7 +855,7 @@ test('readUnlocked: no vault, no key, or a key that does not open the record →
   await seed(twoAccounts());
   const w = await page();
   // A key that does not open the stored record is cleared, like resume() does.
-  areas.session.set('vaultKey', btoa('x'.repeat(32)));
+  areas.session.set('vaultKey', { key: btoa('x'.repeat(32)), v: 1 });
   await store.setPendingBind({ origin: OTP, accountId: 'a' });
   assert.equal(await w.readUnlocked(), null);
   for (const k of SESSION_KEYS) assert.equal(areas.session.has(k), false, k);
@@ -844,7 +1080,7 @@ test('withVaultState: locked → data null; idle or a key that does not open the
   await store.setPendingBind({ origin: OTP, accountId: 'a' });
   areas.session.delete('vaultKey');
   assert.equal((await w.withVaultState(async (state) => state)).data, null);
-  for (const spoil of [() => areas.session.set('lastActiveAt', STALE()), () => areas.session.set('vaultKey', btoa('x'.repeat(32)))]) {
+  for (const spoil of [() => areas.session.set('lastActiveAt', STALE()), () => areas.session.set('vaultKey', { key: btoa('x'.repeat(32)), v: 1 })]) {
     await seed(twoAccounts());
     await store.setPendingBind({ origin: OTP, accountId: 'a' });
     spoil();

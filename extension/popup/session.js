@@ -30,6 +30,7 @@ export const PENDING_BIND_MS = 2 * 60 * 1000;
 let rawKey = null;   // Uint8Array while unlocked
 let data = null;     // { accounts: [...], bindings?: [...] } as stored plus the ids withIds() gives, while unlocked
 let recordCt = null; // ciphertext of the record `data` was read from or sealed into
+let recordRev = null;
 let epoch = 0;       // the generation; forget() bumps it
 
 function exclusive(task) {
@@ -65,17 +66,24 @@ export function bindings() {
 // Runs while this page holds no key (startup, or re-checking a locked page), so finding the
 // vault locked must not bump the generation: that would cancel an unlock queued behind it.
 export function resume() {
-  const gen = epoch;
+  let gen = epoch;
   return exclusive(async () => {
     const record = await store.getRecord();
     if (!record) {
       drop();
       return 'setup';
     }
-    const key = await store.getSessionKey();
-    if (!key) {
+    const session = await checkedSession(record);
+    if (!session) {
       drop();
       return 'locked';
+    }
+    const key = session.key;
+    // Another page replaced the key (a v1 → v2 migration): in-flight work with the old one ends
+    // here, and this page reads with the stored key below.
+    if (epoch === gen && rawKey !== null && !sameBytes(rawKey, key)) {
+      forget();
+      gen = epoch;
     }
     if (isStale(await store.getLastActive())) {
       drop();
@@ -109,7 +117,7 @@ export function create(passphrase) {
     if (epoch !== gen) throw new SessionError('locked');
     await store.saveRecord(record);
     if (epoch !== gen) throw new SessionError('locked');
-    await store.setSessionKey(key);
+    await store.setSessionKey(key, vault.identity(record));
     // A lock() that arrived meanwhile clears the session key as soon as this returns.
     if (epoch !== gen) throw new SessionError('locked');
     remember(key, record, normalizeData(empty));
@@ -125,7 +133,7 @@ export function unlock(passphrase) {
     const opened = await vault.unlock(record, passphrase);
     const current = loaded(opened.data);
     if (epoch !== gen) throw new SessionError('locked');
-    await store.setSessionKey(opened.rawKey);
+    await store.setSessionKey(opened.rawKey, vault.identity(record));
     if (epoch !== gen) throw new SessionError('locked');
     remember(opened.rawKey, record, current);
   });
@@ -144,6 +152,7 @@ function forget() {
   rawKey = null;
   data = null;
   recordCt = null;
+  recordRev = null;
 }
 
 // forget(), but only when this page holds a key: nothing else is in flight to invalidate.
@@ -168,13 +177,13 @@ export function refresh() {
       forget();
       return 'setup';
     }
-    const stored = await store.getSessionKey();
+    const stored = await checkedSession(record);
     if (!live()) return 'stale';
-    if (!stored || !sameBytes(stored, key)) {
+    if (!stored || !sameBytes(stored.key, key)) {
       forget();
       return 'locked';
     }
-    if (record.ct === recordCt) return 'unchanged';
+    if (ciphertext(record) === recordCt && JSON.stringify(record) === recordRev) return 'unchanged';
     let current;
     try {
       current = loaded(await vault.open(key, record));
@@ -193,11 +202,17 @@ export function refresh() {
 // limit; the caller decides with lockIfIdle()) | 'locked' (nothing to refresh)
 export function touch() {
   const gen = epoch;
-  if (!rawKey) return Promise.resolve('locked');
+  const key = rawKey;
+  if (!key) return Promise.resolve('locked');
   return exclusive(async () => {
     if (epoch !== gen) return 'locked';
-    const [last, key] = await Promise.all([store.getLastActive(), store.getSessionKey()]);
-    if (epoch !== gen || !key) return 'locked';
+    const [last, record] = await Promise.all([store.getLastActive(), store.getRecord()]);
+    const stored = await checkedSession(record);
+    if (epoch !== gen || rawKey !== key) return 'locked';
+    if (!stored || !sameBytes(stored.key, key)) {
+      forget();
+      return 'locked';
+    }
     if (isStale(last)) return 'idle';
     await store.touch();
     return 'touched';
@@ -215,10 +230,16 @@ export function lockIfIdle() {
   return exclusive(async () => {
     const live = () => epoch === gen && rawKey === key;
     if (!live()) return false;
-    const [last, stored] = await Promise.all([store.getLastActive(), store.getSessionKey()]);
-    if (!live() || !isStale(last)) return false;
+    const [last, record] = await Promise.all([store.getLastActive(), store.getRecord()]);
+    const stored = await checkedSession(record);
+    if (!live()) return false;
+    if (!stored || !sameBytes(stored.key, key)) {
+      forget();
+      return true;
+    }
+    if (!isStale(last)) return false;
     forget();
-    if (stored) await store.clearSessionKey();
+    await store.clearSessionKey();
     return true;
   });
 }
@@ -265,13 +286,19 @@ export function withVaultState(fn) {
 // → { data: vault data | null, pending: offer | null }
 async function openStored(gen) {
   if (epoch !== gen) return { data: null, pending: null };
-  const [record, key, last, pending] = await Promise.all([
+  const [record, last, pending] = await Promise.all([
     store.getRecord(),
-    store.getSessionKey(),
     store.getLastActive(),
     store.getPendingBind(),
   ]);
-  if (epoch !== gen || !record || !key) return { data: null, pending };
+  const session = await checkedSession(record);
+  if (epoch !== gen) return { data: null, pending: null };
+  if (!record || !session) {
+    // Only reached when the stored key is missing, malformed or not this record's: locked.
+    drop();
+    return { data: null, pending: await store.getPendingBind() };
+  }
+  const key = session.key;
   if (isStale(last)) {
     drop();
     await store.clearSessionKey();
@@ -299,7 +326,8 @@ export function setPendingBind(offer) {
   const gen = epoch;
   return exclusive(async () => {
     if (epoch !== gen) return false;
-    const [key, last] = await Promise.all([store.getSessionKey(), store.getLastActive()]);
+    const [record, last] = await Promise.all([store.getRecord(), store.getLastActive()]);
+    const key = await checkedSession(record);
     if (epoch !== gen || !key || isStale(last)) return false;
     await store.setPendingBind({ origin, accountId });
     return true;
@@ -454,9 +482,10 @@ function mutate(change) {
       if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
     };
     check();
-    const [record, stored] = await Promise.all([store.getRecord(), store.getSessionKey()]);
+    const record = await store.getRecord();
+    const stored = await checkedSession(record);
     check();
-    if (!stored || !sameBytes(stored, key)) throw new SessionError('locked');
+    if (!stored || !sameBytes(stored.key, key)) throw new SessionError('locked');
     if (!record) throw new SessionError('no-vault');
     // withIds() gives the same ids this page showed for the same record.
     const current = loaded(await vault.open(key, record));
@@ -471,10 +500,136 @@ function mutate(change) {
   });
 }
 
+function ciphertext(record) {
+  return record.v === 2 ? record.data.ct : record.ct;
+}
+
+function sameIdentity(a, b) {
+  return Boolean(a && b && a.v === b.v && a.id === b.id);
+}
+
+// Call only under the vault lock. A malformed or legacy key, or one whose { v, id } does not
+// belong to the stored record, is cleared like a lock; callers decide what this page forgets.
+async function checkedSession(record) {
+  const stored = await store.getSessionKey();
+  if (!stored) {
+    const item = await chrome.storage.session.get(store.SESSION_KEY);
+    if (item[store.SESSION_KEY] !== undefined) await store.clearSessionKey();
+    return null;
+  }
+  let matches = false;
+  try { matches = Boolean(record) && sameIdentity(stored, vault.identity(record)); } catch { /* malformed record */ }
+  if (!matches) {
+    await store.clearSessionKey();
+    return null;
+  }
+  return stored;
+}
+
+const captures = new WeakMap();
+
+export function passkeyState() {
+  return exclusive(async () => {
+    const record = await store.getRecord();
+    return { slot: record ? vault.passkeySlot(record) : null };
+  });
+}
+
+export function captureForCeremony() {
+  const gen = epoch;
+  return exclusive(async () => {
+    const record = await store.getRecord();
+    if (!record) throw new SessionError('no-vault');
+    const identity = vault.identity(record);
+    const stored = await checkedSession(record);
+    const capture = { rev: await vault.revision(record), lockGen: await store.getLockGen(), identity, slot: vault.passkeySlot(record) };
+    captures.set(capture, { gen, key: rawKey, rev: capture.rev, lockGen: capture.lockGen, identity: { ...identity }, session: stored && !isStale(await store.getLastActive()) && rawKey && sameBytes(stored.key, rawKey) });
+    return capture;
+  });
+}
+
+async function ceremonyRecord(capture, enroll) {
+  const initial = captures.get(capture);
+  if (!initial || initial.gen !== epoch || (enroll && (!initial.session || rawKey !== initial.key))) throw new SessionError('changed');
+  const record = await store.getRecord();
+  if (!record || await vault.revision(record) !== initial.rev || await store.getLockGen() !== initial.lockGen ||
+      !sameIdentity(vault.identity(record), initial.identity) || initial.gen !== epoch) throw new SessionError('changed');
+  if (enroll) {
+    const stored = await checkedSession(record);
+    if (!stored || !sameBytes(stored.key, initial.key) || isStale(await store.getLastActive()) || rawKey !== initial.key || initial.gen !== epoch) {
+      throw new SessionError('changed');
+    }
+  }
+  return record;
+}
+
+export function checkPassphrase(passphrase) {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.reject(new SessionError('locked'));
+  return exclusive(async () => {
+    const record = await store.getRecord();
+    const stored = await checkedSession(record);
+    if (!stored || !sameBytes(stored.key, key) || isStale(await store.getLastActive()) || epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    await vault.unlock(record, passphrase);
+    if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    return true;
+  });
+}
+
+export function enrollPasskey(capture, passphrase, options) {
+  return exclusive(async () => {
+    const record = await ceremonyRecord(capture, true);
+    const result = await vault.addPasskeySlot(record, passphrase, options);
+    await ceremonyRecord(capture, true);
+    await store.saveRecord(result.record);
+    if (captures.get(capture).gen !== epoch) throw new SessionError('changed');
+    await store.setSessionKey(result.rawKey, vault.identity(result.record));
+    if (captures.get(capture).gen !== epoch) throw new SessionError('changed');
+    remember(result.rawKey, result.record, loaded(await vault.open(result.rawKey, result.record)));
+  });
+}
+
+export function unlockWithPasskey(capture, prf) {
+  return exclusive(async () => {
+    const record = await ceremonyRecord(capture, false);
+    const opened = await vault.unlockWithPasskey(record, prf);
+    await ceremonyRecord(capture, false);
+    await store.setSessionKey(opened.rawKey, vault.identity(record));
+    if (captures.get(capture).gen !== epoch) throw new SessionError('changed');
+    remember(opened.rawKey, record, loaded(opened.data));
+  });
+}
+
+export function removePasskey(cred) {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.reject(new SessionError('locked'));
+  return exclusive(async () => {
+    const record = await store.getRecord();
+    const stored = await checkedSession(record);
+    if (!stored || !sameBytes(stored.key, key) || isStale(await store.getLastActive()) || gen !== epoch || rawKey !== key) throw new SessionError('locked');
+    const next = vault.removePasskeySlot(record, cred);
+    const current = loaded(await vault.open(key, next));
+    if (gen !== epoch || rawKey !== key) throw new SessionError('locked');
+    await store.saveRecord(next);
+    if (gen !== epoch || rawKey !== key) throw new SessionError('locked');
+    remember(key, next, current);
+  });
+}
+
+export function exportRecord() {
+  return exclusive(async () => {
+    const record = await store.getRecord();
+    return record ? vault.exportCopy(record) : null;
+  });
+}
+
 function remember(key, record, current) {
   rawKey = key;
   data = current;
-  recordCt = record.ct ?? null;
+  recordCt = ciphertext(record);
+  recordRev = JSON.stringify(record);
 }
 
 // The decrypted data of a record, ready to show: normalizeData(), then withIds().
