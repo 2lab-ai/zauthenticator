@@ -164,8 +164,9 @@ h2 {
   outline-offset: 2px;
 }
 
-/* The text fill too: an autofilled field sets -webkit-text-fill-color (below), which would
-   otherwise keep selected text in the ink, on the ink. */
+/* The text fill too, defensively: an autofilled field sets -webkit-text-fill-color (below).
+   Chromium 159 already paints selected autofilled text in the canvas colour; this keeps it so
+   in browsers where the selection would inherit the field's text fill. */
 ::selection {
   background: var(--ink);
   color: var(--canvas);
