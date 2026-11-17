@@ -51,6 +51,10 @@
   --radius: 0px;
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* Native controls that take an accent (checkboxes, ranges, a picker's highlight) draw it in the
+     ink, not the system's blue. */
+  accent-color: var(--ink);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -160,9 +164,13 @@ h2 {
   outline-offset: 2px;
 }
 
+/* The text fill too, defensively: an autofilled field sets -webkit-text-fill-color (below).
+   Chromium 159 already paints selected autofilled text in the canvas colour; this keeps it so
+   in browsers where the selection would inherit the field's text fill. */
 ::selection {
   background: var(--ink);
   color: var(--canvas);
+  -webkit-text-fill-color: var(--canvas);
 }
 
 .visually-hidden {
@@ -392,6 +400,18 @@ select:focus-visible {
   outline-offset: -2px;
 }
 
+/* A field the browser filled (saved passphrase): Chromium paints it with a blue tint and its own
+   text colour, both !important in the user-agent sheet, so the field's own fill comes back as an
+   inset box-shadow (a fill, not a shadow) and the ink as the text fill colour. The long transition
+   keeps the tint from flashing in. */
+input:autofill,
+input:-webkit-autofill {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  box-shadow: inset 0 0 0 100px var(--input);
+  transition: border-color 0.15s var(--ease), background-color 600000s 0s, color 600000s 0s;
+}
+
 select {
   appearance: none;
   padding-right: 30px;
@@ -402,6 +422,86 @@ select {
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
   cursor: pointer;
+}
+
+/* Forced colours drop the drawn chevron (a background gradient): the browser's own arrow returns. */
+@media (forced-colors: active) {
+  select {
+    appearance: auto;
+  }
+}
+
+/* Where the browser lets a page draw the select's list (customizable select), the open list is
+   drawn here too: square, a 1px ink edge, the option under the pointer or the keyboard inverted,
+   the chosen one with a check mark, no system blue. The closed select keeps the look above (its
+   own arrow is hidden; the drawn chevron stays). Elsewhere the list stays the browser's own. */
+@supports (appearance: base-select) {
+  select,
+  ::picker(select) {
+    appearance: base-select;
+  }
+
+  /* The closed select as before: label centred on one line, the drawn chevron (not this arrow). */
+  select {
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  select::picker-icon {
+    display: none;
+  }
+
+  @media (forced-colors: active) {
+    select::picker-icon {
+      display: revert;
+    }
+  }
+
+  select:open {
+    border-color: var(--ink);
+  }
+
+  ::picker(select) {
+    min-inline-size: anchor-size(self-inline);
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--ink);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: none;
+  }
+
+  option {
+    gap: 6px;
+    min-height: 32px;
+    padding: 6px 10px 6px 8px;
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  option:checked {
+    font-weight: 600;
+  }
+
+  option:hover,
+  option:focus-visible {
+    outline: none;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  /* Forced colours replace the inversion with the system's colours, so the focused option gets a
+     system-colour ring instead. */
+  @media (forced-colors: active) {
+    option:hover,
+    option:focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+  }
 }
 
 textarea {
