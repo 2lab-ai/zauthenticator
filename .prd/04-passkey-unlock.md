@@ -235,7 +235,8 @@ Every unit codes against these signatures; a change goes into this section first
   `{saved: true, locked: false}`, or `{saved: true, locked: true}` when this page locked during
   the save or the session key could not be written. `locked: true` means this page dropped its
   key and a lock of the shared session was attempted. If that lock also fails, the shared session
-  stays exactly as it was before the enrollment: after a v1 → v2 migration its key no longer
+  is left no more open than before the enrollment: unchanged when nothing could be written, or
+  already cleared when the lock got partway; after a v1 → v2 migration an unchanged key no longer
   matches the record and every reader treats it as locked; after a v2 enrollment (same DEK, same
   id) it still opens the vault, as it did before.
 - `removePasskey(cred)` → under the vault lock, only while unlocked.

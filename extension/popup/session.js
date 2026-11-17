@@ -598,12 +598,13 @@ export function enrollPasskey(capture, passphrase, options) {
       await store.setSessionKey(result.rawKey, vault.identity(result.record));
     } catch {
       // locked: true means this page dropped its key and a lock of the shared session was
-      // attempted. If that lock also fails, the shared session stays exactly as it was before the
-      // enrollment: after a v1 → v2 migration its key no longer matches the record and every
-      // reader treats it as locked; after a v2 enrollment (same DEK, same id) it still opens the
-      // vault, as it did before.
+      // attempted. If that lock also fails, the shared session is left no more open than before
+      // the enrollment: unchanged when nothing could be written, or already cleared when the lock
+      // got partway; after a v1 → v2 migration an unchanged key no longer matches the record and
+      // every reader treats it as locked; after a v2 enrollment (same DEK, same id) it still opens
+      // the vault, as it did before.
       if (gen === epoch) forget();
-      try { await store.clearSessionKey(); } catch { /* the shared session stays as it was */ }
+      try { await store.clearSessionKey(); } catch { /* no more open than before; see above */ }
       return { saved: true, locked: true };
     }
     if (gen !== epoch) return { saved: true, locked: true };
