@@ -394,7 +394,7 @@
     "message": "백업"
   },
   "exportHint": {
-    "message": "백업 파일은 마스터 비밀번호로 암호화된 그대로 저장돼요. 안전한 곳에 보관하세요."
+    "message": "백업은 비밀번호로 암호화되며 패스키는 포함하지 않아요. 현재 보관함과 암호화 키를 공유하므로 안전하게 보관하세요."
   },
   "exportBtn": {
     "message": "암호화된 백업 내보내기"
@@ -472,7 +472,7 @@
     "message": "정보"
   },
   "securitySummary": {
-    "message": "네트워크 접근도, 사용 통계 수집도 없어요. 비밀 키는 암호화되어 저장되고(마스터 비밀번호에서 PBKDF2로 만든 키, AES-256-GCM) 이 기기 밖으로 나가지 않아요."
+    "message": "네트워크 접근도, 사용 통계 수집도 없어요. 비밀 키는 AES-256-GCM으로 암호화되어 저장되고 이 기기 밖으로 나가지 않아요. 암호화 키는 마스터 비밀번호(PBKDF2)나 등록한 패스키로만 열 수 있어요."
   },
   "clockHint": {
     "message": "코드가 맞지 않나요? 코드는 컴퓨터 시계로 계산되니 날짜와 시간이 자동으로 맞춰지도록 설정되어 있는지 확인하세요."
@@ -578,5 +578,62 @@
         "example": "GitHub · alice"
       }
     }
+  },
+  "passkeyTitle": {
+    "message": "패스키로 잠금 해제"
+  },
+  "passkeyUnlock": {
+    "message": "패스키로 잠금 해제"
+  },
+  "passkeyHint": {
+    "message": "복구를 위해 마스터 비밀번호를 보관하세요. 패스키를 추가할 때 브라우저가 두 번 확인해요."
+  },
+  "passkeyPass": {
+    "message": "마스터 비밀번호 다시 입력"
+  },
+  "passkeyLabel": {
+    "message": "이름 (선택)"
+  },
+  "passkeyAdd": {
+    "message": "패스키 추가"
+  },
+  "passkeyRemove": {
+    "message": "패스키 삭제"
+  },
+  "passkeyCancel": {
+    "message": "취소"
+  },
+  "passkeyRemoveConfirm": {
+    "message": "이 브라우저에서 패스키를 삭제할까요?"
+  },
+  "passkeyUnnamed": {
+    "message": "패스키"
+  },
+  "passkeyWorking": {
+    "message": "패스키 확인을 기다리는 중…"
+  },
+  "passkeyAdded": {
+    "message": "패스키를 추가했어요."
+  },
+  "passkeyRemoved": {
+    "message": "이 브라우저에서 삭제했어요. 기존 백업은 바뀌지 않아요. 휴대폰이나 보안 키에서도 패스키를 삭제하세요."
+  },
+  "passkeyCancelled": {
+    "message": "패스키 요청이 취소되었거나 시간이 초과됐어요. 다시 시도하세요."
+  },
+  "passkeyNoPrf": {
+    "message": "이 패스키가 필요한 PRF 비밀값을 제공하지 않았어요. 다른 패스키를 사용하세요."
+  },
+  "passkeyMismatch": {
+    "message": "패스키가 서로 다른 결과를 반환했어요. 다른 패스키를 사용하세요."
+  },
+  "passkeyChanged": {
+    "message": "보관함이 바뀌었어요. 처음부터 다시 시도하세요."
+  },
+  "passkeyFailed": {
+    "message": "패스키 요청이 실패했어요. 다시 시도하거나 비밀번호를 사용하세요."
+  },
+  "passkeyOrphan": {
+    "message": "휴대폰이나 보안 키에 패스키가 남아 있을 수 있어요. 필요 없다면 그곳에서 삭제하세요."
   }
 }

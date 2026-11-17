@@ -9,6 +9,33 @@ The detailed descriptions below are also used for Microsoft Edge Add-ons
 browser names, and change both listings together. The test notes live in
 [edge-addons.md](edge-addons.md#notes-for-certification) and serve both stores.
 
+## v0.3 draft listing — not for the v0.2.0 zip
+
+The v0.2.0 text and package below remain the released-package instructions. Do not paste this
+addition into either store for the v0.2.0 zip. Before any v0.3 submission, verify the completed
+package, privacy disclosures, reviewer instructions and matching released zip together; see the
+[submission gate](submission-checklist.md#v03-draft-submission-gate).
+
+**English draft addition:** Optional passkey unlock uses a PRF-capable authenticator. Open Settings
+in a full tab, re-enter your passphrase and approve two prompts (create and verify). Unlock uses a
+separate window. Keep your passphrase: it unlocks without the passkey, and importing a backup asks
+for it. Enroll separately for each installation. The browser and authenticator provider handle
+WebAuthn and may sync passkeys; TOTP seeds and vault payload are not sent to them. Exports omit
+passkey slots but keep the vault's data key, so removing a slot neither changes that key nor
+revokes older copies.
+
+**한국어 초안:** PRF를 지원하는 인증기로 선택적 패스키 잠금 해제를 사용할 수 있어요. 설정을 전체 탭으로
+열어 비밀번호를 다시 입력하고 생성·확인 요청 두 번을 승인하세요. 잠금 해제는 별도 창에서 해요. 패스키
+없이 잠금을 풀 때와 백업을 가져올 때는 비밀번호를 써요. 설치마다 따로 등록해야 해요. WebAuthn은 브라우저와
+인증기 제공자가 처리하며 패스키를 동기화할 수 있지만 TOTP 비밀 키와 보관함 내용은 전송하지 않아요.
+백업에는 패스키 슬롯이 빠지지만 보관함의 데이터 키는 그대로라서, 슬롯을 삭제해도 그 키는 바뀌지 않고
+이전 복사본도 폐기되지 않아요.
+
+For v0.3 the v0.2 lines below that describe the vault key as derived from the passphrase, say a
+backup is encrypted with the same passphrase, say "no sync" without limiting it to the vault, or
+say nothing is sent anywhere (storage justification) must be replaced to match
+[PRIVACY.md](../../PRIVACY.md); they stay as written for the v0.2.0 package.
+
 ## Package
 
 - **File to upload:** `zauthenticator-0.2.0.zip`, the asset of the GitHub release `v0.2.0`

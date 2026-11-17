@@ -12,6 +12,15 @@ Edge-specific rule for every text below: the extension and its listing "must not
 browsers" (developer policies 1.1.2). The descriptions, search terms, notes and both
 `extDescription` values are written without browser names; keep them that way.
 
+## v0.3 draft listing — not for the v0.2.0 zip
+
+Keep the released v0.2.0 package and text below unchanged. For v0.3, use the bilingual draft
+addition in [chrome-web-store.md](chrome-web-store.md#v03-draft-listing--not-for-the-v020-zip)
+only after the [submission gate](submission-checklist.md#v03-draft-submission-gate) is satisfied.
+Update privacy answers and certification notes to cover browser-mediated WebAuthn, separate
+Settings and unlock views, two enrollment prompts, and passphrase recovery. Do not upload this
+v0.3 draft text with the v0.2.0 zip.
+
 ## Packages
 
 - **File to upload:** the same `zauthenticator-0.2.0.zip` as for the other store (GitHub release

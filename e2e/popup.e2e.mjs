@@ -13,8 +13,10 @@
 // lock from another page, idle auto-lock, spec A9 (QR from an image file), copy after the period
 // changed. Each part-2 step sets up its own preconditions and reports its own failure, so one
 // broken behaviour does not hide the rest. Part 3 is auto-fill (.prd/03-autofill.md, S1-S4) on a
-// test copy of the extension, in e2e/autofill.e2e.mjs. Every way the vault locks must leave
-// chrome.storage.session empty (lock-session-empty:* lines).
+// test copy of the extension, in e2e/autofill.e2e.mjs. Part 4 is passkey unlock
+// (.prd/04-passkey-unlock.md) with CDP virtual authenticators, in e2e/passkey.e2e.mjs. Every way
+// the vault locks must leave chrome.storage.session holding only the non-secret 16-byte lockGen
+// (lock-session-empty:* lines).
 // The copy steps write TOTP codes of test secrets to the clipboard (the system one when headed).
 //
 // Prints `PASS|FAIL <name> <detail>` per assertion and exits 1 on any failure.
@@ -39,6 +41,7 @@ import {
   watchPages,
 } from './harness.mjs';
 import { runAutofill } from './autofill.e2e.mjs';
+import { runPasskey } from './passkey.e2e.mjs';
 import { base32ToBytes, decryptRecord, referenceTotp } from './reference.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,8 +50,8 @@ const PASSPHRASE = 'e2e correct horse battery staple';
 const WRONG_PASSPHRASE = 'e2e wrong passphrase';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
 // .prd/02-architecture.md, Round 2, amended by .prd/03-autofill.md ("Cross-unit contract"):
-// session storage holds at most these keys, and none of them once the vault locks.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind'];
+// session storage holds at most these keys; after a lock only lockGen remains.
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'lockGen'];
 
 const ACCOUNTS = [
   {
@@ -267,7 +270,9 @@ async function seedPendingBind(page, extra = {}) {
 
 function checkLockedEmpty(rep, name, how, seeded, session) {
   const keys = Object.keys(session);
-  rep.check(name, Boolean(seeded) && keys.length === 0, `${how}; pendingBind seeded before: ${seeded ? 'yes' : 'NO (check not meaningful)'}; session keys after [${keys}] (must be empty)`);
+  const gen = session.lockGen;
+  const validGen = typeof gen === 'string' && /^[A-Za-z0-9+/]{22}==$/.test(gen) && Buffer.from(gen, 'base64').length === 16;
+  rep.check(name, Boolean(seeded) && keys.length === 1 && keys[0] === 'lockGen' && validGen, `${how}; pendingBind seeded before: ${seeded ? 'yes' : 'NO (check not meaningful)'}; session keys after [${keys}] (only 16-byte lockGen)`);
 }
 
 // local holds exactly { vault }, sync nothing, session only keys from SESSION_KEYS_ALLOWED.
@@ -948,7 +953,7 @@ try {
     const wrongKey = Buffer.alloc(32, 7).toString('base64');
     // Written in one call with the offer; whichever context reads the key next (the worker
     // reacts to the write) drops all three, so the offer may already be gone 300 ms later.
-    const readBack = await seedPendingBind(pageA, { vaultKey: wrongKey, lastActiveAt: Date.now() });
+    const readBack = await seedPendingBind(pageA, { vaultKey: { key: wrongKey, v: 1 }, lastActiveAt: Date.now() });
     await pageA.reload();
     const state = await waitState(pageA, 'locked', 10000).then(
       () => 'locked',
@@ -1116,4 +1121,5 @@ if (context && pages3) {
 }
 if (context) await context.close().catch(() => {});
 fs.rmSync(profile2, { recursive: true, force: true });
+await runPasskey(rep);
 rep.finish('e2e');

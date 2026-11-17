@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_ITERATIONS, VaultError, create, unlock, seal, open } from '../extension/lib/vault.js';
+import * as vault from '../extension/lib/vault.js';
+import { createHash } from 'node:crypto';
 
 const FAST = { iterations: 1000 };
 const PASS = 'correct horse battery';
@@ -165,7 +167,7 @@ test('malformed records reject with corrupt', async () => {
 test('unknown versions, KDFs and huge iteration counts reject with unsupported', async () => {
   const { record } = await create(PASS, DATA, FAST);
   const cases = {
-    'version 2': { ...record, v: 2 },
+    'version 3': { ...record, v: 3 },
     'scrypt': { ...record, kdf: { ...record.kdf, name: 'scrypt' } },
     'SHA-1': { ...record, kdf: { ...record.kdf, hash: 'SHA-1' } },
     'iterations 1e9': { ...record, kdf: { ...record.kdf, iterations: 1e9 } },
@@ -290,4 +292,154 @@ test('create and seal refuse data whose ciphertext would exceed 1 MiB', async ()
 test('create rejects iteration counts outside 1..2,000,000', async () => {
   await assert.rejects(create(PASS, DATA, { iterations: 2000001 }), isVaultError('unsupported'));
   await assert.rejects(create(PASS, DATA, { iterations: 0 }), isVaultError('corrupt'));
+});
+
+const CRED = Uint8Array.of(251, 255, 1);
+const PRF = new Uint8Array(32).fill(3);
+const PRF_SALT = new Uint8Array(32).fill(4);
+const params = () => ({ cred: CRED, prfSalt: PRF_SALT, prf: PRF, label: 'Phone' });
+const copy = (value) => JSON.parse(JSON.stringify(value));
+async function enrolled() {
+  const original = await create(PASS, DATA, FAST);
+  const next = await vault.addPasskeySlot(original.record, PASS, params());
+  return { ...next, original };
+}
+
+test('v1 migration produces independently unlockable v2 with fresh key and salt', async () => {
+  const { record, rawKey, original } = await enrolled();
+  assert.equal(record.v, 2);
+  assert.notDeepEqual(rawKey, original.rawKey);
+  assert.notEqual(record.slots[0].kdf.salt, original.record.kdf.salt);
+  assert.equal(record.slots[0].kdf.iterations, original.record.kdf.iterations);
+  assert.deepEqual(vault.identity(record), { v: 2, id: record.id });
+  assert.deepEqual(vault.identity(original.record), { v: 1 });
+  for (const result of [await unlock(copy(record), PASS), await vault.unlockWithPasskey(copy(record), PRF)]) {
+    assert.deepEqual(result.data, DATA);
+    assert.deepEqual(result.rawKey, rawKey);
+  }
+  const slot = vault.passkeySlot(record);
+  assert.equal(slot.cred, '-_8B');
+  assert.deepEqual(slot.credBytes, CRED);
+  assert.deepEqual(slot.prfSalt, PRF_SALT);
+  assert.equal(slot.label, 'Phone');
+  assert.ok(Number.isInteger(slot.createdAt));
+});
+
+test('slot operations refuse incorrect credentials and preserve the live record', async () => {
+  const { record, original } = await enrolled();
+  const saved = copy(record);
+  await assert.rejects(unlock(record, 'wrong'), isVaultError('bad-passphrase'));
+  await assert.rejects(vault.unlockWithPasskey(record, new Uint8Array(32)), isVaultError('bad-passkey'));
+  await assert.rejects(vault.unlockWithPasskey(record, new Uint8Array(31)), TypeError);
+  await assert.rejects(vault.addPasskeySlot(original.record, 'wrong', params()), isVaultError('bad-passphrase'));
+  await assert.rejects(vault.addPasskeySlot(record, PASS, params()), isVaultError('slot-exists'));
+  assert.throws(() => vault.removePasskeySlot(record, 'not-cred'), isVaultError('no-passkey'));
+  const removed = vault.removePasskeySlot(record, vault.passkeySlot(record).cred);
+  assert.deepEqual(removed.slots, [record.slots[0]]);
+  assert.deepEqual(removed.data, record.data);
+  assert.equal(removed.id, record.id);
+  assert.equal(vault.passkeySlot(removed), null);
+  await assert.rejects(vault.unlockWithPasskey(removed, PRF), isVaultError('no-passkey'));
+  const backup = vault.exportCopy(record);
+  assert.deepEqual(backup, removed);
+  backup.slots[0].kdf.iterations = 2;
+  assert.deepEqual(record, saved);
+  assert.deepEqual(vault.exportCopy(original.record), original.record);
+  const added = await vault.addPasskeySlot(removed, PASS, params());
+  assert.deepEqual(added.rawKey, (await unlock(removed, PASS)).rawKey);
+});
+
+test('v2 seal preserves slots and id, changes IV and canonical revision', async () => {
+  const { record, rawKey, original } = await enrolled();
+  const sealed = await seal(rawKey, record, { next: true });
+  assert.deepEqual(sealed.slots, record.slots);
+  assert.equal(sealed.id, record.id);
+  assert.notEqual(sealed.data.iv, record.data.iv);
+  assert.notEqual(await vault.revision(sealed), await vault.revision(record));
+  assert.deepEqual((await unlock(sealed, PASS)).data, { next: true });
+  assert.deepEqual((await vault.unlockWithPasskey(sealed, PRF)).data, { next: true });
+  for (const r of [record, original.record]) {
+    const reordered = JSON.parse(JSON.stringify(r, (key, value) => value && !Array.isArray(value) && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value).reverse()) : value));
+    assert.equal(await vault.revision(r), await vault.revision(reordered));
+    assert.equal(await vault.revision(r), createHash('sha256').update(JSON.stringify(r)).digest('hex'));
+  }
+});
+
+test('each v2 AAD field and ciphertext is authenticated', async () => {
+  const { record, rawKey } = await enrolled();
+  const mutate = (fn) => { const r = copy(record); fn(r); return r; };
+  for (const fn of [
+    (r) => { r.id = flipFirstByte(r.id); },
+    (r) => { r.slots[0].kdf.iterations++; },
+    (r) => { r.slots[0].kdf.salt = flipFirstByte(r.slots[0].kdf.salt); },
+    (r) => { r.slots[0].iv = flipFirstByte(r.slots[0].iv); },
+    (r) => { r.slots[0].wrapped = flipFirstByte(r.slots[0].wrapped); },
+  ]) await assert.rejects(unlock(mutate(fn), PASS), isVaultError('bad-passphrase'));
+  for (const fn of [
+    (r) => { r.id = flipFirstByte(r.id); },
+    (r) => { r.slots[1].cred = 'AQ'; },
+    (r) => { r.slots[1].prfSalt = flipFirstByte(r.slots[1].prfSalt); },
+    (r) => { r.slots[1].label += '!'; },
+    (r) => { r.slots[1].createdAt++; },
+    (r) => { r.slots[1].iv = flipFirstByte(r.slots[1].iv); },
+    (r) => { r.slots[1].wrapped = flipFirstByte(r.slots[1].wrapped); },
+  ]) await assert.rejects(vault.unlockWithPasskey(mutate(fn), PRF), isVaultError('bad-passkey'));
+  for (const fn of [
+    (r) => { r.id = flipFirstByte(r.id); },
+    (r) => { r.data.iv = flipFirstByte(r.data.iv); },
+    (r) => { r.data.ct = flipFirstByte(r.data.ct); },
+  ]) await assert.rejects(open(rawKey, mutate(fn)), isVaultError('corrupt'));
+});
+
+test('v2 rejects unknown fields and structurally invalid AAD constants before KDF', async (t) => {
+  const { record } = await enrolled();
+  const calls = spyOnKdf(t);
+  for (const change of [
+    (r) => { r.extra = 1; }, (r) => { r.data.extra = 1; },
+    (r) => { r.slots[0].extra = 1; }, (r) => { r.slots[0].kdf.extra = 1; },
+    (r) => { r.slots[1].extra = 1; }, (r) => { r.slots[0].type = 'passkey'; },
+    (r) => { r.slots[1].type = 'passphrase'; }, (r) => { r.slots[0].kdf.name = 'scrypt'; },
+    (r) => { r.slots[0].kdf.hash = 'SHA-1'; }, (r) => { r.v = 3; },
+  ]) {
+    const bad = copy(record); change(bad);
+    await assert.rejects(unlock(bad, PASS), VaultError);
+  }
+  assert.equal(calls(), 0);
+});
+
+test('v2 input bytes are snapshotted before asynchronous operations', async () => {
+  const { record } = await create(PASS, DATA, FAST);
+  const cred = Uint8Array.from(CRED);
+  const prf = Uint8Array.from(PRF);
+  const prfSalt = Uint8Array.from(PRF_SALT);
+  const pending = vault.addPasskeySlot(record, PASS, { cred, prf, prfSalt, label: 'Phone' });
+  cred.fill(0); prf.fill(0); prfSalt.fill(0);
+  const next = await pending;
+  assert.deepEqual(vault.passkeySlot(next.record).credBytes, CRED);
+  assert.deepEqual(vault.passkeySlot(next.record).prfSalt, PRF_SALT);
+  assert.deepEqual((await vault.unlockWithPasskey(next.record, PRF)).data, DATA);
+});
+
+test('v2 malformed records and bounds reject before any KDF', async (t) => {
+  const { record } = await enrolled();
+  const calls = spyOnKdf(t);
+  const cases = [
+    (r) => { r.id = b64(15); }, (r) => { r.data.iv = b64(13); },
+    (r) => { r.data.ct = b64(15); }, (r) => { r.data.ct = b64(MiB + 1); },
+    (r) => { r.slots = []; }, (r) => { r.slots = [r.slots[1]]; },
+    (r) => { r.slots.push(copy(r.slots[0])); }, (r) => { r.slots.push(copy(r.slots[1])); },
+    (r) => { r.slots[1].type = 'other'; }, (r) => { r.slots[0].kdf.salt = b64(15); },
+    (r) => { r.slots[0].kdf.salt = b64(65); }, (r) => { r.slots[0].kdf.iterations = 0; },
+    (r) => { r.slots[1].cred = ''; }, (r) => { r.slots[1].cred = 'AB'; },
+    (r) => { r.slots[1].cred = 'AQ=='; }, (r) => { r.slots[1].cred = Buffer.alloc(1024).toString('base64url'); },
+    (r) => { r.slots[1].prfSalt = b64(31); }, (r) => { r.slots[1].label = 'x'.repeat(65); },
+    (r) => { r.slots[1].createdAt = 1.5; }, (r) => { r.slots[1].iv = b64(11); },
+    (r) => { r.slots[1].wrapped = b64(47); },
+  ];
+  for (const change of cases) {
+    const bad = copy(record); change(bad);
+    await assert.rejects(unlock(bad, PASS), VaultError);
+  }
+  assert.equal(calls(), 0);
 });

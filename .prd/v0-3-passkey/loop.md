@@ -1,25 +1,15 @@
 # v0-3-passkey — loop
 
-Status: round 1 (build). Spec rev 4 with frozen module contracts (04-passkey-unlock.md
-"Module contracts"). R0 (spec + gate A0) is in loop.done.md.
+Status: round 2 (owner acceptance). R0 (spec + A0) and R1 (build, merged to main) are in
+loop.done.md.
 
-## Round 1 — work units
+## Round 2 — owner gates
 
-Integration branch `feat/v0.3-passkey`, worktree `.worktrees/feat-v0.3-passkey`. Each unit owns
-only its files; the dispatcher re-runs every gate on a `git archive` snapshot and commits.
-
-| ID | Files | Needs | Status |
-|---|---|---|---|
-| WU-V | extension/lib/vault.js, test/vault.test.mjs | contracts | 🔴 |
-| WU-G | scripts/check-policy.mjs (rule `credentials-api`, PINNED_POLICY, self-test cases) | contracts | 🔴 |
-| WU-S | extension/lib/store.js, extension/popup/session.js, test/session.test.mjs | WU-V | 🔴 |
-| WU-U | extension/popup/passkey.js (new), popup.js, popup.html, settings.js, format.js, popup.css, _locales/{en,ko}/messages.json | WU-S, WU-G | 🔴 |
-| WU-E | e2e/passkey.e2e.mjs (new, run from e2e/popup.e2e.mjs), e2e/reference.mjs | WU-U | 🔴 |
-| WU-D | README.md, PRIVACY.md, store/listing/*, 04 → shipped | WU-U | 🔴 |
-
-Then: trinity on the security core (vault + store + session diff), one gpt6-reviewer per
-change-set (UI, gate, e2e, docs), merge to main, CI green, z13 install, owner hand test (A6).
-The v0.3.0 tag is an owner gate.
+| ID | Item | Status |
+|---|---|---|
+| G1 | Owner-device install of the merged main (same unpacked folder, so the extension id and vault stay; per-file SHA-256 equal to the snapshot) | 🟡 |
+| G2 | A6 owner hand test: export a backup first, then enroll with the owner's phone, lock, unlock with the passkey, restart Edge, unlock with the passkey, unlock with the passphrase | 🚪 owner |
+| G3 | v0.3.0 tag + manifest version 0.3.0 (owner approval; the manifest bump was refused by the auto-mode classifier for a coder) | 🚪 owner |
 
 ## Build facts
 

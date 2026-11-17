@@ -1,6 +1,7 @@
-// chrome.storage glue. Exactly five keys exist, and nothing else is ever written:
+// chrome.storage glue. Six keys exist:
 //   chrome.storage.local.vault             the encrypted vault record (ciphertext + KDF params)
-//   chrome.storage.session.vaultKey        the unlocked raw AES key, base64
+//   chrome.storage.session.vaultKey        { key: base64, v, id? }
+//   chrome.storage.session.lockGen         random generation replaced by every lock
 //   chrome.storage.session.lastActiveAt    last user activity while unlocked (ms since the epoch)
 //   chrome.storage.session.pendingBind     { origin, accountId, at }: the auto-fill offer the
 //                                          service worker makes after a menu fill (lib/bindings.js)
@@ -9,16 +10,22 @@
 //                                          auto-fill script in each tab and origin in the last
 //                                          5 minutes (lib/autofill-worker.js); never a code
 // Session storage lives in memory only, is cleared when the browser session ends, and is readable
-// from trusted extension contexts only (never from content scripts; pinSessionAccess()). It
-// holds a subset of its four keys: the key and its activity time are written together, an offer
-// and the auto-fill record are written only while a key is stored (checked under the vault lock),
-// and clearSessionKey() removes all four in one call, so none of them outlives a lock.
+// from trusted extension contexts only (never from content scripts; pinSessionAccess()). The key
+// and its activity time are written together, and an offer and the auto-fill record are written
+// only while a key is stored (checked under the vault lock). clearSessionKey() first writes a new
+// lockGen with vaultKey set to null, then removes vaultKey and the other three, so none of those
+// four outlives a lock. lockGen does outlive a lock, by design: it holds no secret, only random
+// bytes that let a passkey ceremony see that a lock happened while it ran. It is absent after a
+// browser start until the first lock or the first ceremony capture (ensureLockGen() writes one, so
+// no capture is ever issued without it). If writing the new lockGen fails, the removal takes
+// lockGen too, so every issued capture no longer matches.
 
 export const RECORD_KEY = 'vault';
 export const SESSION_KEY = 'vaultKey';
 export const ACTIVE_KEY = 'lastActiveAt';
 export const PENDING_KEY = 'pendingBind';
 export const SERVED_KEY = 'autofillServed';
+export const LOCK_GEN_KEY = 'lockGen';
 
 export async function getRecord() {
   const items = await chrome.storage.local.get(RECORD_KEY);
@@ -33,20 +40,31 @@ export async function saveRecord(record) {
 export async function getSessionKey() {
   const items = await chrome.storage.session.get(SESSION_KEY);
   const value = items[SESSION_KEY];
-  if (typeof value !== 'string' || value === '') return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.key !== 'string') return null;
+  if (value.v !== 1 && value.v !== 2) return null;
+  if (Object.keys(value).some((k) => !['key', 'v', ...(value.v === 2 ? ['id'] : [])].includes(k))) return null;
+  if (value.v === 1 && value.id !== undefined) return null;
+  if (value.v === 2 && typeof value.id !== 'string') return null;
   try {
-    return bytesFromBase64(value);
+    const key = bytesFromBase64(value.key);
+    if (key.length !== 32 || base64FromBytes(key) !== value.key) return null;
+    if (value.v === 2 && (bytesFromBase64(value.id).length !== 16 || base64FromBytes(bytesFromBase64(value.id)) !== value.id)) return null;
+    return value.v === 1 ? { key, v: 1 } : { key, v: 2, id: value.id };
   } catch {
     return null;
   }
 }
 
 // Unlocking counts as activity: the key and its activity time go out in one write.
-export async function setSessionKey(bytes, activeAt = Date.now()) {
-  if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
-    throw new TypeError('setSessionKey: expected a non-empty Uint8Array');
+export async function setSessionKey(bytes, identity, activeAt = Date.now()) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== 32 || !identity ||
+      (identity.v !== 1 && identity.v !== 2) ||
+      (identity.v === 1 && identity.id !== undefined) ||
+      (identity.v === 2 && typeof identity.id !== 'string')) {
+    throw new TypeError('setSessionKey: expected a key and identity');
   }
-  await chrome.storage.session.set({ [SESSION_KEY]: base64FromBytes(bytes), [ACTIVE_KEY]: activeAt });
+  const value = identity.v === 1 ? { key: base64FromBytes(bytes), v: 1 } : { key: base64FromBytes(bytes), v: 2, id: identity.id };
+  await chrome.storage.session.set({ [SESSION_KEY]: value, [ACTIVE_KEY]: activeAt });
 }
 
 // Keeps session storage readable from trusted extension contexts only (pages and the service
@@ -64,7 +82,42 @@ export async function pinSessionAccess() {
 // Every lock goes through here: the key, its activity time, any pending offer and the auto-fill
 // record go together.
 export async function clearSessionKey() {
-  await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, PENDING_KEY, SERVED_KEY]);
+  // Attempt both operations even if either fails; never report a successful lock on failure.
+  let failure;
+  try {
+    await chrome.storage.session.set({ [LOCK_GEN_KEY]: base64FromBytes(crypto.getRandomValues(new Uint8Array(16))), [SESSION_KEY]: null });
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    // A failed generation write must not let an older capture match.
+    await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, PENDING_KEY, SERVED_KEY, ...(failure ? [LOCK_GEN_KEY] : [])]);
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure) throw failure;
+}
+
+// → the stored lock generation, writing a fresh one first when none is stored (a browser start).
+// Throws when it cannot be read or written: a ceremony capture is never issued without one, so a
+// lock whose generation write fails (and whose removal then takes lockGen) never looks like no
+// lock. Call under the vault lock.
+export async function ensureLockGen() {
+  const current = await getLockGen();
+  if (current !== null) return current;
+  const fresh = base64FromBytes(crypto.getRandomValues(new Uint8Array(16)));
+  await chrome.storage.session.set({ [LOCK_GEN_KEY]: fresh });
+  return fresh;
+}
+
+export async function getLockGen() {
+  const items = await chrome.storage.session.get(LOCK_GEN_KEY);
+  const value = items[LOCK_GEN_KEY];
+  if (value === undefined) return null;
+  try {
+    if (typeof value === 'string' && bytesFromBase64(value).length === 16 && base64FromBytes(bytesFromBase64(value)) === value) return value;
+  } catch { /* malformed generation fails closed */ }
+  throw new TypeError('invalid lock generation');
 }
 
 // → ms timestamp of the last recorded activity, or null when none is stored.
@@ -139,8 +192,8 @@ export function watch(callback) {
     if (areaName === 'local' && RECORD_KEY in changes) {
       callback({ record: changes[RECORD_KEY].newValue ?? null });
     }
-    if (areaName === 'session' && SESSION_KEY in changes && !changes[SESSION_KEY].newValue) {
-      callback({ locked: true });
+    if (areaName === 'session' && SESSION_KEY in changes) {
+      callback({ locked: !changes[SESSION_KEY].newValue });
     }
   };
   chrome.storage.onChanged.addListener(listener);

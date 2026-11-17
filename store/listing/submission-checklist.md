@@ -5,6 +5,23 @@ for every update after that. The texts to paste are in [chrome-web-store.md](chr
 and [edge-addons.md](edge-addons.md). Facts were checked on 2026-11-16 against the sources named;
 **unverified** marks what the documentation does not state.
 
+## v0.3 draft submission gate
+
+The v0.2.0 release package instructions below remain separate. **Do not submit the v0.3 draft
+listing with the v0.2.0 zip.**
+
+- [ ] Finish and verify the v0.3 implementation against the frozen passkey spec, including the
+      owner hand test and the project gates; do not treat draft text as evidence of release.
+- [ ] Verify the actual released v0.3 package and version, then use its matching release zip, not
+      the v0.2.0 zip. This checklist does not itself authorize a release or store submission.
+- [ ] Reconcile both EN/KO listings, privacy policy, data-usage answers and reviewer instructions
+      with that package, including browser/provider WebAuthn and passkey sync, passphrase recovery,
+      separate ceremony views, two prompts, export/import (backups share the vault's DEK; the
+      passphrase is the supported import path, not a cryptographic guarantee) and per-install
+      enrollment.
+- [ ] Recheck the already linked official store policies and dashboard fields at submission; do
+      not assume the v0.2 disclosures or screenshots still describe the update.
+
 ## 0. Before the first submission
 
 - [ ] The docs, icon, popup and auto-fill changes for 0.2.0 are merged to `main`.

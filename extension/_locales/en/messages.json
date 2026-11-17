@@ -400,7 +400,7 @@
     "message": "Backup"
   },
   "exportHint": {
-    "message": "The backup file stays encrypted with your passphrase. Keep it somewhere safe."
+    "message": "The backup is encrypted with your passphrase and excludes the passkey. It shares an encryption key with the live vault, so keep it safe."
   },
   "exportBtn": {
     "message": "Export encrypted backup"
@@ -478,7 +478,7 @@
     "message": "About"
   },
   "securitySummary": {
-    "message": "No network access, no telemetry. Secrets are encrypted at rest (AES-256-GCM with a PBKDF2 key from your passphrase) and never leave this device."
+    "message": "No network access, no telemetry. Secrets are encrypted at rest with AES-256-GCM, under a key that only your passphrase (PBKDF2) or a registered passkey can unlock, and never leave this device."
   },
   "clockHint": {
     "message": "Codes rejected? They are computed from your computer's clock, so make sure the date and time are set automatically."
@@ -584,5 +584,62 @@
         "example": "GitHub · alice"
       }
     }
+  },
+  "passkeyTitle": {
+    "message": "Unlock with a passkey"
+  },
+  "passkeyUnlock": {
+    "message": "Unlock with passkey"
+  },
+  "passkeyHint": {
+    "message": "Keep your passphrase for recovery. Your browser will ask twice when adding a passkey."
+  },
+  "passkeyPass": {
+    "message": "Re-enter passphrase"
+  },
+  "passkeyLabel": {
+    "message": "Label (optional)"
+  },
+  "passkeyAdd": {
+    "message": "Add passkey"
+  },
+  "passkeyRemove": {
+    "message": "Remove passkey"
+  },
+  "passkeyCancel": {
+    "message": "Cancel"
+  },
+  "passkeyRemoveConfirm": {
+    "message": "Remove this passkey from this browser?"
+  },
+  "passkeyUnnamed": {
+    "message": "Passkey"
+  },
+  "passkeyWorking": {
+    "message": "Waiting for your passkey…"
+  },
+  "passkeyAdded": {
+    "message": "Passkey added."
+  },
+  "passkeyRemoved": {
+    "message": "Removed from this browser. Old backups are not affected. Delete the passkey on your phone or key too."
+  },
+  "passkeyCancelled": {
+    "message": "Passkey request cancelled or timed out. Try again."
+  },
+  "passkeyNoPrf": {
+    "message": "This passkey did not provide the required PRF secret. Try another passkey."
+  },
+  "passkeyMismatch": {
+    "message": "The passkey returned inconsistent results. Try another passkey."
+  },
+  "passkeyChanged": {
+    "message": "The vault changed. Start again."
+  },
+  "passkeyFailed": {
+    "message": "Passkey request failed. Try again or use your passphrase."
+  },
+  "passkeyOrphan": {
+    "message": "A passkey may remain on your phone or security key. Delete it there if you do not need it."
   }
 }

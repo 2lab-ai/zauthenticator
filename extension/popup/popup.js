@@ -10,7 +10,8 @@ import { localize, t, uiLang } from './i18n.js';
 import { $, setText, withBusy, reason, clearAnnouncement } from './ui.js';
 import { createListView, paintAvatar, clearAvatar } from './list.js';
 import { createAddView, summary } from './add.js';
-import { createSettingsView, accountTitle } from './settings.js';
+import { createSettingsView, createPasskeyUnlock, accountTitle, takeOrphanNotice } from './settings.js';
+import { openOwnWindow } from '../lib/nav.js';
 
 const MIN_PASSPHRASE_LENGTH = 8;
 const UNLOCKED_VIEWS = ['list', 'add', 'settings', 'bind'];
@@ -34,6 +35,7 @@ let showToken = 0;     // the latest show() call; an earlier one stops after its
 let localOps = 0;      // > 0 while this page starts up, creates, unlocks or locks itself
 let recheck = false;   // a storage change arrived meanwhile: re-check once that ends
 let reconciling = Promise.resolve();
+let passkeyUnlock;
 
 main().catch((error) => {
   setText($('.loading'), t('errStartup', reason(error)));
@@ -61,6 +63,14 @@ async function main() {
   settings = createSettingsView({
     isTab,
     done: (result) => showList(`${t('importDone')} ${summary(result)}`),
+    onOrphan: showOrphanNotice,
+  });
+  // "Unlock with passkey": the toolbar popup opens the unlock window; in that window (or a tab)
+  // the click runs the ceremony.
+  passkeyUnlock = createPasskeyUnlock({
+    inPopup: !isTab && !isWindow,
+    openWindow: () => openOwnWindow('unlock'),
+    onUnlocked: enterUnlocked,
   });
   bind = createBindView();
 
@@ -96,6 +106,7 @@ async function route(state) {
 
 async function enterUnlocked() {
   // Also when another page did the unlocking: no passphrase stays in a hidden gate field.
+  passkeyUnlock.clear();
   $('#setup-form').reset();
   $('#unlock-form').reset();
   if (windowView === 'unlock') {
@@ -133,11 +144,27 @@ async function show(state, options = {}) {
   document.body.dataset.state = state;
   $('#main').scrollTop = 0;
   if (state === 'setup') $('#setup-pass').focus();
-  else if (state === 'locked') $('#unlock-pass').focus();
+  else if (state === 'locked') {
+    $('#unlock-pass').focus();
+    passkeyUnlock.refresh();
+  }
   else if (state === 'list') list.focus();
   else if (state === 'add') add.open(options);
   else if (state === 'settings') settings.open();
   else if (state === 'bind') bind.focus();
+  showOrphanNotice();
+}
+
+// An enrollment that created a passkey on the phone or key but could not store it (this page
+// locked, or the vault changed, while the ceremony ran) owes the user a notice: the locked view or
+// the list shows it once. The settings view shows it itself when it opens (settings.js).
+function showOrphanNotice() {
+  const state = document.body.dataset.state;
+  if (state === 'locked') {
+    if (takeOrphanNotice()) setText($('#unlock-passkey-status'), t('passkeyOrphan'));
+  } else if (state === 'list') {
+    if (takeOrphanNotice()) list.notice(t('passkeyOrphan'));
+  }
 }
 
 async function showBind() {
@@ -163,6 +190,7 @@ async function showList(message) {
 // Empties everything that can hold a secret, a passphrase or an account name: rows and
 // codes, every input of every view, status lines and the screen-reader live region.
 function clearSensitive() {
+  passkeyUnlock.clear();
   list.clear();
   add.clearSensitive();
   settings.clearSensitive();
