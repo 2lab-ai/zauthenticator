@@ -1,10 +1,12 @@
 # 04 — Passkey unlock
 
-Status: planned (v0.3). Workstream: [v0-3-passkey/](v0-3-passkey/ssot.md).
+Status: in-progress (v0.3). Workstream: [v0-3-passkey/](v0-3-passkey/ssot.md).
 Revision 3 (2026-11-17): R1 3×REJECT (same holes, envelope kept) → rev 2 → R2 grok APPROVE,
 fable APPROVE, gpt-6 REJECT (record revision vs identity; storage-writer wording) → rev 3 →
 **R3 unanimous APPROVE** (non-blocking notes folded: rev encoding, lockGen absent at start).
-Record-format code waits for gate A0 (owner phone probe).
+Revision 4 (2026-11-17, after gate A0 passed): the measured A0 result, the ceremony surface moved
+onto views that already exist (lib/nav.js unchanged), a fresh passphrase salt on migration, a
+passphrase pre-check before the ceremony, and the frozen module contracts below.
 
 ## Problem
 
@@ -40,7 +42,7 @@ user verification (required here) the value cannot be reproduced without that ve
 | iCloud Keychain gives PRF in Chromium on macOS 15+ (M132); phones give PRF over hybrid in Chromium; iOS fixed a hybrid vs on-device PRF mismatch in 18.4, one open mismatch report remains | `icloud_keychain.mm` L256-258; blink-dev msg11227; Apple forum 764730/774112 |
 | YubiKey 5 / Bio: hmac-secret; PRF requires UV, so a FIDO2 PIN (or the Bio fingerprint) | Yubico PRF guide; WebAuthn L3 §prf |
 | The toolbar popup is only protected against Chrome's own web-modal dialogs; Bitwarden tells Linux users to pop the extension out first | `extension_popup.cc` L379-383; bitwarden.com/help/login-with-passkeys |
-| **Unverified — gate A0:** a phone accepts a `chrome-extension://` RP ID over hybrid from Edge on Linux and returns stable PRF; seconds per unlock | owner probe (v0-3-passkey/loop.md P2) |
+| Gate A0, measured: from Edge 153 on Linux over hybrid, an iPhone saving to Apple Passwords accepts the `chrome-extension://` RP ID and returns PRF 32 B on create and on both gets, all equal (create 23.4 s, gets 10.3 s and 15.4 s). An Android phone saving to Samsung Pass accepts the RP ID but returns no PRF on create (`enabled` false) or on either get (create 15 s, gets 8.3 s and 8.6 s). Google Password Manager over hybrid is not measured | owner probe 0.0.2 (v0-3-passkey/loop.md P2, P3) |
 
 ## Threat model (what this does and does not change)
 
@@ -88,7 +90,9 @@ user verification (required here) the value cannot be reproduced without that ve
 - Slot operations exist only as these functions:
   - `addPasskeySlot(record, passphrase, {cred, prfSalt, prf, label})` — verifies the passphrase
     by unwrapping the passphrase slot (or by v1 `unlock` when migrating) **inside the function**;
-    there is no DEK-only writer.
+    there is no DEK-only writer. Migrating a v1 record draws a fresh DEK, a fresh `id` and a fresh
+    16 B passphrase salt (same iteration count as the v1 record, never below it), so the old v1
+    key, which may still sit in memory or an old session, is not the new passphrase KEK.
   - `removePasskeySlot(record, cred)` — by `cred`; never touches the passphrase slot.
   - `exportCopy(record)` — returns a new object without passkey slots; the live record is not
     modified or re-saved.
@@ -118,12 +122,18 @@ Two more values decide whether a ceremony result may still be used:
 
 ### Flows
 
-- **Ceremony surface:** always the own window (`popup.html#passkey`), never the toolbar popup.
+- **Ceremony surface:** never the toolbar popup (it closes when focus moves to the browser's
+  passkey dialog). Enroll and remove run in the Settings **tab** (`openOwnView('settings')`); in
+  the toolbar popup that section only offers "Open in a tab". Unlock runs in the `#unlock` window
+  (`openOwnWindow('unlock')`, which closes itself after an unlock): the toolbar popup's "Unlock
+  with passkey" opens that window, and the same button inside the window starts the ceremony.
+  Both views already exist in lib/nav.js, so nav.js and its sha256 pin do not change.
   A ceremony starts only from a user click inside an extension page; no message (content script,
   worker) starts one. Each ceremony captures `rev` and `lockGen` (and, for enrollment, the session
   identity) at its start.
 - **Enroll** (Settings → "Unlock with a passkey" → "Add"; the text says the browser will ask
-  twice): re-enter the passphrase. `create()`
+  twice): re-enter the passphrase; it is checked before `create()` (a wrong one costs no phone
+  round trip) and checked again inside `addPasskeySlot`. `create()`
   with `rp: {name}` (no `id`), random user id, `residentKey:'required'`,
   `userVerification:'required'`, `authenticatorAttachment:'cross-platform'` when UVPA is false,
   `hints: ['hybrid','security-key']`, algs [-8, -7, -257], `prf.eval.first = prfSalt`. Then
@@ -158,6 +168,76 @@ Two more values decide whether a ceremony result may still be used:
 `navigator.credentials` is allowed in exactly one module (`popup/passkey.js`); the gate fails it
 anywhere else (content scripts, worker, lib). Pinned policy + self-test cases. Manifest: no new
 permission; CSP unchanged.
+
+## Module contracts (v0.3, frozen 2026-11-17 before code)
+
+Every unit codes against these signatures; a change goes into this section first.
+
+### lib/vault.js (v1 functions keep their signatures)
+
+- `create(passphrase, data, opts)` unchanged: a new vault is v1 until a passkey is enrolled (A5).
+- `unlock(record, passphrase)` → `{data, rawKey}`. v2: unwraps the passphrase slot; `rawKey` is
+  the DEK. A wrong passphrase is `'bad-passphrase'`.
+- `seal(rawKey, record, data)` and `open(rawKey, record)` dispatch on `v` (v2 rules above).
+- `identity(record)` → `{v: 1}` or `{v: 2, id}`, after the structural check (throws as `open`
+  does for a malformed record).
+- `revision(record)` → `Promise<string>`: lowercase hex SHA-256 of the canonical JSON of the whole
+  record. v1 key order `v, kdf{name,hash,iterations,salt}, iv, ct`; v2 `v, id, data{iv,ct},
+  slots[]`, each slot in its AAD key order (without the leading `v`/`id`) followed by `iv,
+  wrapped`.
+- `passkeySlot(record)` → `{cred, credBytes, prfSalt, label, createdAt}` or `null` (v1 or no
+  slot). `cred` is the stored base64url string; `credBytes` and `prfSalt` are `Uint8Array`.
+- `addPasskeySlot(record, passphrase, {cred, prfSalt, prf, label})` → `{record, rawKey}`.
+  `cred` and `prfSalt` are `Uint8Array` (stored as base64url and base64), `prf` is the 32-byte
+  PRF output for `prfSalt`, `label` a string of at most 64 characters (may be empty),
+  `createdAt` = `Date.now()`. Verifies the passphrase itself (above), refuses a second passkey
+  slot (`'slot-exists'`), runs verify-before-save on a JSON round trip of the new record, and only
+  then returns it.
+- `unlockWithPasskey(record, prf)` → `{data, rawKey}`; `'no-passkey'` when the record has no
+  passkey slot; `'bad-passkey'` when the unwrap fails.
+- `removePasskeySlot(record, cred)` → new record without the passkey slot whose `cred` (base64url
+  string) matches; `'no-passkey'` when none does; `id`, `data` and the passphrase slot unchanged.
+- `exportCopy(record)` → new object: v2 without passkey slots, v1 a copy. The input is not
+  modified.
+- New `VaultError` codes: `'bad-passkey'`, `'no-passkey'`, `'slot-exists'`. A `prf` that is not a
+  32-byte `Uint8Array` is a `TypeError`.
+
+### lib/store.js
+
+- `vaultKey` (session) holds `{key: <base64>, v: 1|2, id?: <base64>}`. `getSessionKey()` →
+  `{key: Uint8Array, v, id}` or `null`; anything else stored there (the v0.2 bare string
+  included) reads as `null`, so an update leaves the vault locked. `setSessionKey(key, {v, id},
+  activeAt)`.
+- `lockGen` (session, the sixth key): 16 random bytes, base64. `clearSessionKey()` writes a new
+  value and removes the other four session keys; `getLockGen()` → string or `null`.
+
+### popup/session.js (the worker imports it, so it never imports popup/passkey.js)
+
+- Every reader that loads the session key (`resume`, `refresh`, `touch`, `lockIfIdle`,
+  `openStored`, `setPendingBind`, `mutate`) compares the session `{v, id}` with
+  `vault.identity(stored record)`; a mismatch clears the session (a lock) and reads as locked.
+- "Same record as this page holds" compares the record's ciphertext: `data.ct` in v2, `ct` in v1.
+- `passkeyState()` → `{slot}` (`vault.passkeySlot` of the stored record, or `null`); no key
+  needed.
+- `captureForCeremony()` → `{rev, lockGen, identity, slot}`, read under the vault lock and
+  returned; the ceremony itself runs after the lock is released (it takes 10–25 s).
+- `checkPassphrase(passphrase)` → `true`, or throws `'bad-passphrase'`; only while unlocked.
+- `enrollPasskey(capture, passphrase, {cred, prfSalt, prf, label})` and
+  `unlockWithPasskey(capture, prf)` → the commits of Flows; `SessionError('changed')` when `rev`,
+  `lockGen` or (enroll) the session identity differ from `capture`; nothing is written then.
+- `removePasskey(cred)` → under the vault lock, only while unlocked.
+- `exportRecord()` → `vault.exportCopy(stored record)` or `null`.
+
+### popup/passkey.js (the only module that touches `navigator.credentials` or `PublicKeyCredential`)
+
+- `support()` → `'yes'` (`getClientCapabilities` reports `extension:prf` true), `'unknown'` (no
+  `getClientCapabilities`), `'no'` (no `PublicKeyCredential`, or PRF reported false).
+- `enrollCeremony({prfSalt})` → `{cred: Uint8Array, prf: Uint8Array}`: `create()` then `get()`
+  for that credential with the same salt, as in Flows.
+- `unlockCeremony({credBytes, prfSalt})` → PRF `Uint8Array` (32 B); the UV flag of the assertion
+  is checked.
+- Errors are `PasskeyError` with `code` `'cancelled'` (NotAllowedError, timeout), `'no-prf'`,
+  `'mismatch'` (create and get bytes differ), `'failed'`.
 
 ## Acceptance
 

@@ -1,20 +1,28 @@
 # v0-3-passkey — loop
 
-Status: round 0 (spec approved). Next: A0 owner phone probe on the Z13 (P2) → WU split → code.
+Status: round 1 (build). Spec rev 4 with frozen module contracts (04-passkey-unlock.md
+"Module contracts"). R0 (spec + gate A0) is in loop.done.md.
 
-## Receipts behind 04 (2026-11-17)
+## Round 1 — work units
 
-| ID | What | Where |
-|---|---|---|
-| R-spike | WebAuthn + PRF from an extension page, Chromium 159, CDP virtual authenticator: create/get ok, rpId = `chrome-extension://<id>`, PRF 32 B stable per salt | session scratchpad passkey-spike/results.json (not in repo) |
-| R-z13 | Edge 153 on cachy-z13: UVPA false, hybridTransport true, extension:prf true; IR camera /dev/video2; no howdy/fprintd; Bluetooth powered | zbrain workflow/home/rog-flow-z13.md (2026-11-17 bullet) |
-| R-docs | Primary-source research (Chromium @7d2c6b8, W3C, Apple/Google/Microsoft/Yubico docs) | 04-passkey-unlock.md Platform facts |
+Integration branch `feat/v0.3-passkey`, worktree `.worktrees/feat-v0.3-passkey`. Each unit owns
+only its files; the dispatcher re-runs every gate on a `git archive` snapshot and commits.
 
-## Open
+| ID | Files | Needs | Status |
+|---|---|---|---|
+| WU-V | extension/lib/vault.js, test/vault.test.mjs | contracts | 🔴 |
+| WU-G | scripts/check-policy.mjs (rule `credentials-api`, PINNED_POLICY, self-test cases) | contracts | 🔴 |
+| WU-S | extension/lib/store.js, extension/popup/session.js, test/session.test.mjs | WU-V | 🔴 |
+| WU-U | extension/popup/passkey.js (new), popup.js, popup.html, settings.js, format.js, popup.css, _locales/{en,ko}/messages.json | WU-S, WU-G | 🔴 |
+| WU-E | e2e/passkey.e2e.mjs (new, run from e2e/popup.e2e.mjs), e2e/reference.mjs | WU-U | 🔴 |
+| WU-D | README.md, PRIVACY.md, store/listing/*, 04 → shipped | WU-U | 🔴 |
 
-| ID | Item | Status |
-|---|---|---|
-| P0 | Edge extension origin scheme for WebAuthn measured on the Z13: Edge 153 headless, CDP virtual authenticators — origin/RP ID = `chrome-extension://<id>` (not edge-extension://), rpIdHash = SHA-256 of that string, PRF 32 B (hasPrf on create+get; usb hasHmacSecret without -mc: enabled on create, bytes on get) | ✅ |
-| P1 | trinity on the spec — R1 3×REJECT → rev 2 → R2 2 APPROVE + 1 REJECT (M1 rev vs id, M2 wording) → rev 3 → R3 unanimous APPROVE (grok-4.7, gpt-6-astra, fable) | ✅ |
-| P2 | A0 owner probe #1 (2026-11-17 03:48–03:50Z, Edge 153 Linux, one phone over hybrid): create ok (2nd try 10.2 s; 1st NotAllowedError 16.9 s), get ×2 ok (18.7 s, 11.8 s), RP ID `chrome-extension://<id>` accepted, flags UP/UV/BE/BS, transports hybrid+internal — **`prf.enabled` false, no PRF on get** → A0 FAILED for this phone/provider. Cause (provider vs Edge hybrid) not yet separated | 🔴 |
-| P3 | A0 probe #2 with probe 0.0.2 (records AAGUID → passkey provider): same phone again + the other phone | 🚪 owner |
+Then: trinity on the security core (vault + store + session diff), one gpt6-reviewer per
+change-set (UI, gate, e2e, docs), merge to main, CI green, z13 install, owner hand test (A6).
+The v0.3.0 tag is an owner gate.
+
+## Build facts
+
+Gates (snapshot): `npm test` · `npm run check` · `node scripts/check-policy.mjs --self-test` ·
+`E2E_HEADLESS=1 npm run e2e`. Baseline at main 86073de: unit 306, gate 0 FAIL, self-test 542,
+e2e 119.
