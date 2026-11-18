@@ -17,12 +17,16 @@
 // (.prd/04-passkey-unlock.md) with CDP virtual authenticators, in e2e/passkey.e2e.mjs. Every way
 // the vault locks must leave chrome.storage.session holding only the non-secret 16-byte lockGen
 // (lock-session-empty:* lines).
+// Settings → About shows the manifest's version_name when it has one, else its version: part 1
+// checks the extension under test, and after part 2 a copy whose manifest gains a version_name
+// (as a packaged preview build carries) is checked the same way (about-version* lines).
 // The copy steps write TOTP codes of test secrets to the clipboard (the system one when headed).
 //
 // Prints `PASS|FAIL <name> <detail>` per assertion and exits 1 on any failure.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -404,6 +408,33 @@ async function importViaSettings(page, file, expectedNotice) {
   return { listed, noticeOk, ...seen };
 }
 
+// The version Settings → About must show for `manifest`: version_name (a preview build's label,
+// which the browser's extensions card shows instead of version) when it is a non-empty string,
+// else version.
+function aboutVersionOf(manifest) {
+  return typeof manifest.version_name === 'string' && manifest.version_name !== '' ? manifest.version_name : manifest.version;
+}
+
+// With settings open, #version must be the versionLabel message for `want` in the catalog
+// chrome.i18n resolves in `page` (so the check holds in any UI language). Never throws on the
+// outcome: an empty #version fails the check with what it showed.
+async function checkAboutVersion(rep, page, name, want, source) {
+  await page.waitForFunction(() => document.querySelector('#version')?.textContent?.trim(), null, { timeout: 10000 }).catch(() => {});
+  const seen = await page.evaluate(
+    (w) => ({
+      shown: document.querySelector('#version')?.textContent?.trim() ?? null,
+      expected: chrome.i18n.getMessage('versionLabel', [w]),
+      catalog: chrome.i18n.getMessage('lang'),
+    }),
+    want,
+  );
+  rep.check(
+    name,
+    seen.shown === seen.expected && seen.expected.includes(want),
+    `#version ${JSON.stringify(seen.shown)} (expected ${JSON.stringify(seen.expected)}, catalog ${seen.catalog}; ${source})`,
+  );
+}
+
 // The bytes of a pinned fixture; throws when its sha256 is not the recorded one.
 function fixtureBytes(fixture) {
   const bytes = fs.readFileSync(fixture.file);
@@ -629,6 +660,14 @@ try {
   step = 'f-export';
   await page.click('#settings-btn');
   await waitState(page, 'settings');
+  const treeManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  await checkAboutVersion(
+    rep,
+    page,
+    'about-version',
+    aboutVersionOf(treeManifest),
+    `extension under test: manifest version ${JSON.stringify(treeManifest.version)}, version_name ${JSON.stringify(treeManifest.version_name ?? null)}`,
+  );
   const [download] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.click('#export-btn')]);
   const exported = fs.readFileSync(await download.path(), 'utf8');
   let parsed = null;
@@ -1121,5 +1160,52 @@ if (context && pages3) {
 }
 if (context) await context.close().catch(() => {});
 fs.rmSync(profile2, { recursive: true, force: true });
+
+// ---- About version of a preview build ---------------------------------------------------------
+// A packaged preview build's manifest carries a version_name (e.g. "0.3.0-pre.<date>.<time>
+// (<commit>)"), which the browser's extensions card shows instead of version. Settings → About
+// must show the same string: checked on a copy of the extension under test, built in
+// os.tmpdir(), whose manifest gains VERSION_NAME and nothing else.
+const VERSION_NAME = '9.9.9-e2e (abc1234)';
+
+async function checkVersionNameCopy() {
+  let copyDir;
+  let profile3;
+  let ctx;
+  let p;
+  try {
+    copyDir = realExtensionDir(fs.mkdtempSync(path.join(os.tmpdir(), 'zauth-version-name-ext-')));
+    fs.cpSync(extDir, copyDir, { recursive: true });
+    const copyManifestPath = path.join(copyDir, 'manifest.json');
+    const copyManifest = { ...JSON.parse(fs.readFileSync(copyManifestPath, 'utf8')), version_name: VERSION_NAME };
+    fs.writeFileSync(copyManifestPath, JSON.stringify(copyManifest, null, 2));
+    profile3 = freshProfileDir();
+    ctx = await launch(copyDir, profile3);
+    p = await ctx.newPage();
+    await openExtensionPage(ctx, p, copyDir, POPUP);
+    await waitState(p, 'setup');
+    await p.fill('#setup-pass', PASSPHRASE);
+    await p.fill('#setup-pass2', PASSPHRASE);
+    await p.click('#setup-submit');
+    await waitState(p, 'list');
+    await p.click('#settings-btn');
+    await waitState(p, 'settings');
+    await checkAboutVersion(
+      rep,
+      p,
+      'about-version-name',
+      VERSION_NAME,
+      `copy with manifest version ${JSON.stringify(copyManifest.version)}, version_name ${JSON.stringify(VERSION_NAME)}`,
+    );
+  } catch (err) {
+    rep.fail('about-version-name', `${err.message.split('\n')[0]} [${p ? await describePage(p) : 'no page'}]`);
+  } finally {
+    if (ctx) await ctx.close().catch(() => {});
+    if (profile3) fs.rmSync(profile3, { recursive: true, force: true });
+    if (copyDir) fs.rmSync(copyDir, { recursive: true, force: true });
+  }
+}
+
+await checkVersionNameCopy();
 await runPasskey(rep);
 rep.finish('e2e');
