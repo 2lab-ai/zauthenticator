@@ -182,7 +182,11 @@ export function createSettingsView({ isTab, done, onOrphan }) {
     renderBindings();
     passkeySection.open();
     openTabRow.hidden = isTab;
-    setText(versionEl, t('versionLabel', chrome.runtime.getManifest().version));
+    // version_name (a preview build's label, which the browser's extensions card shows instead of
+    // version) when the manifest has one.
+    const manifest = chrome.runtime.getManifest();
+    const shownVersion = typeof manifest.version_name === 'string' && manifest.version_name !== '' ? manifest.version_name : manifest.version;
+    setText(versionEl, t('versionLabel', shownVersion));
     $('#settings-back').focus();
   }
 
