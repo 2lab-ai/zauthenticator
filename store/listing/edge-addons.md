@@ -167,7 +167,7 @@ TOTP
 
 ## Notes for certification
 
-Optional, but the extension must be fully testable and the notes help testers reach every feature
+Required in Partner Center (at most 2,000 characters; the box opens when you choose "Yes, I need to provide … other info for testers", and Partner Center warns that submissions without notes may fail review). The extension must be fully testable and the notes help testers reach every feature
 (policies 1.3). Certification "can take up to seven business days".
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 source: https://learn.microsoft.com/en-us/legal/microsoft-edge/extensions/developer-policies, checked 2026-11-16
@@ -187,7 +187,7 @@ How to test:
 5. Settings lists the site under auto-fill sites; "Remove" deletes it and gives up the access to that site.
 6. Click the lock button: the right-click menu then shows "Unlock zauthenticator…" and nothing is filled. The vault also locks after 15 minutes without use.
 
-Permissions: storage (the encrypted vault); activeTab (a QR scan of the current tab after a toolbar click, and filling the right-clicked field); contextMenus (the right-click menu); scripting (filling the field, and registering the auto-fill script for the allowed sites only); optional https://*/* host access, requested one exact site at a time when the user clicks Allow. No remote code. Source code (MIT): https://github.com/2lab-ai/zauthenticator
+Permission justifications are in the Privacy section. No remote code. Source code (MIT): https://github.com/2lab-ai/zauthenticator
 ```
 
 For an update, add a line at the top that says what changed in that version (Partner Center asks
