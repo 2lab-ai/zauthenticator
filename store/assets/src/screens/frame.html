@@ -4,8 +4,8 @@
      the promo tiles (marquee-1400x560.svg): a flat black page, white headline, subhead in white
      at 60% (#999999, 7.4:1 on black), greys only in the window chrome. Text on the left (headline
      54 px, subhead 24 px on one line, nothing under 18 px), the capture on the right in a plain
-     frame: the stage holds one .popup, .window or .browser block. Square corners, no shadow, full
-     bleed. -->
+     frame: the stage holds one .popup, .window or .browser block, or a .stack of .popup blocks
+     (two crops of one view, one above the other). Square corners, no shadow, full bleed. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -90,6 +90,12 @@
   .popup {
     overflow: hidden;
     background: #ffffff;
+  }
+
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
   }
 
   .popup img,

@@ -1,4 +1,4 @@
-# Chrome Web Store listing: zauthenticator 0.2.0
+# Chrome Web Store listing: zauthenticator 0.3.0
 
 Everything to paste into the Chrome Web Store Developer Dashboard, tab by tab. Requirements were
 checked against the official documentation on 2026-11-16; each one names its source. A value the
@@ -9,38 +9,15 @@ The detailed descriptions below are also used for Microsoft Edge Add-ons
 browser names, and change both listings together. The test notes live in
 [edge-addons.md](edge-addons.md#notes-for-certification) and serve both stores.
 
-## v0.3 draft listing — not for the v0.2.0 zip
-
-The v0.2.0 text and package below remain the released-package instructions. Do not paste this
-addition into either store for the v0.2.0 zip. Before any v0.3 submission, verify the completed
-package, privacy disclosures, reviewer instructions and matching released zip together; see the
-[submission gate](submission-checklist.md#v03-draft-submission-gate).
-
-**English draft addition:** Optional passkey unlock uses a PRF-capable authenticator. Open Settings
-in a full tab, re-enter your passphrase and approve two prompts (create and verify). Unlock uses a
-separate window. Keep your passphrase: it unlocks without the passkey, and importing a backup asks
-for it. Enroll separately for each installation. The browser and authenticator provider handle
-WebAuthn and may sync passkeys; TOTP seeds and vault payload are not sent to them. Exports omit
-passkey slots but keep the vault's data key, so removing a slot neither changes that key nor
-revokes older copies.
-
-**한국어 초안:** PRF를 지원하는 인증기로 선택적 패스키 잠금 해제를 사용할 수 있어요. 설정을 전체 탭으로
-열어 비밀번호를 다시 입력하고 생성·확인 요청 두 번을 승인하세요. 잠금 해제는 별도 창에서 해요. 패스키
-없이 잠금을 풀 때와 백업을 가져올 때는 비밀번호를 써요. 설치마다 따로 등록해야 해요. WebAuthn은 브라우저와
-인증기 제공자가 처리하며 패스키를 동기화할 수 있지만 TOTP 비밀 키와 보관함 내용은 전송하지 않아요.
-백업에는 패스키 슬롯이 빠지지만 보관함의 데이터 키는 그대로라서, 슬롯을 삭제해도 그 키는 바뀌지 않고
-이전 복사본도 폐기되지 않아요.
-
-For v0.3 the v0.2 lines below that describe the vault key as derived from the passphrase, say a
-backup is encrypted with the same passphrase, say "no sync" without limiting it to the vault, or
-say nothing is sent anywhere (storage justification) must be replaced to match
-[PRIVACY.md](../../PRIVACY.md); they stay as written for the v0.2.0 package.
+The texts describe the 0.3.0 package, which adds optional passkey unlock, and match
+[PRIVACY.md](../../PRIVACY.md) and the README on `main`. The 0.2.0 texts are in the git history
+(commit `1467eb4`, the last one before this update).
 
 ## Package
 
-- **File to upload:** `zauthenticator-0.2.0.zip`, the asset of the GitHub release `v0.2.0`
+- **File to upload:** `zauthenticator-0.3.0.zip`, the asset of the GitHub release `v0.3.0`
   (built by the release workflow from the tagged commit). Locally, `npm run zip` builds the same
-  file as `dist/zauthenticator-0.2.0.zip` and prints its sha256; compare it with the release notes.
+  file as `dist/zauthenticator-0.3.0.zip` and prints its sha256; compare it with the release notes.
 - **Manifest at the zip root:** required ("place the manifest file in the root directory, not in a
   folder"). `scripts/build-zip.mjs` refuses to finish otherwise.
   source: https://developer.chrome.com/docs/webstore/prepare, checked 2026-11-16
@@ -78,26 +55,30 @@ Maximum length: **unverified** (the docs give none).
 **English (en):**
 
 ```text
-zauthenticator shows the two-factor (TOTP) codes you use to sign in, and keeps the secret keys behind them on your device, encrypted with your passphrase.
+zauthenticator shows the two-factor (TOTP) codes you use to sign in, and keeps the secret keys behind them on your device, encrypted. You unlock it with your passphrase or, if you add one, a passkey.
 
 Features
 - Add an account by scanning a QR code on the current page, from a QR image, from otpauth:// links, or by typing the setup key.
 - Click a code to copy it. A countdown shows when the next code starts.
 - Fill a code into a site: right-click the code field and choose the account.
 - Optional auto-fill: allow a site once, and on later visits the code field is filled for you while zauthenticator is unlocked. Until you submit, an expiring code is replaced with the new one once, and if the site rejects the code a fresh one is filled once; the same code is never filled twice, and a site gets at most 3 codes per tab in 5 minutes. Auto-fill stops as soon as you type or delete in the field, leave the page, or lock, and it never submits a form.
+- Optional passkey unlock uses a PRF-capable authenticator. Open Settings in a full tab, re-enter your passphrase and approve two prompts (create and verify). Unlock uses a separate window. Keep your passphrase: it unlocks without the passkey, and importing a backup asks for it. Enroll separately for each installation.
 - Export and import an encrypted backup.
 - Locks when you click Lock, after 15 minutes without use, and when the browser quits.
 - English and Korean.
 
 Privacy
-- No account, no sync, no analytics, no telemetry. The extension's pages and its background worker cannot connect to any server.
-- Secret keys, account names and auto-fill sites are stored only on your device, in a vault encrypted with AES-256-GCM under a key derived from your passphrase (PBKDF2-SHA-256, 600,000 iterations). The passphrase is never stored.
+- No account, no vault sync, no analytics, no telemetry. The extension's own pages and its background worker cannot connect to any server.
+- Secret keys, account names and auto-fill sites are stored only on your device, in a vault encrypted with AES-256-GCM. Until you add a passkey, the key is derived from your passphrase (PBKDF2-SHA-256, 600,000 iterations). Adding one switches the vault to a random data key, stored twice in encrypted form: under the key from your passphrase and under a key derived from your authenticator's PRF output. The passphrase is never stored.
+- Passkey requests are made by the browser, not the extension. The browser and your authenticator provider handle WebAuthn and may sync passkeys; your secret keys and the vault's contents are not sent to them.
 - A site receives only the 6-8 digit code, and only when you allowed that site or right-clicked its field.
 - Scanning a QR code on the current page takes one picture of the visible part of that tab, only when you click the scan button. It is decoded on your device and never stored or sent.
 - No site access is granted at install. When you allow auto-fill on a site, the browser asks for access to that one site; removing the site gives the access up.
 
 Good to know
-- The passphrase cannot be recovered. Backups are encrypted with the same passphrase, so a backup protects you against losing the device or browser profile, not against forgetting the passphrase.
+- The passphrase cannot be recovered, and importing a backup asks for the passphrase it was made with, so a backup protects you against losing the device or browser profile, not against forgetting the passphrase.
+- A backup of a vault with a passkey omits the passkey but keeps the vault's data key, so removing the passkey neither changes that key nor revokes older copies.
+- Enrolling a passkey converts the vault to the 0.3 format, which version 0.2.0 cannot open. If you might need an older version, export a backup before you enroll.
 - Codes are computed from your computer's clock, so keep its time set automatically.
 - Uninstalling the extension deletes its vault.
 
@@ -107,26 +88,30 @@ Open source (MIT): https://github.com/2lab-ai/zauthenticator
 **Korean (ko):**
 
 ```text
-zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 주는 확장 프로그램이에요. 코드를 만드는 비밀 키는 마스터 비밀번호로 암호화해서 이 기기에만 보관해요.
+zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 주는 확장 프로그램이에요. 코드를 만드는 비밀 키는 암호화해서 이 기기에만 보관하고, 마스터 비밀번호나 등록한 패스키로 잠금을 풀어요.
 
 기능
 - 지금 보고 있는 페이지의 QR 코드, QR 이미지, otpauth:// 링크, 설정 키 직접 입력 중 편한 방법으로 계정을 추가해요.
 - 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
 - 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 계정을 고르면 코드가 입력돼요.
 - 원하면 자동 입력도 돼요. 사이트를 한 번 허용해 두면 다음부터는 잠금이 풀려 있는 동안 코드 입력란을 자동으로 채워요. 입력한 코드가 제출 전에 만료되면 새 코드로 한 번 바꾸고, 사이트가 코드를 거부하면 새 코드로 한 번 다시 채워요. 같은 코드를 두 번 넣지 않고, 한 탭에서 한 사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 페이지를 떠나면, 잠기면 바로 멈춰요. 폼을 제출하지는 않아요.
+- PRF를 지원하는 인증기로 선택적 패스키 잠금 해제를 사용할 수 있어요. 설정을 전체 탭으로 열어 비밀번호를 다시 입력하고 생성·확인 요청 두 번을 승인하세요. 잠금 해제는 별도 창에서 해요. 패스키 없이 잠금을 풀 때와 백업을 가져올 때는 비밀번호를 써요. 설치마다 따로 등록해야 해요.
 - 암호화된 백업을 내보내고 가져올 수 있어요.
 - 잠그기 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 종료하면 잠겨요.
 - 한국어와 영어를 지원해요.
 
 개인정보
-- 회원 가입, 동기화, 사용 통계 수집이 없어요. 확장 프로그램 화면과 백그라운드 워커는 어떤 서버에도 연결할 수 없어요.
-- 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기에만 저장돼요. 마스터 비밀번호에서 만든 키(PBKDF2-SHA-256, 60만 회 반복)로 AES-256-GCM 암호화해요. 비밀번호 자체는 저장하지 않아요.
+- 회원 가입, 보관함 동기화, 사용 통계 수집이 없어요. 확장 프로그램 화면과 백그라운드 워커는 어떤 서버에도 연결할 수 없어요.
+- 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기에만 저장되고 AES-256-GCM으로 암호화돼요. 패스키를 등록하기 전에는 마스터 비밀번호에서 만든 키(PBKDF2-SHA-256, 60만 회 반복)로 암호화해요. 패스키를 등록하면 임의의 데이터 키로 바꾸고, 그 키를 비밀번호에서 만든 키와 인증기의 PRF 출력에서 만든 키로 각각 암호화해 두 번 저장해요. 비밀번호 자체는 저장하지 않아요.
+- 패스키 요청은 확장 프로그램이 아니라 브라우저가 해요. WebAuthn은 브라우저와 인증기 제공자가 처리하며 패스키를 동기화할 수 있지만 TOTP 비밀 키와 보관함 내용은 전송하지 않아요.
 - 사이트가 받는 건 6–8자리 코드뿐이고, 허용한 사이트나 직접 오른쪽 클릭한 입력란에만 들어가요.
-- 지금 페이지의 QR 코드를 스캔할 때는 **이 페이지 스캔** 버튼을 누른 순간에만 탭에서 보이는 부분을 한 장 캡처해요. 이 이미지는 기기 안에서 읽고, 저장하거나 보내지 않아요.
+- 지금 페이지의 QR 코드를 스캔할 때는 "이 페이지에서 스캔" 버튼을 누른 순간에만 탭에서 보이는 부분을 한 장 캡처해요. 이 이미지는 기기 안에서 읽고, 저장하거나 보내지 않아요.
 - 설치할 때는 사이트 접근 권한을 받지 않아요. 자동 입력을 허용하면 브라우저가 그 사이트 하나에 접근해도 되는지 묻고, 설정의 자동 입력 사이트에서 삭제하면 그 권한도 반납해요.
 
 알아 둘 점
-- 마스터 비밀번호는 복구할 수 없어요. 백업도 같은 비밀번호로 암호화되기 때문에, 비밀번호를 잊었을 때는 도움이 되지 않아요. 백업은 기기나 브라우저 프로필을 잃었을 때를 위한 거예요.
+- 마스터 비밀번호는 복구할 수 없어요. 백업을 가져올 때는 그 백업을 만들 때 쓴 비밀번호를 묻기 때문에, 비밀번호를 잊었을 때는 백업도 도움이 되지 않아요. 백업은 기기나 브라우저 프로필을 잃었을 때를 위한 거예요.
+- 패스키를 등록한 보관함의 백업에는 패스키가 빠지지만 보관함의 데이터 키는 그대로라서, 패스키를 삭제해도 그 키는 바뀌지 않고 이전 복사본도 폐기되지 않아요.
+- 패스키를 등록하면 보관함이 0.3 형식으로 바뀌어서 0.2.0에서는 열 수 없어요. 이전 버전이 필요할 수도 있다면 등록하기 전에 백업을 내보내 두세요.
 - 코드는 컴퓨터 시계로 계산해요. 시간이 자동으로 맞춰지도록 설정해 두세요.
 - 확장 프로그램을 삭제하면 보관함도 함께 지워져요.
 
@@ -179,15 +164,18 @@ understand." source: https://developer.chrome.com/docs/webstore/program-policies
 ### Single purpose description
 
 ```text
-zauthenticator generates time-based one-time passwords (TOTP, RFC 6238) for the user's two-factor accounts, so the user can copy a code or have it filled into the code field of a site they chose. Everything else it does (adding accounts from QR codes or setup keys, an encrypted backup, locking) serves that purpose.
+zauthenticator generates time-based one-time passwords (TOTP, RFC 6238) for the user's two-factor accounts, so the user can copy a code or have it filled into the code field of a site they chose. Everything else it does (adding accounts from QR codes or setup keys, an encrypted backup, locking, and unlocking the vault with the passphrase or with a passkey the user enrolled) serves that purpose.
 ```
 
 ### Permission justifications
 
+The permissions are the same as in 0.2.0. Passkey unlock (WebAuthn, `navigator.credentials`)
+needs no manifest permission; the storage text says what the passkey adds to storage.
+
 **storage**
 
 ```text
-Stores the user's vault (TOTP secret keys, account names and the sites chosen for auto-fill) in local extension storage, encrypted with AES-256-GCM under a key derived from the user's passphrase, and keeps the unlocked key in session storage (in memory) until the user locks or the browser quits; after 15 minutes without use, the next read removes the key before any code is shown or filled. While unlocked, session storage also holds a small auto-fill record (per tab and allowed site: tab id, site origin, account id, TOTP period number and time; never a code) so that a site gets at most 3 codes per tab in 5 minutes and never the same code twice; entries older than 5 minutes are dropped on the next update and a lock removes the record. Nothing is sent anywhere.
+Stores the user's vault (TOTP secret keys, account names, auto-fill sites) in local extension storage, encrypted with AES-256-GCM under a key derived from the user's passphrase or, once a passkey is enrolled, under a random data key wrapped twice: by the passphrase key and by a key derived from the passkey's PRF output. Its passkey slot also holds the credential ID, PRF salt, label and creation time; WebAuthn needs no manifest permission. Session storage (in memory) keeps the unlocked key until the user locks or the browser quits (after 15 minutes idle the next read removes it), an auto-fill record (per tab and allowed site: tab id, origin, account id, TOTP period number, time; never a code) that limits a site to 3 codes per tab in 5 minutes and is removed on lock, and a nonsecret lock counter. Nothing stored goes to the developer or a server; for a passkey request the browser gives the credential ID and salt to the user's authenticator.
 ```
 
 **activeTab**
@@ -211,7 +199,7 @@ Two uses, both with code bundled in the package. (1) After the user chooses an a
 **Host permission (optional `https://*/*`)**
 
 ```text
-Declared only as an optional host permission and requested one exact origin at a time. When the user clicks "Allow" in the extension's "Fill codes automatically?" window, the browser's own prompt asks for access to that single site (https://<host>/*). The access lets the bundled auto-fill script run there on later visits and fill the code field. Nothing is granted at install, and the access is removed when the user removes the site in Settings. The extension makes no network requests: its pages and service worker have the CSP connect-src 'none'.
+Declared only as an optional host permission and requested one exact origin at a time. When the user clicks "Allow" in the extension's "Fill codes automatically?" window, the browser's own prompt asks for access to that single site (https://<host>/*). The access lets the bundled auto-fill script run there on later visits and fill the code field. Nothing is granted at install, and the access is removed when the user removes the site in Settings. The extension's own pages and service worker make no network requests (CSP connect-src 'none'); passkey requests are made by the browser itself.
 ```
 
 **Background service worker** (the dashboard has no field for it; use this if a reviewer asks)
@@ -256,7 +244,7 @@ meaning to what the dashboard shows.
 
 | Checkbox (label unverified) | Tick | Why |
 |---|---|---|
-| Authentication information | **yes** | TOTP secret keys and account names (logins) are stored in the encrypted vault on the device. While unlocked, an auto-fill record in session memory (tab id, site origin, account id, TOTP period number, time; never a code) limits a site to 3 codes per tab in 5 minutes and no repeated code; a lock removes it. Nothing is sent to the developer. |
+| Authentication information | **yes** | TOTP secret keys and account names (logins) are stored in the encrypted vault on the device. Once a passkey is enrolled, its slot sits next to the encrypted data: the credential ID, the PRF salt, the label, the creation time and the data key encrypted under a key derived from the PRF output; the PRF output and the plain data key are never stored. While unlocked, an auto-fill record in session memory (tab id, site origin, account id, TOTP period number, time; never a code) limits a site to 3 codes per tab in 5 minutes and no repeated code; a lock removes it. Nothing is sent to the developer; during a passkey request the browser passes the credential ID, a challenge and the PRF salt to the user's own authenticator (see Tensions). |
 | Personally identifiable information | no | Account names are covered above as logins; nothing else about the person is handled. |
 | Health information | no | |
 | Financial and payment information | no | |
@@ -294,6 +282,15 @@ here, the Edge answers and PRIVACY.md together.
   ticked, because this is a rate limit on sites you chose, not a record of browsing. Tick it if
   the dashboard's description of this box covers any stored site address or visit time, or if a
   reviewer reads it that way, and keep the Edge answer the same.
+- **Passkey requests (0.3.0).** During enrollment and passkey unlock the browser, not the
+  extension, passes the credential ID, a challenge and the PRF salt to the user's own
+  authenticator, whose passkey provider may sync the passkey to the user's other devices. No
+  secret key and no vault content goes with them, nothing reaches the developer, and the exchange
+  serves only unlocking the vault. This kit therefore keeps all three certifications ticked and
+  does not tick a box for it; PRIVACY.md describes it under "Passkey unlock" and names it as the
+  one exception to "does not send what it stores". If the dashboard asks about data shared with
+  third parties in a way that covers it, or a reviewer reads it so, answer in PRIVACY.md's words
+  and keep the Edge answer the same.
 
 ### Privacy policy URL
 
@@ -315,5 +312,26 @@ source: https://developer.chrome.com/docs/webstore/cws-dashboard-distribution, c
 
 Optional ("only if needed"). No login is needed; paste the
 [Notes for certification](edge-addons.md#notes-for-certification) text so the reviewer can reach
-the auto-fill part quickly.
+the auto-fill and passkey parts quickly.
 source: https://developer.chrome.com/docs/webstore/publish, checked 2026-11-16
+
+## Text lengths
+
+Measured on 2026-11-20 for the 0.3.0 texts: Unicode characters of each `text` block, line breaks
+counted as one character (the second figure counts each line break as two, in case a form
+counts CR LF). No text contains a character outside the Basic Multilingual Plane, so UTF-16
+lengths are the same.
+
+| Text | Where | Characters | Limit |
+|---|---|---|---|
+| Detailed description, English | [above](#detailed-description) | 3,416 (3,443) | Edge: 250 to 10,000; this store: **unverified** |
+| Detailed description, Korean | [above](#detailed-description) | 1,897 (1,924) | as above |
+| Single purpose description | [above](#single-purpose-description) | 397 | **unverified** |
+| storage justification | [above](#permission-justifications) | 951 | 1,000 per box, **unverified** in the docs; kept under it |
+| activeTab justification | [above](#permission-justifications) | 491 | as above |
+| contextMenus justification | [above](#permission-justifications) | 202 | as above |
+| scripting justification | [above](#permission-justifications) | 499 | as above |
+| Host permission justification | [above](#permission-justifications) | 593 | as above |
+| Background service worker (on request) | [above](#permission-justifications) | 456 | as above |
+| Remote code (if a box is shown) | [above](#remote-code) | 272 | as above |
+| Notes for certification | [edge-addons.md](edge-addons.md#notes-for-certification) | 1,964 (1,979) | 2,000 (Partner Center) |

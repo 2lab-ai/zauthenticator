@@ -1,8 +1,10 @@
 # 04 — Passkey unlock
 
-Status: shipped to main 2026-11-17 (v0.3, untagged). A0–A5 and the A6 gates/review/disclosures
-are met (receipts in v0-3-passkey/loop.done.md R1); the A6 owner hand test and the v0.3.0 tag are
-open. Workstream: [v0-3-passkey/](v0-3-passkey/ssot.md).
+Status: v0.3.0 release prepared 2026-11-20, tag pending. The owner authorized the release on
+2026-11-20 ("v0.3 배포해주고 익스텐션도 버전업한고 올려줘"). A0–A5 and the A6
+gates/review/disclosures are met (receipts in v0-3-passkey/loop.done.md R1); the A6 real-phone
+hand test has not been performed, and the release goes ahead on that instruction without it
+(still recommended). Workstream: [v0-3-passkey/](v0-3-passkey/ssot.md).
 Revision 3 (2026-11-17): R1 3×REJECT (same holes, envelope kept) → rev 2 → R2 grok APPROVE,
 fable APPROVE, gpt-6 REJECT (record revision vs identity; storage-writer wording) → rev 3 →
 **R3 unanimous APPROVE** (non-blocking notes folded: rev encoding, lockGen absent at start).
