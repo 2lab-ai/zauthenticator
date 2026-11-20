@@ -13,7 +13,8 @@
 //   store/assets/screenshots/2-autofill.png  1280x800  a sign-in page whose code field auto-fill filled
 //   store/assets/screenshots/3-bind.png      1280x800  the "Fill codes automatically?" window
 //   store/assets/screenshots/4-add.png       1280x800  the Add account view, scrolled so no text is cut
-//   store/assets/screenshots/5-settings.png  1280x800  Settings, scrolled to the auto-fill sites
+//   store/assets/screenshots/5-settings.png  1280x800  Settings in two crops: the passkey section,
+//                                                      and About with the version
 //   docs/images/popup-list.png               the list capture at 2x, no frame
 //   docs/images/popup-autofill-bind.png      the bind window capture at 2x
 //   docs/images/popup-locked.png             the locked popup at 2x
@@ -28,6 +29,13 @@
 //    draws its full-tab layout. An init script makes getCurrent() resolve to undefined, as it
 //    does in the toolbar popup, so popup.js takes its toolbar-popup branch. The bind page keeps
 //    the real getCurrent(): popup.js draws the window layout only in a tab.
+//    Settings is far taller than the popup (about 1,270 CSS px in a scroll box of about 550), so
+//    no scroll offset shows both its first group (the passkey section, which the toolbar popup
+//    draws with its "Open in a tab" button) and its last (About and the version). It is captured
+//    twice without the top bar: from the top of the view to midway down the gap after the passkey
+//    section, and, scrolled to the end, from midway down the gap before About; the frame stacks
+//    the two. The passkey section shows only when the browser reports WebAuthn PRF support; the
+//    script stops if it stays hidden.
 //    The bind offer and the two auto-fill sites are written through the page's own
 //    popup/session.js (setPendingBind, addBinding, the calls the worker and the bind window
 //    make): the shipped manifest grants no site access, and the browser's permission prompt
@@ -348,18 +356,25 @@ function mainLayout() {
     view: main.clientHeight,
     max: main.scrollHeight - main.clientHeight,
     scroll: main.scrollTop,
+    // The viewport y of the scroll content's top, so content offsets become clip coordinates.
+    origin,
   };
 }
 
-// The atoms an edge of #main's visible part cuts at scroll offset s: an atom across an edge, or
-// within EDGE_MARGIN of it. The top edge counts only when scrolled, the bottom one only when more
-// content lies below.
+// The atoms that horizontal lines at the content offsets `edges` cut: an atom across a line, or
+// within EDGE_MARGIN of it.
 const EDGE_MARGIN = 4;
+function cutBy(layout, edges) {
+  return layout.atoms.filter((a) => edges.some((e) => a.top < e + EDGE_MARGIN && a.bottom > e - EDGE_MARGIN));
+}
+
+// The atoms an edge of #main's visible part cuts at scroll offset s. The top edge counts only when
+// scrolled, the bottom one only when more content lies below.
 function cutAt(layout, s) {
   const edges = [];
   if (s > 0) edges.push(s);
   if (s < layout.max) edges.push(s + layout.view);
-  return layout.atoms.filter((a) => edges.some((e) => a.top < e + EDGE_MARGIN && a.bottom > e - EDGE_MARGIN));
+  return cutBy(layout, edges);
 }
 
 // Scrolls #main to a clean offset (no atom cut): the first one from `from` towards `towards`
@@ -397,6 +412,50 @@ async function captureBody(page, what) {
   });
   const shot = await page.screenshot({ clip: { x: 0, y: 0, ...css }, animations: 'disabled', caret: 'hide' });
   return { css, png: encodeRgbPng(decodePng(shot)) };
+}
+
+// Runs in the page: the box of `selector` in #main's scroll content coordinates (CSS px).
+// → { top, bottom } or null when it is missing or not displayed
+function contentBox(selector) {
+  const main = document.querySelector('#main');
+  const el = document.querySelector(selector);
+  if (!el || el.getClientRects().length === 0) return null;
+  const origin = main.getBoundingClientRect().top - main.scrollTop;
+  const r = el.getBoundingClientRect();
+  return { top: r.top - origin, bottom: r.bottom - origin };
+}
+
+// The Settings view in two crops (see the header): at scroll 0, #main from its top down to
+// midway between the passkey section and the next group; scrolled to the end, from midway
+// between the auto-fill sites and About down to the bottom of the body. Each cut line must lie in
+// the visible part and cut no line of text or control. → { top, bottom }, each { css, png }
+async function captureSettings(page) {
+  const crop = async ({ scroll, above, below, keep, what }) => {
+    await page.evaluate((s) => {
+      const main = document.querySelector('#main');
+      main.scrollTop = Math.min(s, main.scrollHeight - main.clientHeight);
+    }, scroll);
+    await settle(page);
+    const layout = await page.evaluate(mainLayout);
+    // With no atoms every cut line would pass the check below: fail closed instead.
+    if (layout.atoms.length === 0) throw new Error(`${what}: #main reports no text or controls to check the cut against`);
+    const a = await page.evaluate(contentBox, above);
+    const b = await page.evaluate(contentBox, below);
+    if (!a || !b) throw new Error(`${what}: ${!a ? above : below} is not displayed`);
+    const cut = Math.round((a.bottom + b.top) / 2);
+    if (cut < layout.scroll || cut > layout.scroll + layout.view) throw new Error(`${what}: the cut at ${cut} is outside the visible part (scroll ${layout.scroll}, view ${layout.view})`);
+    const hit = cutBy(layout, [cut]);
+    if (hit.length > 0) throw new Error(`${what}: the cut at ${cut} crosses ${hit.map((h) => h.what).join('; ')}`);
+    const body = await page.evaluate(() => Math.round(document.body.getBoundingClientRect().height));
+    const y = keep === 'above' ? Math.round(layout.origin + layout.scroll) : Math.round(layout.origin + cut);
+    const end = keep === 'above' ? Math.round(layout.origin + cut) : body;
+    const css = { width: 360, height: end - y };
+    const shot = await page.screenshot({ clip: { x: 0, y, ...css }, animations: 'disabled', caret: 'hide' });
+    return { css, png: encodeRgbPng(decodePng(shot)) };
+  };
+  const top = await crop({ scroll: 0, above: '#passkey-section', below: '[aria-labelledby="backup-title"]', keep: 'above', what: 'settings top' });
+  const bottom = await crop({ scroll: Infinity, above: '[aria-labelledby="bindings-title"]', below: '[aria-labelledby="about-title"]', keep: 'below', what: 'settings bottom' });
+  return { top, bottom };
 }
 
 // Throws when a text in `selectors` is cut off with an ellipsis (scrollWidth past its box).
@@ -477,16 +536,21 @@ async function captureShipped(chromium, { headed, tmp, accounts }) {
     await popup.click('#add-cancel');
     await waitState(popup, 'list');
 
-    // Settings with two auto-fill sites, scrolled to them.
+    // Settings with two auto-fill sites, in two crops: the passkey section, and About.
     for (const [origin, issuer] of SITES) {
       await popup.evaluate(async ([o, a]) => (await import('/popup/session.js')).addBinding(o, a), [origin, idOf(issuer)]);
     }
     await popup.click('#settings-btn');
     await waitState(popup, 'settings');
     await popup.waitForFunction((n) => document.querySelectorAll('#bindings .binding').length === n, SITES.length, { timeout: 15000 });
-    await scrollClean(popup, { from: Infinity, towards: -1, what: 'settings' });
+    // settings.js reveals the passkey section after an asynchronous support check; in the toolbar
+    // popup it offers only to open Settings in a tab.
+    const passkeyShown = await popup
+      .waitForFunction(() => !document.querySelector('#passkey-section').hidden && !document.querySelector('#passkey-popup').hidden && document.querySelector('#passkey-tab').hidden, null, { timeout: 15000 })
+      .then(() => true, () => false);
+    if (!passkeyShown) throw new Error('settings: the passkey section is hidden (does this browser report WebAuthn PRF support?)');
     await assertNotClipped(popup, ['.binding-origin', '.binding-account'], 'settings');
-    shots.settings = await captureBody(popup, 'settings');
+    shots.settings = await captureSettings(popup);
     await popup.click('#settings-back');
     await waitState(popup, 'list');
 
@@ -616,6 +680,7 @@ const DOTS = '<span class="dot"></span><span class="dot"></span><span class="dot
 const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>';
 
 const popupStage = (shot) => `<div class="popup">${img(shot, POPUP_SCALE)}</div>`;
+const stackStage = (...shots) => `<div class="stack">${shots.map(popupStage).join('')}</div>`;
 const windowStage = (shot) => `<div class="window"><div class="bar">${DOTS}</div>${img(shot, POPUP_SCALE)}</div>`;
 function browserStage(shot) {
   const url = new URL(DEMO_URL);
@@ -634,7 +699,7 @@ async function renderFrames(chromium, { headed, shots }) {
     ['2-autofill.png', 'Fills the code for you', 'On sites you allowed, while unlocked.', browserStage(shots.demo)],
     ['3-bind.png', 'You choose each site', 'Auto-fill starts only after Allow.', windowStage(shots.bind)],
     ['4-add.png', 'Add from a QR or link', 'Or type the setup key yourself.', popupStage(shots.add)],
-    ['5-settings.png', 'Remove a site any time', 'No network access, no telemetry.', popupStage(shots.settings)],
+    ['5-settings.png', 'Unlock with a passkey', 'Optional. Your passphrase still works.', stackStage(shots.settings.top, shots.settings.bottom)],
   ];
   const browser = await chromium.launch({ headless: !headed, channel: 'chromium' });
   const out = {};

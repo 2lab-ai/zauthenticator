@@ -5,32 +5,45 @@ for every update after that. The texts to paste are in [chrome-web-store.md](chr
 and [edge-addons.md](edge-addons.md). Facts were checked on 2026-11-16 against the sources named;
 **unverified** marks what the documentation does not state.
 
-## v0.3 draft submission gate
+## 0.3.0 release
 
-The v0.2.0 release package instructions below remain separate. **Do not submit the v0.3 draft
-listing with the v0.2.0 zip.**
+The owner authorized the 0.3.0 release on 2026-11-20: "v0.3 배포해주고 익스텐션도 버전업한고
+올려줘" (release v0.3, bump the extension version and upload it). The A6 hand test of passkey
+unlock on a real phone (enroll with a phone, lock, unlock with the passkey, restart the browser,
+unlock with the passkey, unlock with the passphrase) has not been performed; the release goes
+ahead on that instruction without it. The test stays open and is recommended after the release.
+Passkey unlock is covered by the project gates, which run it against virtual authenticators.
 
-- [ ] Finish and verify the v0.3 implementation against the frozen passkey spec, including the
-      owner hand test and the project gates; do not treat draft text as evidence of release.
-- [ ] Verify the actual released v0.3 package and version, then use its matching release zip, not
-      the v0.2.0 zip. This checklist does not itself authorize a release or store submission.
-- [ ] Reconcile both EN/KO listings, privacy policy, data-usage answers and reviewer instructions
-      with that package, including browser/provider WebAuthn and passkey sync, passphrase recovery,
-      separate ceremony views, two prompts, export/import (backups share the vault's DEK; the
-      passphrase is the supported import path, not a cryptographic guarantee) and per-install
-      enrollment.
-- [ ] Recheck the already linked official store policies and dashboard fields at submission; do
-      not assume the v0.2 disclosures or screenshots still describe the update.
+- [x] `extension/manifest.json` `version` is `0.3.0`; no `version_name`, so About shows
+      "Version 0.3.0".
+- [x] Both listings, the data-usage answers and the certification notes describe the 0.3.0
+      package and match `PRIVACY.md` and the README on `main` (passkey requests made by the
+      browser and passkeys a provider may sync, the passphrase as the way back in, Settings in a
+      tab with two prompts, unlock in a separate window, backups that leave the passkey out but
+      share the vault's data key, one enrollment per installation, the 0.3 vault format that
+      0.2.0 cannot open). Lengths:
+      [Text lengths](chrome-web-store.md#text-lengths).
+- [x] Screenshots regenerated from the 0.3.0 UI (`node scripts/build-screenshots.mjs`);
+      `5-settings.png` shows the passkey section and About with "Version 0.3.0".
+- [ ] Merge to `main`, then push the tag `v0.3.0` and check the release zip
+      (steps 2 and 3 of [Before each update](#before-each-update)).
+- [ ] Upload `zauthenticator-0.3.0.zip` with the 0.3.0 texts, screenshots and notes. Edge
+      Add-ons: 0.2.0 passed certification and is live (Partner Center showed "Live" with an
+      **Update** button on 2026-11-20), so 0.3.0 goes up as an update of that listing, not as a new
+      extension. Chrome Web Store: no listing yet (registration fee not paid).
+- [ ] Recheck the linked store policies and dashboard fields at submission.
+- [ ] A6 real-phone hand test of passkey unlock (not performed for this release; recommended
+      after it).
 
 ## 0. Before the first submission
 
-- [ ] The docs, icon, popup and auto-fill changes for 0.2.0 are merged to `main`.
+- [ ] The docs, icon, popup, auto-fill and passkey changes are merged to `main`.
 - [ ] `PRIVACY.md` is on `main`, so
       `https://github.com/2lab-ai/zauthenticator/blob/main/PRIVACY.md` opens. Both stores need this
       URL at submission time.
-- [ ] The release `v0.2.0` exists on GitHub with `zauthenticator-0.2.0.zip` and its sha256
-      (pushing the tag `v0.2.0` runs the release workflow). Download the zip and check it:
-      `shasum -a 256 zauthenticator-0.2.0.zip` must print the sha256 in the release notes.
+- [ ] The release `v0.3.0` exists on GitHub with `zauthenticator-0.3.0.zip` and its sha256
+      (pushing the tag `v0.3.0` runs the release workflow). Download the zip and check it:
+      `shasum -a 256 zauthenticator-0.3.0.zip` must print the sha256 in the release notes.
 - [ ] The store images exist at the paths below and have the right sizes. On macOS:
       `sips -g pixelWidth -g pixelHeight store/assets/*.png store/assets/screenshots/*.png`
 
@@ -46,7 +59,7 @@ listing with the v0.2.0 zip.**
 | `store/assets/screenshots/4-add.png` | 1280×800 | both stores |
 | `store/assets/screenshots/5-settings.png` | 1280×800 | both stores |
 
-Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-17 (v0.2.0).
+Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-20 (0.3.0).
 
 ## 1. Accounts (once)
 
@@ -80,7 +93,7 @@ source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/crea
 
 ## 2. Chrome Web Store: first submission
 
-1. [ ] Developer Dashboard → **Add new item** → choose `zauthenticator-0.2.0.zip` → **Upload**.
+1. [ ] Developer Dashboard → **Add new item** → choose `zauthenticator-0.3.0.zip` → **Upload**.
 2. [ ] **Store listing** tab: detailed description (en, then a Korean listing), category, store
        icon, screenshots, promo tiles, homepage and support URLs. See
        [chrome-web-store.md](chrome-web-store.md#store-listing-tab).
@@ -102,7 +115,7 @@ source: https://developer.chrome.com/docs/webstore/review-process, checked 2026-
 
 ## 3. Edge Add-ons: first submission
 
-1. [ ] Partner Center → Edge → **Create new extension** → drop `zauthenticator-0.2.0.zip` on
+1. [ ] Partner Center → Edge → **Create new extension** → drop `zauthenticator-0.3.0.zip` on
        "Drag your package here (.zip)" → **Continue**.
 2. [ ] **Availability**: Public, all markets → **Save & Continue**.
 3. [ ] **Properties**: category, website, support contact, mature content off → **Save & Continue**.

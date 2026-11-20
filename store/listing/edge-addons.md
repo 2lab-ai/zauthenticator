@@ -1,4 +1,4 @@
-# Microsoft Edge Add-ons listing: zauthenticator 0.2.0
+# Microsoft Edge Add-ons listing: zauthenticator 0.3.0
 
 Everything to enter in Microsoft Partner Center (Edge program), page by page. Requirements were
 checked against the official documentation on 2026-11-16; each one names its source. A value the
@@ -12,20 +12,20 @@ Edge-specific rule for every text below: the extension and its listing "must not
 browsers" (developer policies 1.1.2). The descriptions, search terms, notes and both
 `extDescription` values are written without browser names; keep them that way.
 
-## v0.3 draft listing — not for the v0.2.0 zip
+## What changed in 0.3.0
 
-Keep the released v0.2.0 package and text below unchanged. For v0.3, use the bilingual draft
-addition in [chrome-web-store.md](chrome-web-store.md#v03-draft-listing--not-for-the-v020-zip)
-only after the [submission gate](submission-checklist.md#v03-draft-submission-gate) is satisfied.
-Update privacy answers and certification notes to cover browser-mediated WebAuthn, separate
-Settings and unlock views, two enrollment prompts, and passphrase recovery. Do not upload this
-v0.3 draft text with the v0.2.0 zip.
+0.3.0 adds optional passkey unlock (WebAuthn PRF) beside the passphrase and no new permission.
+The descriptions, privacy answers and certification notes below cover it: passkey requests made
+by the browser, enrollment in Settings opened in a tab with two prompts, unlock in a separate
+window, and the passphrase as the way back in. The 0.2.0 texts are in the git history (commit
+`1467eb4`).
 
 ## Packages
 
-- **File to upload:** the same `zauthenticator-0.2.0.zip` as for the other store (GitHub release
-  `v0.2.0`, or `npm run zip` → `dist/zauthenticator-0.2.0.zip`). Drag it onto "Drag your package
-  here (.zip)".
+- **File to upload:** the same `zauthenticator-0.3.0.zip` as for the other store (GitHub release
+  `v0.3.0`, or `npm run zip` → `dist/zauthenticator-0.3.0.zip`). For this update, open the
+  extension in Partner Center and drop it on the **Packages** page; a first submission uses
+  "Drag your package here (.zip)".
 - The **Extension name** and the **Short description** come from the manifest (`extName`,
   `extDescription`) and are read-only in Partner Center; to change them, upload a new package.
 - Partner Center detects the listing languages from `_locales` when the manifest uses
@@ -75,9 +75,14 @@ none of them names a browser:
 - **Data usage:** the same ticks and certifications as the other store, so both stores and
   PRIVACY.md describe the same handling:
   - **Authentication information**: ticked. TOTP secret keys and account names are kept in the
-    encrypted vault on the device. While unlocked, an auto-fill record in session memory (tab id,
-    site origin, account id, TOTP period number and time; never a code) limits a site to 3 codes
-    per tab in 5 minutes and no repeated code; a lock removes it.
+    encrypted vault on the device. Once a passkey is enrolled, its slot sits next to the
+    encrypted data (credential ID, PRF salt, label, creation time and the data key encrypted
+    under a key derived from the PRF output; never the PRF output or the plain data key). While
+    unlocked, an auto-fill record in session memory (tab id, site origin, account id, TOTP period
+    number and time; never a code) limits a site to 3 codes per tab in 5 minutes and no repeated
+    code; a lock removes it. During a passkey request the browser passes the credential ID, a
+    challenge and the PRF salt to the user's own authenticator; nothing reaches the developer
+    (see the [Tensions](chrome-web-store.md#tensions) of the other file).
   - **Website content**: ticked. A picture of the visible part of the current tab is decoded on
     the device when you click the scan button, and on sites you allowed the auto-fill script reads
     input-field attributes to find the code field.
@@ -117,9 +122,10 @@ Limits: minimum 250 characters, maximum 10,000; must describe the full functiona
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 
 Use the **English** and **Korean** detailed descriptions from
-[chrome-web-store.md](chrome-web-store.md#detailed-description) unchanged (measured on 2026-11-16:
-both are well above 250 and below 10,000 characters, and neither names a browser). Do not use
-"Generate with AI": the text must stay identical in both stores.
+[chrome-web-store.md](chrome-web-store.md#detailed-description) unchanged (0.3.0 texts measured on
+2026-11-20: see [Text lengths](chrome-web-store.md#text-lengths); both are above 250 and below
+10,000 characters, and neither names a browser). Do not use "Generate with AI": the text must
+stay identical in both stores.
 
 ### Images
 
@@ -172,24 +178,34 @@ Required in Partner Center (at most 2,000 characters; the box opens when you cho
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 source: https://learn.microsoft.com/en-us/legal/microsoft-edge/extensions/developer-policies, checked 2026-11-16
 
-Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-17 (v0.2.0).
+Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-20 (0.3.0): "Add
+account", "Add from links", "Allow", "Not now", "Remove", "Unlock zauthenticator…", "Open in a
+tab", "Add passkey", "Unlock with passkey"; the menu is named "zauthenticator" and lists accounts
+as "issuer · label".
+
+For an update, the first line says what changed in that version (Partner Center asks for this for
+updates).
+source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
+
+Length: 1,964 characters (limit 2,000; see [Text lengths](chrome-web-store.md#text-lengths)).
+Passkey unlock is optional in the test: it needs an authenticator with the WebAuthn PRF extension,
+and every other step works without one.
 
 ```text
-zauthenticator generates two-factor (TOTP) codes on the device. It needs no account, server or test credentials, and it makes no network requests.
+Changed in 0.3.0: optional passkey unlock (WebAuthn PRF) next to the passphrase. No new permissions.
+
+zauthenticator generates two-factor (TOTP) codes on the device. No account or test credentials are needed. Its own pages and worker make no network requests; passkey requests are made by the browser.
 
 How to test:
-1. Click the zauthenticator toolbar icon and create a passphrase of 8 characters or more (for example: certification-test-1).
+1. Click the toolbar icon and create a passphrase of 8 or more characters (for example: certification-test-1).
 2. Click "Add account", paste this link into the otpauth:// links box and click "Add from links":
    otpauth://totp/Example:test@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
-   The account "Example" (test@example.com) appears with a 6-digit code and a countdown. Clicking the code copies it. The code matches any RFC 6238 TOTP generator given the same secret.
-3. Open any https page that has a text field. Right-click inside the field, open the "zauthenticator" menu and choose "Example · test@example.com". The current code is typed into the field; nothing is submitted.
-4. A small window then asks whether to fill this account's code automatically on that exact site. Click "Allow" and accept the browser's permission prompt, which asks for access to that one site only ("Not now" stores nothing). On later visits the code is filled automatically, but only into a field marked as a code field (autocomplete="one-time-code", or a name, id, label or placeholder such as "otp", "2fa" or "verification code"). A plain text field is not filled automatically, by design; the right-click menu still fills it.
-5. Settings lists the site under auto-fill sites; "Remove" deletes it and gives up the access to that site.
-6. Click the lock button: the right-click menu then shows "Unlock zauthenticator…" and nothing is filled. The vault also locks after 15 minutes without use.
+   The account "Example" appears with a 6-digit code (RFC 6238) and a countdown; clicking the code copies it.
+3. On any https page, right-click a text field, open the "zauthenticator" menu and choose "Example · test@example.com". The code is typed in; nothing is submitted.
+4. A small window then offers auto-fill on that exact site. Click "Allow" and accept the browser's prompt for that one site ("Not now" stores nothing). Later visits fill the code automatically, but only into a field marked as a code field (autocomplete="one-time-code", or a name, label or placeholder such as "otp" or "2fa"); a plain text field is not filled, by design.
+5. Settings lists the site under auto-fill sites; "Remove" deletes it and gives up the access.
+6. Click the lock button: the right-click menu then shows "Unlock zauthenticator…" and nothing is filled.
+7. Optional: passkey unlock needs a PRF-capable authenticator (a phone over the QR code flow, or a security key with a PIN); everything else can be tested without one. In Settings click "Open in a tab", re-enter the passphrase, click "Add passkey" and approve both prompts. Then lock; in the toolbar popup click "Unlock with passkey" and click it again in the window that opens.
 
 Permission justifications are in the Privacy section. No remote code. Source code (MIT): https://github.com/2lab-ai/zauthenticator
 ```
-
-For an update, add a line at the top that says what changed in that version (Partner Center asks
-for this for updates).
-source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
