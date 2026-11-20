@@ -1,6 +1,6 @@
 # v0-3-passkey — loop
 
-Status: round 2 (release). R0 (spec + A0) and R1 (build, merged to main) are in loop.done.md.
+Status: round 2 (release). R0 (spec + A0), R1 (build) and the G3 release are in loop.done.md.
 
 ## Round 2 — owner gates
 
@@ -13,7 +13,6 @@ instruction without it, and G2 stays open.
 |---|---|---|
 | G1 | Owner-device install of the merged main (same unpacked folder, so the extension id and vault stay; per-file SHA-256 equal to the snapshot) | 🟡 |
 | G2 | A6 owner hand test: export a backup first, then enroll with the owner's phone, lock, unlock with the passkey, restart Edge, unlock with the passkey, unlock with the passphrase. Not performed; v0.3.0 is released without it on the owner's 2026-11-20 instruction | 🚪 owner (recommended after the release) |
-| G3 | v0.3.0 tag + manifest version 0.3.0 (owner authorization 2026-11-20, quoted above). Branch release/v0.3.0: manifest 0.3.0, 0.3.0 store kit, screenshots from the 0.3.0 UI; tag v0.3.0 after merge, then upload to both stores | 🟡 in progress (tag after merge) |
 
 ## Build facts
 

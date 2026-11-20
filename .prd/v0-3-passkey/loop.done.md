@@ -44,3 +44,13 @@ Result: trinity T1 (vault) unanimous R1; trinity T2 (session) R1 2×REJECT → f
 one gpt6-reviewer per change-set (UI R2, gate R1, docs R3, e2e R2, a3e45aa/bac5fd8 R2). Snapshot
 gates on 79cd635: unit 362/362, check 22 PASS, self-test 562/562, e2e 199/199 (baseline 306 · 542 · 119).
 The About string (d60779c) no longer says the key comes from the passphrase alone.
+
+## R2 — G3 closed
+
+v0.3.0 released 2026-11-20 on the owner's instruction; G1 and G2 stay open in loop.md.
+
+### Closed rows
+
+| ID | Item | Status |
+|---|---|---|
+| G3 | v0.3.0 tag + manifest version 0.3.0 (owner authorization 2026-11-20) | ✅ release/v0.3.0 (ebba448) merged as 98e080f after gpt6-reviewer R2 APPROVE (docs) and APPROVE (screenshot script); snapshot gates unit 362/362, check 22 PASS, self-test 562/562, e2e 207/207; CI 44664773998 success; tag v0.3.0 → release run 44665465643 (tag-version, verify, publish success); zauthenticator-0.3.0.zip 161,333 B, sha256 50b8ad7b…ac90 = release notes, contents equal `git archive v0.3.0 extension` (34 files). Edge Add-ons: 0.3.0 update submitted 2026-11-20, in certification |
