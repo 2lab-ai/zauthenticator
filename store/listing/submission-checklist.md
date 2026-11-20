@@ -25,12 +25,13 @@ Passkey unlock is covered by the project gates, which run it against virtual aut
       [Text lengths](chrome-web-store.md#text-lengths).
 - [x] Screenshots regenerated from the 0.3.0 UI (`node scripts/build-screenshots.mjs`);
       `5-settings.png` shows the passkey section and About with "Version 0.3.0".
-- [ ] Merge to `main`, then push the tag `v0.3.0` and check the release zip
+- [x] Merge to `main`, then push the tag `v0.3.0` and check the release zip
       (steps 2 and 3 of [Before each update](#before-each-update)).
-- [ ] Upload `zauthenticator-0.3.0.zip` with the 0.3.0 texts, screenshots and notes. Edge
+- [x] Upload `zauthenticator-0.3.0.zip` with the 0.3.0 texts, screenshots and notes. Edge
       Add-ons: 0.2.0 passed certification and is live (Partner Center showed "Live" with an
       **Update** button on 2026-11-20), so 0.3.0 goes up as an update of that listing, not as a new
       extension. Chrome Web Store: no listing yet (registration fee not paid).
+      Done for Edge Add-ons on 2026-11-20 (update in certification); Chrome Web Store not submitted.
 - [ ] Recheck the linked store policies and dashboard fields at submission.
 - [ ] A6 real-phone hand test of passkey unlock (not performed for this release; recommended
       after it).
