@@ -1301,7 +1301,9 @@ try {
     await pageA.fill('#unlock-pass', '');
     rep.check(
       'key-hints',
-      before.shown && before.source === '' && before.describedBy?.includes('unlock-pass-keyhint') && latin.source === 'latin' && capsOn.caps === 'true' && capsOn.capsOn &&
+      // The source belongs to the keyboard, not the field: earlier steps typed in this page, so the
+      // line may already name one on focus.
+      before.shown && before.describedBy?.includes('unlock-pass-keyhint') && latin.source === 'latin' && capsOn.caps === 'true' && capsOn.capsOn &&
         capsOff.caps === 'false' && !capsOff.capsOn && hangul.source === 'hangul' && ime.source === 'ime' && !leaks,
       `focus "${before.text}"; 'a' "${latin.text}"; Caps Lock key event "${capsOn.text}" (caps-on ${capsOn.capsOn}); off "${capsOff.text}"; inserted Hangul "${hangul.text}"; IME key "${ime.text}"; typed characters shown ${leaks}`,
     );
