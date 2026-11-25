@@ -1281,7 +1281,7 @@ try {
     await pageA.click('#unlock-pass');
     const hint = () => pageA.evaluate(() => {
       const line = document.querySelector('#unlock-pass-keyhint');
-      return { shown: Boolean(line) && !line.hidden, text: line?.textContent ?? '', source: line?.dataset.source ?? '', caps: line?.dataset.caps ?? '', capsOn: line?.classList.contains('caps-on') ?? false, describedBy: document.querySelector('#unlock-pass').getAttribute('aria-describedby') };
+      return { shown: Boolean(line) && !line.classList.contains('off') && getComputedStyle(line).visibility === 'visible', text: line?.textContent ?? '', source: line?.dataset.source ?? '', caps: line?.dataset.caps ?? '', capsOn: line?.classList.contains('caps-on') ?? false, describedBy: document.querySelector('#unlock-pass').getAttribute('aria-describedby') };
     });
     const before = await hint();
     await pageA.keyboard.type('a');

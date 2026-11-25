@@ -6,7 +6,9 @@
 // never the character: nothing typed leaves the field. Digits, punctuation and spaces say nothing
 // about the source and leave the last class standing. The source and Caps Lock belong to the
 // keyboard, not to a field, so every passphrase field shows the same state; the line shows while a
-// field has focus.
+// field has focus. Its height is kept when it is not shown (visibility, not display): a line that
+// collapsed on blur would move the button under the pointer between mousedown and mouseup, and the
+// click would be lost.
 import { t } from './i18n.js';
 
 // The class of one produced character. Order matters only for scripts that overlap (none here).
@@ -54,9 +56,8 @@ export function attachKeyHints(root = document) {
   const lines = new Map();
   for (const input of fields) {
     const line = document.createElement('p');
-    line.className = 'key-hint';
+    line.className = 'key-hint off';
     line.id = `${input.id}-keyhint`;
-    line.hidden = true;
     const sourceEl = document.createElement('span');
     sourceEl.className = 'key-source';
     const capsEl = document.createElement('span');
@@ -73,7 +74,7 @@ export function attachKeyHints(root = document) {
   function paint() {
     const input = focused();
     for (const [field, parts] of lines) {
-      parts.line.hidden = field !== input;
+      parts.line.classList.toggle('off', field !== input);
       if (field !== input) continue;
       parts.sourceEl.textContent = t('keySource', t(source ? `keySource_${source}` : 'keySourceUnknown'));
       parts.capsEl.textContent = t(caps === true ? 'capsOn' : caps === false ? 'capsOff' : 'capsUnknown');

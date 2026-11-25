@@ -2111,8 +2111,9 @@ body.no-passphrase #lock-btn {
   line-height: 1.35;
 }
 
-.key-hint[hidden] {
-  display: none;
+/* Not focused: hidden, but its line stays (no layout shift under the pointer; keyhint.js). */
+.key-hint.off {
+  visibility: hidden;
 }
 
 .key-source {
