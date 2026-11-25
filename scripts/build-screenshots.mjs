@@ -425,8 +425,8 @@ function contentBox(selector) {
   return { top: r.top - origin, bottom: r.bottom - origin };
 }
 
-// The Settings view in two crops (see the header): at scroll 0, #main from its top down to
-// midway between the passkey section and the next group; scrolled to the end, from midway
+// The Settings view in two crops (see the header): scrolled to the passkey section (below the v0.4
+// passphrase section), from just above its title down to midway between it and the next group; scrolled to the end, from midway
 // between the auto-fill sites and About down to the bottom of the body. Each cut line must lie in
 // the visible part and cut no line of text or control. → { top, bottom }, each { css, png }
 async function captureSettings(page) {
@@ -453,7 +453,11 @@ async function captureSettings(page) {
     const shot = await page.screenshot({ clip: { x: 0, y, ...css }, animations: 'disabled', caret: 'hide' });
     return { css, png: encodeRgbPng(decodePng(shot)) };
   };
-  const top = await crop({ scroll: 0, above: '#passkey-section', below: '[aria-labelledby="backup-title"]', keep: 'above', what: 'settings top' });
+  // From v0.4 the passphrase section comes first: the top crop starts just above the passkey
+  // section's title, so the frame still shows the passkey section with About below it.
+  const passkeyBox = await page.evaluate(contentBox, '#passkey-section');
+  if (!passkeyBox) throw new Error('settings top: #passkey-section is not displayed');
+  const top = await crop({ scroll: Math.max(0, Math.round(passkeyBox.top) - 12), above: '#passkey-section', below: '[aria-labelledby="backup-title"]', keep: 'above', what: 'settings top' });
   const bottom = await crop({ scroll: Infinity, above: '[aria-labelledby="bindings-title"]', below: '[aria-labelledby="about-title"]', keep: 'below', what: 'settings bottom' });
   return { top, bottom };
 }

@@ -18,8 +18,9 @@ The owner asked on 2026-11-25 for the 0.4 features, a release and an Edge Add-on
 - [ ] Merge to `main`, push the tag `v0.4.0`, check the release zip's sha256.
 - [ ] Edge Add-ons: upload `zauthenticator-0.4.0.zip` as an update of the live listing, paste the
       0.4.0 descriptions and notes, publish.
-- Screenshots are the 0.3.0 ones; the views they show did not change apart from the lock-time
-  line in the list.
+- [x] Screenshots regenerated from the 0.4.0 UI (`node scripts/build-screenshots.mjs`): the list
+      shows the lock time with Extend; `5-settings.png` shows the passkey section (now below the
+      passphrase section) and About with "Version 0.4.0".
 
 ## 0.3.0 release
 
