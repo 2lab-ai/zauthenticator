@@ -466,7 +466,7 @@
     "message": "Backup imported."
   },
   "autoLockHint": {
-    "message": "Locks after 15 minutes without use and when the browser quits."
+    "message": "Locks 15 minutes after you last use it (or when an extension you chose ends) and when the browser quits."
   },
   "openTabHint": {
     "message": "If the file picker closes this popup, open settings in a tab."
@@ -641,5 +641,161 @@
   },
   "passkeyOrphan": {
     "message": "A passkey may remain on your phone or security key. Delete it there if you do not need it."
+  },
+  "extendBtn": {
+    "message": "Extend"
+  },
+  "extendHint": {
+    "message": "Keep it unlocked longer, for example while an AI agent uses this browser. Lock or quitting the browser still ends it."
+  },
+  "extendChoicesLabel": {
+    "message": "Keep unlocked for"
+  },
+  "extend1h": {
+    "message": "1 hour"
+  },
+  "extend24h": {
+    "message": "24 hours"
+  },
+  "extend7d": {
+    "message": "7 days"
+  },
+  "extendReset": {
+    "message": "Back to 15 minutes"
+  },
+  "alarmCancel": {
+    "message": "Cancel"
+  },
+  "alarmContinue": {
+    "message": "Continue"
+  },
+  "alarmStep": {
+    "message": "Confirmation $STEP$ of $TOTAL$",
+    "placeholders": {
+      "step": {
+        "content": "$1",
+        "example": "1"
+      },
+      "total": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "extendWarnTitle": {
+    "message": "Keep it unlocked for $LENGTH$?",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      }
+    }
+  },
+  "extendWarnText": {
+    "message": "Until $TIME$, anyone using this browser, an AI agent included, can see, copy and fill your codes without the passphrase. Locking or quitting the browser ends it sooner.",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendFinalTitle": {
+    "message": "Last check"
+  },
+  "extendFinalText": {
+    "message": "Your codes stay open for $LENGTH$, until $TIME$. Do you really want this?",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      },
+      "time": {
+        "content": "$2",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendFinalOk": {
+    "message": "Keep unlocked $LENGTH$",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      }
+    }
+  },
+  "extendDone": {
+    "message": "Unlocked until $TIME$.",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendResetDone": {
+    "message": "Back to 15 minutes after the last use."
+  },
+  "extendFailed": {
+    "message": "Couldn't change the unlock time: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "unlockLeft": {
+    "message": "Locks in $LEFT$ · $TIME$",
+    "placeholders": {
+      "left": {
+        "content": "$1",
+        "example": "14:32"
+      },
+      "time": {
+        "content": "$2",
+        "example": "6:05 PM"
+      }
+    }
+  },
+  "unlockLeftExtended": {
+    "message": "Extended · locks in $LEFT$ · $TIME$",
+    "placeholders": {
+      "left": {
+        "content": "$1",
+        "example": "23 h 59 min"
+      },
+      "time": {
+        "content": "$2",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "durationHM": {
+    "message": "$H$ h $M$ min",
+    "placeholders": {
+      "h": {
+        "content": "$1",
+        "example": "5"
+      },
+      "m": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "durationDH": {
+    "message": "$D$ d $H$ h",
+    "placeholders": {
+      "d": {
+        "content": "$1",
+        "example": "6"
+      },
+      "h": {
+        "content": "$2",
+        "example": "23"
+      }
+    }
   }
 }

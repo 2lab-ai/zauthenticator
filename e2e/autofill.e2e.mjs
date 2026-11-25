@@ -48,7 +48,7 @@ const POPUP = 'popup/popup.html';
 const PASSPHRASE = 'e2e autofill passphrase (test only)';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
 // .prd/03-autofill.md, "Cross-unit contract": session storage holds a subset of these keys.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'autofillServed', 'lockGen'];
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'unlockedUntil', 'pendingBind', 'autofillServed', 'lockGen'];
 const OTP = 'https://otp.test';
 const EVIL = 'https://evil.test';
 const HOST = 'https://host.test';

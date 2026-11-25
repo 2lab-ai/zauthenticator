@@ -47,6 +47,13 @@
   --warning: var(--ink);
   --on-warning: var(--canvas);
 
+  /* Red, and only here: the owner asked for the two confirmations in front of a risky change (a
+     long unlock time, removing the passphrase) to be red, and the same red marks an extended unlock
+     time while it lasts. Nothing else takes a hue. 6.0:1 on the alarm tint, 5.9:1 on the canvas. */
+  --alarm: #c2001b;
+  --on-alarm: #ffffff;
+  --alarm-tint: #fdeeee;
+
   /* Every corner in the popup: square. Circles (the countdown) are shapes, not corners. */
   --radius: 0px;
 
@@ -71,6 +78,10 @@
     --hairline: #262626;
     --press: #1f1f1f;
     --surface: #141414;
+    /* 5.6:1 on the alarm tint, 6.1:1 on the canvas. */
+    --alarm: #ff5468;
+    --on-alarm: #000000;
+    --alarm-tint: #2b0c10;
   }
 }
 
@@ -1814,4 +1825,131 @@ body.file-mode .drop-zone {
   .account.copied .copied-badge {
     animation: none;
   }
+}
+
+/* ---- unlock time (list view) ---- */
+
+.unlock-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.unlock-bar[hidden] {
+  display: none;
+}
+
+.unlock-bar .icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.unlock-left {
+  flex: 1 1 auto;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* An extended unlock time is a risk while it lasts: red, outlined, bold. */
+.unlock-bar.extended {
+  border-color: var(--alarm);
+  color: var(--alarm);
+  font-weight: 600;
+}
+
+.extend-panel {
+  margin: 0 12px 10px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--hairline);
+}
+
+.extend-panel > .hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.extend-choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.extend-choices[hidden] {
+  display: none;
+}
+
+#extend-reset {
+  margin-top: 8px;
+}
+
+.extend-panel .error {
+  margin: 10px 0 0;
+}
+
+/* The red two-step confirmation (confirm.js). */
+.alarm {
+  margin-top: 10px;
+  padding: 12px;
+  border: 2px solid var(--alarm);
+  background: var(--alarm-tint);
+  color: var(--text);
+}
+
+.alarm-step {
+  margin: 0 0 4px;
+  color: var(--alarm);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.alarm-title {
+  margin: 0 0 6px;
+  color: var(--alarm);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.alarm-text {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.alarm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn.alarm-ok {
+  border-color: var(--alarm);
+  background: var(--alarm);
+  color: var(--on-alarm);
+  font-weight: 700;
+}
+
+.btn.alarm-ok:where(:not(:disabled)):hover {
+  border-color: var(--alarm);
+  background: var(--alarm);
+  filter: brightness(0.92);
+}
+
+/* A danger action that leads into the red confirmation (Remove passphrase): red outline. */
+.btn.alarm-outline {
+  border-color: var(--alarm);
+  color: var(--alarm);
 }

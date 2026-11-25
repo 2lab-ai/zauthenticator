@@ -460,7 +460,7 @@
     "message": "백업을 가져왔어요."
   },
   "autoLockHint": {
-    "message": "15분 동안 사용하지 않거나 브라우저를 종료하면 잠겨요."
+    "message": "마지막으로 사용하고 15분이 지나면(연장했다면 그 시간이 끝나면), 그리고 브라우저를 종료하면 잠겨요."
   },
   "openTabHint": {
     "message": "파일 선택 창 때문에 팝업이 닫히면 설정을 새 탭에서 여세요."
@@ -635,5 +635,161 @@
   },
   "passkeyOrphan": {
     "message": "휴대폰이나 보안 키에 패스키가 남아 있을 수 있어요. 필요 없다면 그곳에서 삭제하세요."
+  },
+  "extendBtn": {
+    "message": "연장"
+  },
+  "extendHint": {
+    "message": "더 오래 잠금 해제해 둘 수 있어요. 예를 들어 AI 에이전트가 이 브라우저를 쓰는 동안요. 잠그거나 브라우저를 종료하면 그때 끝나요."
+  },
+  "extendChoicesLabel": {
+    "message": "잠금 해제 유지 시간"
+  },
+  "extend1h": {
+    "message": "1시간"
+  },
+  "extend24h": {
+    "message": "24시간"
+  },
+  "extend7d": {
+    "message": "7일"
+  },
+  "extendReset": {
+    "message": "15분으로 되돌리기"
+  },
+  "alarmCancel": {
+    "message": "취소"
+  },
+  "alarmContinue": {
+    "message": "계속"
+  },
+  "alarmStep": {
+    "message": "확인 $STEP$/$TOTAL$",
+    "placeholders": {
+      "step": {
+        "content": "$1",
+        "example": "1"
+      },
+      "total": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "extendWarnTitle": {
+    "message": "$LENGTH$ 동안 잠금 해제해 둘까요?",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      }
+    }
+  },
+  "extendWarnText": {
+    "message": "$TIME$까지 이 브라우저를 쓰는 누구나(AI 에이전트 포함) 암호 없이 코드를 보고 복사하고 입력할 수 있어요. 잠그거나 브라우저를 종료하면 그 전에 끝나요.",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendFinalTitle": {
+    "message": "마지막 확인"
+  },
+  "extendFinalText": {
+    "message": "코드가 $LENGTH$ 동안, $TIME$까지 열려 있어요. 정말 그렇게 할까요?",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      },
+      "time": {
+        "content": "$2",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendFinalOk": {
+    "message": "$LENGTH$ 잠금 해제",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      }
+    }
+  },
+  "extendDone": {
+    "message": "$TIME$까지 잠금 해제돼 있어요.",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendResetDone": {
+    "message": "마지막 사용 후 15분으로 되돌렸어요."
+  },
+  "extendFailed": {
+    "message": "잠금 해제 시간을 바꾸지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "unlockLeft": {
+    "message": "$LEFT$ 후 잠김 · $TIME$",
+    "placeholders": {
+      "left": {
+        "content": "$1",
+        "example": "14:32"
+      },
+      "time": {
+        "content": "$2",
+        "example": "6:05 PM"
+      }
+    }
+  },
+  "unlockLeftExtended": {
+    "message": "연장됨 · $LEFT$ 후 잠김 · $TIME$",
+    "placeholders": {
+      "left": {
+        "content": "$1",
+        "example": "23 h 59 min"
+      },
+      "time": {
+        "content": "$2",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "durationHM": {
+    "message": "$H$시간 $M$분",
+    "placeholders": {
+      "h": {
+        "content": "$1",
+        "example": "5"
+      },
+      "m": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "durationDH": {
+    "message": "$D$일 $H$시간",
+    "placeholders": {
+      "d": {
+        "content": "$1",
+        "example": "6"
+      },
+      "h": {
+        "content": "$2",
+        "example": "23"
+      }
+    }
   }
 }

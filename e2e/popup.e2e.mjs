@@ -55,7 +55,7 @@ const WRONG_PASSPHRASE = 'e2e wrong passphrase';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
 // .prd/02-architecture.md, Round 2, amended by .prd/03-autofill.md ("Cross-unit contract"):
 // session storage holds at most these keys; after a lock only lockGen remains.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'lockGen'];
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'unlockedUntil', 'pendingBind', 'lockGen'];
 
 const ACCOUNTS = [
   {
@@ -982,6 +982,76 @@ try {
     const sessionNow = (await readStorage(pageA)).session;
     rep.check('lock-if-idle', state === 'locked', `open page, lastActiveAt 16 min ago, visibilitychange (visibilityState ${visible}) -> state ${state}`);
     checkLockedEmpty(rep, 'lock-session-empty:lock-if-idle', 'idle session found by an open page', seeded, sessionNow);
+  });
+
+  // Unlock time (v0.4): the list view shows the lock time; Extend needs two red confirmations,
+  // keeps the vault unlocked past the idle limit, and every lock removes it.
+  await stepRun('unlock-time', async () => {
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    await pageA.waitForFunction(() => !document.querySelector('#unlock-bar').hidden && document.querySelector('#unlock-left').textContent !== '', null, { timeout: 15000 });
+    const shown = await pageA.evaluate(() => document.querySelector('#unlock-left').textContent);
+    rep.check('unlock-time-shown', /(14|15):\d\d/.test(shown), `list view shows "${shown}" (15 minutes from the open)`);
+    const alarmState = () => pageA.evaluate(() => {
+      const alarm = document.querySelector('#extend-alarm');
+      return {
+        open: !alarm.hidden,
+        step: alarm.dataset.step ?? '',
+        role: alarm.getAttribute('role'),
+        titleColor: getComputedStyle(alarm.querySelector('.alarm-title')).color,
+        okColor: getComputedStyle(alarm.querySelector('.alarm-ok')).backgroundColor,
+      };
+    });
+    const until = async () => (await readStorage(pageA)).session.unlockedUntil;
+    await pageA.click('#extend-btn');
+    await pageA.click('.extend-choice[data-ms="86400000"]');
+    const first = await alarmState();
+    await pageA.click('#extend-alarm .alarm-cancel');
+    const afterCancel = { alarm: await alarmState(), until: await until() };
+    rep.check(
+      'extend-cancel-first',
+      first.open && first.step === '1' && first.role === 'alertdialog' && !afterCancel.alarm.open && afterCancel.until === undefined,
+      `step 1 shown (${JSON.stringify(first)}), Cancel -> alarm open ${afterCancel.alarm.open}, unlockedUntil ${afterCancel.until}`,
+    );
+    rep.check('extend-alarm-red', first.titleColor === 'rgb(194, 0, 27)' && first.okColor === 'rgb(194, 0, 27)', `title ${first.titleColor}, button ${first.okColor} (red #c2001b)`);
+    await pageA.click('.extend-choice[data-ms="86400000"]');
+    // A double click on the red button cannot pass both steps: the second step's button is armed late.
+    await pageA.dblclick('#extend-alarm .alarm-ok');
+    const second = { alarm: await alarmState(), until: await until() };
+    await pageA.click('#extend-alarm .alarm-cancel');
+    const afterSecondCancel = { alarm: await alarmState(), until: await until() };
+    rep.check(
+      'extend-cancel-second',
+      second.alarm.open && second.alarm.step === '2' && second.until === undefined && !afterSecondCancel.alarm.open && afterSecondCancel.until === undefined,
+      `double click on step 1 -> step ${second.alarm.step}, unlockedUntil ${second.until}; Cancel -> unlockedUntil ${afterSecondCancel.until}`,
+    );
+    await pageA.click('.extend-choice[data-ms="86400000"]');
+    await pageA.waitForTimeout(700);
+    await pageA.click('#extend-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#extend-alarm').dataset.step === '2');
+    await pageA.waitForTimeout(700);
+    const t0 = Date.now();
+    await pageA.click('#extend-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#unlock-bar').classList.contains('extended'), null, { timeout: 5000 });
+    const stored = await until();
+    rep.check(
+      'extend-24h',
+      Number.isFinite(stored) && Math.abs(stored - (t0 + 24 * 60 * 60 * 1000)) < 10000,
+      `two confirmations -> unlockedUntil ${stored ? new Date(stored).toISOString() : stored} (24 h from the click); bar "${await pageA.evaluate(() => document.querySelector('#unlock-left').textContent)}"`,
+    );
+    // Past the idle limit, inside the extension: an open page's idle check and a reload keep it.
+    await pageA.evaluate((t) => chrome.storage.session.set({ lastActiveAt: t }), Date.now() - (IDLE_LOCK_MS + 60 * 1000));
+    await pageA.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await pageA.waitForTimeout(1500);
+    const kept = await stateOf(pageA);
+    await pageA.reload();
+    const reloaded = await waitState(pageA, 'list', 10000).then(() => 'list', async () => stateOf(pageA));
+    rep.check('extend-outlasts-idle', kept === 'list' && reloaded === 'list', `lastActiveAt 16 min ago with the extension: idle check -> ${kept}, reload -> ${reloaded}`);
+    checkStorageKeys(rep, 'storage-keys:extended', await readStorage(pageA));
+    const seeded = await seedPendingBind(pageA);
+    await pageA.click('#lock-btn');
+    await waitState(pageA, 'locked', 10000);
+    checkLockedEmpty(rep, 'lock-session-empty:extended', 'manual lock during a 24 h extension', seeded, (await readStorage(pageA)).session);
   });
 
   // A stored key that does not open the vault is dropped when a page finds it, with everything

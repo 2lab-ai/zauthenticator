@@ -1301,3 +1301,91 @@ test('withVaultState: locked → data null; idle or a key that does not open the
   assert.equal(await w.withVaultState(async () => 42), 42);
   await assert.rejects(w.withVaultState(async () => { throw new Error('boom'); }), /boom/);
 });
+
+// ---- unlock time: idle limit after the last use, or a manual extension (v0.4) ----
+
+const HOUR = 60 * 60 * 1000;
+const near = (a, b, slack = 5000) => Math.abs(a - b) <= slack;
+
+test('opening a page leaves at least 15 minutes and shows no extension', async () => {
+  await seed();
+  areas.session.set('lastActiveAt', Date.now() - 10 * 60 * 1000);
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const state = await a.unlockState();
+  assert.equal(state.until, null);
+  assert.ok(near(state.lockAt, Date.now() + a.IDLE_LOCK_MS), 'lock time is 15 minutes from the open');
+});
+
+test('a manual extension keeps the worker and idle checks unlocked past the idle limit', async () => {
+  await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const state = await a.extendUnlock(24 * HOUR);
+  assert.ok(near(state.until, Date.now() + 24 * HOUR));
+  assert.equal(state.lockAt, state.until);
+  assert.equal(areas.session.get('unlockedUntil'), state.until);
+  // 16 minutes without use: past the idle limit, inside the extension.
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), false);
+  const worker = await page();
+  const data = await worker.readUnlocked();
+  assert.equal(data.accounts.length, 1);
+  // Opening a page again does not shorten it.
+  const b = await page();
+  assert.equal(await b.resume(), 'list');
+  assert.equal((await b.unlockState()).lockAt, state.until);
+});
+
+test('back to 15 minutes drops the extension; unsupported lengths write nothing', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.extendUnlock(HOUR);
+  const reset = await a.extendUnlock(0);
+  assert.equal(reset.until, null);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  assert.ok(near(reset.lockAt, Date.now() + a.IDLE_LOCK_MS));
+  for (const bad of [1, -HOUR, 2 * HOUR, 30 * 24 * HOUR, NaN, '3600000']) {
+    await assert.rejects(a.extendUnlock(bad), TypeError);
+  }
+  assert.equal(areas.session.has('unlockedUntil'), false);
+});
+
+test('every lock removes the extension; an ended or impossible extension locks', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.extendUnlock(7 * 24 * HOUR);
+  await a.lock();
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  assert.equal(await a.unlockState(), null);
+  await assert.rejects(a.extendUnlock(HOUR), (e) => e.code === 'locked');
+
+  // Ended: the extension and the idle limit both passed.
+  await seed();
+  areas.session.set('lastActiveAt', Date.now() - 2 * HOUR);
+  areas.session.set('unlockedUntil', Date.now() - HOUR);
+  assert.equal(await (await page()).readUnlocked(), null);
+  assert.equal(areas.session.has('vaultKey'), false);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+
+  // Further away than the longest choice: the clock was set back (or the value was not ours).
+  await seed();
+  areas.session.set('unlockedUntil', Date.now() + 8 * 24 * HOUR);
+  assert.equal(await (await page()).resume(), 'locked');
+  assert.equal(areas.session.has('vaultKey'), false);
+});
+
+test('an extension chosen in one page is seen by another page and the passkey checks', async () => {
+  await seed();
+  const a = await page();
+  const b = await page();
+  await a.resume();
+  await b.resume();
+  const { until } = await a.extendUnlock(HOUR);
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal((await b.unlockState()).lockAt, until);
+  assert.equal(await b.touch(), 'touched');
+  assert.equal(await b.checkPassphrase(PASS), true);
+});

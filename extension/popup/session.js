@@ -20,8 +20,13 @@ import { duplicateKey } from './format.js';
 
 const LOCK_NAME = 'zauthenticator-vault';
 
-// Locks after this long without user activity in any extension page (fixed in v0.1).
+// Locks after this long without user activity in any extension page (fixed in v0.1). Opening or
+// using a page is activity, so it always leaves at least this long.
 export const IDLE_LOCK_MS = 15 * 60 * 1000;
+// The lengths a manual extension may have (the list view's Extend): 1 hour, 24 hours, 7 days from
+// the moment it is chosen. The vault then locks at the later of that end and the idle limit.
+export const EXTEND_CHOICES_MS = Object.freeze([60 * 60 * 1000, 24 * 60 * 60 * 1000, 7 * 24 * 60 * 60 * 1000]);
+const MAX_EXTEND_MS = EXTEND_CHOICES_MS[EXTEND_CHOICES_MS.length - 1];
 // An activity time this far in the future means the clock was set back: treat it as idle.
 const CLOCK_SLACK_MS = 60 * 1000;
 // The auto-fill offer a menu fill leaves for the bind window is good for this long.
@@ -85,7 +90,7 @@ export function resume() {
       forget();
       gen = epoch;
     }
-    if (isStale(await store.getLastActive())) {
+    if (isStale(await readActivity())) {
       drop();
       await store.clearSessionKey();
       return 'locked';
@@ -206,14 +211,14 @@ export function touch() {
   if (!key) return Promise.resolve('locked');
   return exclusive(async () => {
     if (epoch !== gen) return 'locked';
-    const [last, record] = await Promise.all([store.getLastActive(), store.getRecord()]);
+    const [activity, record] = await Promise.all([readActivity(), store.getRecord()]);
     const stored = await checkedSession(record);
     if (epoch !== gen || rawKey !== key) return 'locked';
     if (!stored || !sameBytes(stored.key, key)) {
       forget();
       return 'locked';
     }
-    if (isStale(last)) return 'idle';
+    if (isStale(activity)) return 'idle';
     await store.touch();
     return 'touched';
   });
@@ -230,14 +235,14 @@ export function lockIfIdle() {
   return exclusive(async () => {
     const live = () => epoch === gen && rawKey === key;
     if (!live()) return false;
-    const [last, record] = await Promise.all([store.getLastActive(), store.getRecord()]);
+    const [activity, record] = await Promise.all([readActivity(), store.getRecord()]);
     const stored = await checkedSession(record);
     if (!live()) return false;
     if (!stored || !sameBytes(stored.key, key)) {
       forget();
       return true;
     }
-    if (!isStale(last)) return false;
+    if (!isStale(activity)) return false;
     forget();
     await store.clearSessionKey();
     return true;
@@ -286,9 +291,9 @@ export function withVaultState(fn) {
 // → { data: vault data | null, pending: offer | null }
 async function openStored(gen) {
   if (epoch !== gen) return { data: null, pending: null };
-  const [record, last, pending] = await Promise.all([
+  const [record, activity, pending] = await Promise.all([
     store.getRecord(),
-    store.getLastActive(),
+    readActivity(),
     store.getPendingBind(),
   ]);
   const session = await checkedSession(record);
@@ -299,7 +304,7 @@ async function openStored(gen) {
     return { data: null, pending: await store.getPendingBind() };
   }
   const key = session.key;
-  if (isStale(last)) {
+  if (isStale(activity)) {
     drop();
     await store.clearSessionKey();
     return { data: null, pending: null };
@@ -326,9 +331,9 @@ export function setPendingBind(offer) {
   const gen = epoch;
   return exclusive(async () => {
     if (epoch !== gen) return false;
-    const [record, last] = await Promise.all([store.getRecord(), store.getLastActive()]);
+    const [record, activity] = await Promise.all([store.getRecord(), readActivity()]);
     const key = await checkedSession(record);
-    if (epoch !== gen || !key || isStale(last)) return false;
+    if (epoch !== gen || !key || isStale(activity)) return false;
     await store.setPendingBind({ origin, accountId });
     return true;
   });
@@ -526,6 +531,45 @@ async function checkedSession(record) {
   return stored;
 }
 
+// The unlock time of the stored session, for display: { lockAt, until } in ms (until is null
+// without a manual extension), or null while this page is locked, its key is no longer the stored
+// one, or the session is already past its lock time. Read under the vault lock.
+export function unlockState() {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.resolve(null);
+  return exclusive(async () => {
+    const [activity, record] = await Promise.all([readActivity(), store.getRecord()]);
+    const stored = await checkedSession(record);
+    if (epoch !== gen || rawKey !== key || !stored || !sameBytes(stored.key, key) || isStale(activity)) return null;
+    return { lockAt: lockTime(activity), until: activity.until };
+  });
+}
+
+// Keeps the vault unlocked for ms from now (one of EXTEND_CHOICES_MS; the caller has the user
+// confirm it), or with 0 drops a manual extension (back to the idle limit after the last use).
+// Choosing is activity. Under the vault lock, only while this page holds the stored key and the
+// session has not passed its lock time; a lock in this page meanwhile throws, and the lock queued
+// behind this call removes what was written. → the new unlockState() value
+export function extendUnlock(ms) {
+  if (ms !== 0 && !EXTEND_CHOICES_MS.includes(ms)) return Promise.reject(new TypeError('extendUnlock: unsupported length'));
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.reject(new SessionError('locked'));
+  return exclusive(async () => {
+    const [activity, record] = await Promise.all([readActivity(), store.getRecord()]);
+    const stored = await checkedSession(record);
+    if (epoch !== gen || rawKey !== key || !stored || !sameBytes(stored.key, key) || isStale(activity)) {
+      throw new SessionError('locked');
+    }
+    const now = Date.now();
+    const until = ms === 0 ? null : now + ms;
+    await store.setUnlockedUntil(until, now);
+    if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    return { lockAt: lockTime({ last: now, until }), until };
+  });
+}
+
 const captures = new WeakMap();
 
 export function passkeyState() {
@@ -544,7 +588,7 @@ export function captureForCeremony() {
     const stored = await checkedSession(record);
     // Never null (store.ensureLockGen()); when it cannot be written no capture is issued.
     const capture = { rev: await vault.revision(record), lockGen: await store.ensureLockGen(), identity, slot: vault.passkeySlot(record) };
-    captures.set(capture, { gen, key: rawKey, rev: capture.rev, lockGen: capture.lockGen, identity: { ...identity }, session: stored && !isStale(await store.getLastActive()) && rawKey && sameBytes(stored.key, rawKey) });
+    captures.set(capture, { gen, key: rawKey, rev: capture.rev, lockGen: capture.lockGen, identity: { ...identity }, session: stored && !isStale(await readActivity()) && rawKey && sameBytes(stored.key, rawKey) });
     return capture;
   });
 }
@@ -560,7 +604,7 @@ async function ceremonyRecord(capture, enroll) {
       !sameIdentity(vault.identity(record), initial.identity) || initial.gen !== epoch) throw new SessionError('changed');
   if (enroll) {
     const stored = await checkedSession(record);
-    if (!stored || !sameBytes(stored.key, initial.key) || isStale(await store.getLastActive()) || rawKey !== initial.key || initial.gen !== epoch) {
+    if (!stored || !sameBytes(stored.key, initial.key) || isStale(await readActivity()) || rawKey !== initial.key || initial.gen !== epoch) {
       throw new SessionError('changed');
     }
   }
@@ -574,7 +618,7 @@ export function checkPassphrase(passphrase) {
   return exclusive(async () => {
     const record = await store.getRecord();
     const stored = await checkedSession(record);
-    if (!stored || !sameBytes(stored.key, key) || isStale(await store.getLastActive()) || epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    if (!stored || !sameBytes(stored.key, key) || isStale(await readActivity()) || epoch !== gen || rawKey !== key) throw new SessionError('locked');
     await vault.unlock(record, passphrase);
     if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
     return true;
@@ -631,7 +675,7 @@ export function removePasskey(cred) {
   return exclusive(async () => {
     const record = await store.getRecord();
     const stored = await checkedSession(record);
-    if (!stored || !sameBytes(stored.key, key) || isStale(await store.getLastActive()) || gen !== epoch || rawKey !== key) throw new SessionError('locked');
+    if (!stored || !sameBytes(stored.key, key) || isStale(await readActivity()) || gen !== epoch || rawKey !== key) throw new SessionError('locked');
     const next = vault.removePasskeySlot(record, cred);
     const current = loaded(await vault.open(key, next));
     if (gen !== epoch || rawKey !== key) throw new SessionError('locked');
@@ -742,8 +786,28 @@ function isId(value) {
   return typeof value === 'string' && value !== '';
 }
 
-function isStale(lastActiveAt, now = Date.now()) {
-  return lastActiveAt === null || now - lastActiveAt >= IDLE_LOCK_MS || lastActiveAt - now > CLOCK_SLACK_MS;
+// The stored activity time and manual extension: { last, until } (ms or null). Call under the
+// vault lock.
+async function readActivity() {
+  const [last, until] = await Promise.all([store.getLastActive(), store.getUnlockedUntil()]);
+  return { last, until };
+}
+
+// When the session locks: the idle limit after the last activity, or a manual extension's end when
+// that is later.
+function lockTime({ last, until }) {
+  const idle = last + IDLE_LOCK_MS;
+  return until !== null && until > idle ? until : idle;
+}
+
+// → true when the session must lock now: no activity time, the lock time has passed, or the clock
+// was set back (an activity time in the future past the slack, or an extension ending further away
+// than the longest choice allows).
+function isStale(activity, now = Date.now()) {
+  const { last, until } = activity;
+  if (last === null || last - now > CLOCK_SLACK_MS) return true;
+  if (until !== null && until - now > MAX_EXTEND_MS + CLOCK_SLACK_MS) return true;
+  return now >= lockTime(activity);
 }
 
 function sameBytes(a, b) {

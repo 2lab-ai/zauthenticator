@@ -11,6 +11,7 @@ import { $, setText, withBusy, reason, clearAnnouncement } from './ui.js';
 import { createListView, paintAvatar, clearAvatar } from './list.js';
 import { createAddView, summary } from './add.js';
 import { createSettingsView, createPasskeyUnlock, accountTitle, takeOrphanNotice } from './settings.js';
+import { createUnlockTime } from './unlock-time.js';
 import { openOwnWindow } from '../lib/nav.js';
 
 const MIN_PASSPHRASE_LENGTH = 8;
@@ -36,6 +37,7 @@ let localOps = 0;      // > 0 while this page starts up, creates, unlocks or loc
 let recheck = false;   // a storage change arrived meanwhile: re-check once that ends
 let reconciling = Promise.resolve();
 let passkeyUnlock;
+let unlockTime;
 
 main().catch((error) => {
   setText($('.loading'), t('errStartup', reason(error)));
@@ -73,6 +75,8 @@ async function main() {
     onUnlocked: enterUnlocked,
   });
   bind = createBindView();
+  // The list view's lock time and Extend. A lock time that has passed is checked like an idle one.
+  unlockTime = createUnlockTime({ onExpired: () => { idleLock().catch(() => {}); } });
 
   wireNavigation();
   wireSetup();
@@ -138,8 +142,10 @@ async function show(state, options = {}) {
       return;
     }
     list.start();
+    unlockTime.start();
   } else {
     list.stop();
+    unlockTime.stop();
   }
   document.body.dataset.state = state;
   $('#main').scrollTop = 0;
@@ -191,6 +197,7 @@ async function showList(message) {
 // codes, every input of every view, status lines and the screen-reader live region.
 function clearSensitive() {
   passkeyUnlock.clear();
+  unlockTime.clear();
   list.clear();
   add.clearSensitive();
   settings.clearSensitive();
@@ -342,7 +349,12 @@ function wireIdleLock() {
     lastTouch = now;
     // session.touch() refuses to refresh a session that already sat idle too long, so the
     // first event in a page woken after the limit locks it instead of reviving it.
-    session.touch().then((result) => (result === 'idle' ? idleLock() : undefined)).catch(() => {});
+    // A recorded activity moves the lock time: the list view shows the new one.
+    session.touch().then((result) => {
+      if (result === 'idle') return idleLock();
+      if (result === 'touched' && document.body.dataset.state === 'list') return unlockTime.refresh();
+      return undefined;
+    }).catch(() => {});
   };
   for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel']) {
     document.addEventListener(type, activity, { capture: true, passive: true });

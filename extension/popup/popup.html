@@ -113,6 +113,30 @@
           <input id="search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="searchPlaceholder" data-i18n-label="searchLabel">
         </div>
       </div>
+      <div id="unlock-bar" class="unlock-bar" hidden>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.9-.8"/></svg>
+        <p id="unlock-left" class="unlock-left" role="timer" aria-live="off"></p>
+        <button type="button" id="extend-btn" class="btn small" aria-expanded="false" aria-controls="extend-panel" data-i18n="extendBtn">Extend</button>
+      </div>
+      <div id="extend-panel" class="extend-panel" hidden>
+        <p class="hint" data-i18n="extendHint">Keep it unlocked longer, for example while an AI agent uses this browser. Lock or quitting the browser still ends it.</p>
+        <div id="extend-choices" class="extend-choices" role="group" data-i18n-label="extendChoicesLabel">
+          <button type="button" class="btn extend-choice" data-ms="3600000" data-i18n="extend1h">1 hour</button>
+          <button type="button" class="btn extend-choice" data-ms="86400000" data-i18n="extend24h">24 hours</button>
+          <button type="button" class="btn extend-choice" data-ms="604800000" data-i18n="extend7d">7 days</button>
+        </div>
+        <button type="button" id="extend-reset" class="btn block" data-i18n="extendReset" hidden>Back to 15 minutes</button>
+        <div id="extend-alarm" class="alarm" role="alertdialog" aria-labelledby="extend-alarm-title" aria-describedby="extend-alarm-text" hidden>
+          <p class="alarm-step"></p>
+          <p id="extend-alarm-title" class="alarm-title"></p>
+          <p id="extend-alarm-text" class="alarm-text"></p>
+          <div class="alarm-actions">
+            <button type="button" class="btn alarm-cancel" data-i18n="alarmCancel">Cancel</button>
+            <button type="button" class="btn alarm-ok"></button>
+          </div>
+        </div>
+        <p id="extend-error" class="error" role="alert"></p>
+      </div>
       <p id="list-notice" class="notice" role="status"></p>
       <ul id="accounts" class="accounts"></ul>
       <p id="no-matches" class="no-matches" data-i18n="noMatches" hidden>No matching accounts.</p>
