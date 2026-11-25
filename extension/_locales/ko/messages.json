@@ -1022,5 +1022,59 @@
         "example": "too-long"
       }
     }
+  },
+  "keySource": {
+    "message": "입력 소스: $SOURCE$",
+    "placeholders": {
+      "source": {
+        "content": "$1",
+        "example": "Latin letters"
+      }
+    }
+  },
+  "keySourceUnknown": {
+    "message": "입력하면 표시돼요"
+  },
+  "keySource_latin": {
+    "message": "영문"
+  },
+  "keySource_hangul": {
+    "message": "한글"
+  },
+  "keySource_kana": {
+    "message": "일본어 가나"
+  },
+  "keySource_han": {
+    "message": "한자"
+  },
+  "keySource_cyrillic": {
+    "message": "키릴 문자"
+  },
+  "keySource_greek": {
+    "message": "그리스 문자"
+  },
+  "keySource_arabic": {
+    "message": "아랍 문자"
+  },
+  "keySource_hebrew": {
+    "message": "히브리 문자"
+  },
+  "keySource_thai": {
+    "message": "태국 문자"
+  },
+  "keySource_other": {
+    "message": "다른 문자"
+  },
+  "keySource_ime": {
+    "message": "입력기(IME) 조합 중"
+  },
+  "capsOn": {
+    "message": "⇪ Caps Lock 켜짐"
+  },
+  "capsOff": {
+    "message": "Caps Lock 꺼짐"
+  },
+  "capsUnknown": {
+    "message": "Caps Lock: 키를 누르면 표시돼요"
   }
 }

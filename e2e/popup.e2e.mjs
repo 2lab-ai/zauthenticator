@@ -1271,6 +1271,43 @@ try {
     await waitState(pageA, 'list', 10000);
   });
 
+  // Passphrase fields (v0.4, issue #6): the input source the keys produce and Caps Lock, read from
+  // key and input events; the typed characters themselves are never shown.
+  await stepRun('key-hints', async () => {
+    if ((await stateOf(pageA)) !== 'locked') {
+      await pageA.click('#lock-btn');
+      await waitState(pageA, 'locked', 10000);
+    }
+    await pageA.click('#unlock-pass');
+    const hint = () => pageA.evaluate(() => {
+      const line = document.querySelector('#unlock-pass-keyhint');
+      return { shown: Boolean(line) && !line.hidden, text: line?.textContent ?? '', source: line?.dataset.source ?? '', caps: line?.dataset.caps ?? '', capsOn: line?.classList.contains('caps-on') ?? false, describedBy: document.querySelector('#unlock-pass').getAttribute('aria-describedby') };
+    });
+    const before = await hint();
+    await pageA.keyboard.type('a');
+    const latin = await hint();
+    // Caps Lock as the browser reports it on a key event.
+    await pageA.evaluate(() => document.querySelector('#unlock-pass').dispatchEvent(new KeyboardEvent('keydown', { key: 'A', code: 'KeyA', bubbles: true, modifierCapsLock: true })));
+    const capsOn = await hint();
+    await pageA.evaluate(() => document.querySelector('#unlock-pass').dispatchEvent(new KeyboardEvent('keyup', { key: 'CapsLock', code: 'CapsLock', bubbles: true, modifierCapsLock: false })));
+    const capsOff = await hint();
+    // What an input method inserts (no key event of its own).
+    await pageA.keyboard.insertText('한');
+    const hangul = await hint();
+    await pageA.evaluate(() => document.querySelector('#unlock-pass').dispatchEvent(new KeyboardEvent('keydown', { key: 'Process', keyCode: 229, bubbles: true })));
+    const ime = await hint();
+    const leaks = [latin, capsOn, hangul].some((h) => h.text.includes('한') || /\ba\b/.test(h.text.replace('Caps Lock', '')));
+    await pageA.click('#unlock-submit');
+    await pageA.fill('#unlock-pass', '');
+    rep.check(
+      'key-hints',
+      before.shown && before.source === '' && before.describedBy?.includes('unlock-pass-keyhint') && latin.source === 'latin' && capsOn.caps === 'true' && capsOn.capsOn &&
+        capsOff.caps === 'false' && !capsOff.capsOn && hangul.source === 'hangul' && ime.source === 'ime' && !leaks,
+      `focus "${before.text}"; 'a' "${latin.text}"; Caps Lock key event "${capsOn.text}" (caps-on ${capsOn.capsOn}); off "${capsOff.text}"; inserted Hangul "${hangul.text}"; IME key "${ime.text}"; typed characters shown ${leaks}`,
+    );
+    await unlock(pageA);
+  });
+
   // A stored key that does not open the vault is dropped when a page finds it, with everything
   // else in session storage.
   await stepRun('wrong-session-key', async () => {

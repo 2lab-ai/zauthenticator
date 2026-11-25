@@ -1028,5 +1028,59 @@
         "example": "too-long"
       }
     }
+  },
+  "keySource": {
+    "message": "Input source: $SOURCE$",
+    "placeholders": {
+      "source": {
+        "content": "$1",
+        "example": "Latin letters"
+      }
+    }
+  },
+  "keySourceUnknown": {
+    "message": "shown once you type"
+  },
+  "keySource_latin": {
+    "message": "Latin letters (English)"
+  },
+  "keySource_hangul": {
+    "message": "Korean (Hangul)"
+  },
+  "keySource_kana": {
+    "message": "Japanese kana"
+  },
+  "keySource_han": {
+    "message": "Chinese characters"
+  },
+  "keySource_cyrillic": {
+    "message": "Cyrillic"
+  },
+  "keySource_greek": {
+    "message": "Greek"
+  },
+  "keySource_arabic": {
+    "message": "Arabic"
+  },
+  "keySource_hebrew": {
+    "message": "Hebrew"
+  },
+  "keySource_thai": {
+    "message": "Thai"
+  },
+  "keySource_other": {
+    "message": "another script"
+  },
+  "keySource_ime": {
+    "message": "input method (IME) composing"
+  },
+  "capsOn": {
+    "message": "⇪ Caps Lock on"
+  },
+  "capsOff": {
+    "message": "Caps Lock off"
+  },
+  "capsUnknown": {
+    "message": "Caps Lock: shown at the first key"
   }
 }

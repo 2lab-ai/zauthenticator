@@ -2101,3 +2101,29 @@ body.no-passphrase #lock-btn {
   gap: 8px;
   margin: 8px 0;
 }
+
+/* ---- passphrase fields: input source and Caps Lock (keyhint.js) ---- */
+
+.key-hint {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.key-hint[hidden] {
+  display: none;
+}
+
+.key-source {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Caps Lock on: inverted, bold, with the ⇪ glyph from the text. */
+.key-hint.caps-on .key-caps {
+  padding: 0 4px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}

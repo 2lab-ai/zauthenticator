@@ -13,6 +13,7 @@ import { createAddView, summary } from './add.js';
 import { createSettingsView, createPasskeyUnlock, accountTitle, takeOrphanNotice } from './settings.js';
 import { createUnlockTime } from './unlock-time.js';
 import { createExportView } from './export.js';
+import { attachKeyHints } from './keyhint.js';
 import { openOwnWindow } from '../lib/nav.js';
 
 const MIN_PASSPHRASE_LENGTH = 8;
@@ -50,6 +51,8 @@ async function main() {
   localize(document);
   localize($('#account-template').content);
   localize($('#binding-template').content);
+  // Every passphrase field: the input source the keys produce and Caps Lock.
+  attachKeyHints(document);
 
   // tabs.getCurrent() finds a Tab both in a full tab and in the service worker's window; only the
   // toolbar popup has none. The hash tells the two apart (only openOwnWindow uses #bind, #unlock).
