@@ -1119,19 +1119,55 @@ try {
     );
     checkStorage(rep, 'storage-ciphertext-only:passphrase-change', await readStorage(pageA));
 
-    // Remove: the current passphrase first, then two red confirmations; Cancel at step 1 keeps it.
+    // Remove: the current passphrase first, then two red confirmations. Cancel at step 1 and Cancel
+    // at step 2 each keep the vault as it was; only the second red "yes" removes the passphrase.
+    const passAlarm = () => pageA.evaluate(() => {
+      const alarm = document.querySelector('#pass-alarm');
+      return {
+        open: !alarm.hidden,
+        step: alarm.dataset.step ?? '',
+        role: alarm.getAttribute('role'),
+        label: alarm.querySelector('.alarm-step').textContent,
+        title: alarm.querySelector('.alarm-title').textContent,
+        ok: alarm.querySelector('.alarm-ok').textContent,
+        titleColor: getComputedStyle(alarm.querySelector('.alarm-title')).color,
+        okColor: getComputedStyle(alarm.querySelector('.alarm-ok')).backgroundColor,
+      };
+    });
+    const isRed = (a) => a.titleColor === 'rgb(194, 0, 27)' && a.okColor === 'rgb(194, 0, 27)';
+    const unchanged = async () => JSON.stringify(await record()) === JSON.stringify(changed);
+    const openStep1 = async () => {
+      await pageA.click('#pass-remove');
+      await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
+      return passAlarm();
+    };
+    const toStep2 = async () => {
+      await pageA.waitForTimeout(700);
+      await pageA.click('#pass-alarm .alarm-ok');
+      await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '2');
+      return passAlarm();
+    };
     await pageA.fill('#pass-current', NEW_PASS);
-    await pageA.click('#pass-remove');
-    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
-    const red = await pageA.evaluate(() => getComputedStyle(document.querySelector('#pass-alarm .alarm-ok')).backgroundColor);
+    const step1 = await openStep1();
     await pageA.click('#pass-alarm .alarm-cancel');
-    const keptAfterCancel = JSON.stringify(await record()) === JSON.stringify(changed);
-    await pageA.click('#pass-remove');
-    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
-    await pageA.waitForTimeout(700);
-    await pageA.click('#pass-alarm .alarm-ok');
-    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '2');
-    const keptAtStep2 = JSON.stringify(await record()) === JSON.stringify(changed);
+    const cancel1 = { alarm: await passAlarm(), kept: await unchanged() };
+    rep.check(
+      'passphrase-remove-step1',
+      step1.open && step1.step === '1' && step1.role === 'alertdialog' && step1.label.includes('1') && step1.label.includes('2') && isRed(step1) && !cancel1.alarm.open && cancel1.kept,
+      `red confirmation 1 of 2 shown ("${step1.label}" / "${step1.title}" / button "${step1.ok}", title ${step1.titleColor}, button ${step1.okColor}, role ${step1.role}); Cancel -> alarm open ${cancel1.alarm.open}, vault unchanged ${cancel1.kept}`,
+    );
+    await openStep1();
+    const step2 = await toStep2();
+    const keptAtStep2 = await unchanged();
+    await pageA.click('#pass-alarm .alarm-cancel');
+    const cancel2 = { alarm: await passAlarm(), kept: await unchanged() };
+    rep.check(
+      'passphrase-remove-step2',
+      step2.open && step2.step === '2' && step2.label.includes('2') && step2.title !== step1.title && isRed(step2) && keptAtStep2 && !cancel2.alarm.open && cancel2.kept,
+      `red button on step 1 -> confirmation 2 of 2 ("${step2.label}" / "${step2.title}" / button "${step2.ok}", title ${step2.titleColor}, button ${step2.okColor}), vault unchanged at step 2 ${keptAtStep2}; Cancel at step 2 -> alarm open ${cancel2.alarm.open}, vault unchanged ${cancel2.kept}`,
+    );
+    await openStep1();
+    await toStep2();
     await pageA.waitForTimeout(700);
     await pageA.click('#pass-alarm .alarm-ok');
     await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '' && document.querySelector('#pass-alarm').hidden, null, { timeout: 30000 });
@@ -1153,8 +1189,8 @@ try {
     });
     rep.check(
       'passphrase-remove-confirm',
-      red === 'rgb(194, 0, 27)' && keptAfterCancel && keptAtStep2,
-      `red button ${red}; record unchanged after Cancel ${keptAfterCancel} and at step 2 ${keptAtStep2}`,
+      removed.slots.length === 1 && removed.slots[0].type === 'device',
+      `second red "yes" (step 2 of 2) -> passphrase removed, status "${await pageA.textContent('#pass-status')}"`,
     );
     rep.check(
       'passphrase-remove',
