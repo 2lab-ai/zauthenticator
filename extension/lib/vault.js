@@ -14,6 +14,10 @@
 //
 // v2 keeps the payload under a random DEK and wraps it in passphrase and optional passkey slots.
 // Each slot and the payload authenticate their canonical v2 metadata as AES-GCM additional data.
+// A v2 record may instead hold one device slot and nothing else (the owner removed the passphrase):
+// the DEK is wrapped by a non-extractable AES-GCM key that this browser keeps (lib/devicekey.js);
+// `key` names it. Changing or removing the passphrase always draws a new DEK and a new id
+// (rekeyWithPassphrase, rekeyWithDevice), so a session holding the old DEK no longer matches.
 //
 // Records are checked for shape before any key is derived, so a hostile or damaged record
 // (for example an imported backup) cannot make unlock() run PBKDF2 or decode huge strings:
@@ -48,10 +52,13 @@ const utf8 = new TextEncoder();
  * - 'bad-passkey'     passkey slot does not authenticate with the PRF
  * - 'no-passkey'      no matching passkey slot
  * - 'slot-exists'     a passkey is already enrolled
+ * - 'no-passphrase'   the record has no passphrase slot (a device-key vault)
+ * - 'no-device'       the record has no device slot
+ * - 'bad-device'      the device key does not unwrap the device slot
  */
 export class VaultError extends Error {
   /**
-   * @param {'bad-passphrase'|'weak-passphrase'|'corrupt'|'unsupported'|'bad-passkey'|'no-passkey'|'slot-exists'} code
+   * @param {'bad-passphrase'|'weak-passphrase'|'corrupt'|'unsupported'|'bad-passkey'|'no-passkey'|'slot-exists'|'no-passphrase'|'no-device'|'bad-device'} code
    * @param {string} message
    */
   constructor(code, message) {
@@ -183,10 +190,7 @@ async function decrypt(rawKey, { iv, ct, aad }) {
  * @throws {TypeError|RangeError} data that is not JSON-serializable or too large
  */
 export async function create(passphrase, data, { iterations = DEFAULT_ITERATIONS } = {}) {
-  const normalized = typeof passphrase === 'string' ? passphrase.normalize('NFC') : '';
-  if ([...normalized].length < MIN_PASSPHRASE_LENGTH) {
-    throw new VaultError('weak-passphrase', `Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters`);
-  }
+  const normalized = checkWeak(passphrase);
   checkIterations(iterations);
   const salt = globalThis.crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const { header, aad } = readHeader({
@@ -213,6 +217,7 @@ export async function unlock(record, passphrase) {
     throw new VaultError('bad-passphrase', 'Wrong passphrase');
   }
   if (record.v === 2) {
+    if (parts.device) throw new VaultError('no-passphrase', 'This vault has no passphrase');
     const rawKey = await unwrapPassphrase(record, parts, passphrase);
     const data = await openRecord(rawKey, record);
     return { data, rawKey };
@@ -298,6 +303,19 @@ function readV2(record) {
   if (!Array.isArray(record.slots) || record.slots.length < 1 || record.slots.length > 2) {
     throw new VaultError('corrupt', 'Invalid slots');
   }
+  const aad = utf8.encode(JSON.stringify({ v: 2, id: record.id }));
+  if (record.slots[0]?.type === 'device') {
+    // No passphrase: one device slot, and nothing else (no passkey without a passphrase).
+    if (record.slots.length !== 1) throw new VaultError('corrupt', 'A device slot must be the only slot');
+    const d = record.slots[0];
+    fields(d, ['type', 'key', 'iv', 'wrapped'], 'device slot');
+    v2Base64(d.key, 'slot.key', 16, 16);
+    v2Base64(d.iv, 'slot.iv', IV_BYTES, IV_BYTES);
+    v2Base64(d.wrapped, 'slot.wrapped', 48, 48);
+    const slots = [{ type: 'device', key: d.key, iv: d.iv, wrapped: d.wrapped }];
+    return { iv, ct, device: true, slots, aad,
+      canonical: { v: 2, id: record.id, data: { iv: record.data.iv, ct: record.data.ct }, slots } };
+  }
   const p = record.slots[0];
   fields(p, ['type', 'kdf', 'iv', 'wrapped'], 'passphrase slot');
   if (p.type !== 'passphrase') throw new VaultError('corrupt', 'Missing passphrase slot');
@@ -325,8 +343,7 @@ function readV2(record) {
     slots.push({ type: 'passkey', cred: s.cred, prfSalt: s.prfSalt, label: s.label,
       createdAt: s.createdAt, iv: s.iv, wrapped: s.wrapped });
   }
-  return { iv, ct, salt, credBytes, prfSalt, slots,
-    aad: utf8.encode(JSON.stringify({ v: 2, id: record.id })),
+  return { iv, ct, salt, credBytes, prfSalt, slots, device: false, aad,
     canonical: { v: 2, id: record.id, data: { iv: record.data.iv, ct: record.data.ct }, slots } };
 }
 
@@ -334,21 +351,27 @@ function slotAAD(id, slot) {
   if (slot.type === 'passphrase') {
     return utf8.encode(JSON.stringify({ v: 2, id, type: slot.type, kdf: slot.kdf }));
   }
+  if (slot.type === 'device') {
+    return utf8.encode(JSON.stringify({ v: 2, id, type: slot.type, key: slot.key }));
+  }
   return utf8.encode(JSON.stringify({ v: 2, id, type: slot.type, cred: slot.cred,
     prfSalt: slot.prfSalt, label: slot.label, createdAt: slot.createdAt }));
 }
 
+// key: raw KEK bytes, or (device slot) a non-extractable AES-GCM CryptoKey.
+const kekFor = (key, usage) => (key instanceof Uint8Array ? aesKey(key, usage) : key);
+
 async function wrap(key, id, slot, rawKey) {
   const iv = random(IV_BYTES);
   const wrapped = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: slotAAD(id, slot) },
-    await aesKey(key, 'encrypt'), rawKey);
+    await kekFor(key, 'encrypt'), rawKey);
   return { ...slot, iv: toBase64(iv), wrapped: toBase64(new Uint8Array(wrapped)) };
 }
 
 async function unwrap(key, id, slot, error) {
   try {
     const raw = await subtle().decrypt({ name: 'AES-GCM', iv: fromBase64(slot.iv, 'iv', 12, 12),
-      additionalData: slotAAD(id, slot) }, await aesKey(key, 'decrypt'),
+      additionalData: slotAAD(id, slot) }, await kekFor(key, 'decrypt'),
     fromBase64(slot.wrapped, 'wrapped', 48, 48));
     return new Uint8Array(raw);
   } catch {
@@ -413,6 +436,8 @@ export function removePasskeySlot(record, cred) {
 export function exportCopy(record) {
   const parts = readRecord(record);
   if (record.v === 1) return clone(record);
+  // A device slot opens only in this browser: such a copy would open nowhere.
+  if (parts.device) throw new VaultError('no-passphrase', 'This vault has no passphrase');
   const result = clone(parts.canonical);
   result.slots.length = 1;
   return result;
@@ -454,4 +479,94 @@ export async function addPasskeySlot(record, passphrase, { cred, prfSalt, prf, l
     throw new VaultError('corrupt', 'Slot verification failed');
   }
   return { record: next, rawKey };
+}
+
+const sameBytes = (a, b) => a.length === b.length && a.every((byte, i) => byte === b[i]);
+
+function checkWeak(passphrase) {
+  const normalized = typeof passphrase === 'string' ? passphrase.normalize('NFC') : '';
+  if ([...normalized].length < MIN_PASSPHRASE_LENGTH) {
+    throw new VaultError('weak-passphrase', `Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters`);
+  }
+  return normalized;
+}
+
+function checkDeviceKey(deviceKey) {
+  const algorithm = deviceKey?.algorithm;
+  if (!deviceKey || deviceKey instanceof Uint8Array || deviceKey.type !== 'secret' || algorithm?.name !== 'AES-GCM'
+      || algorithm.length !== 256 || deviceKey.extractable !== false) {
+    throw new TypeError('Device key must be a non-extractable AES-GCM-256 CryptoKey');
+  }
+}
+
+// A fresh v2 record for data: new DEK, new id, the payload sealed under the DEK, and the one slot
+// that `makeSlot(id, dek)` wraps. Checked with `reopen` before it is returned (verify before save).
+async function rekey(data, makeSlot, reopen) {
+  const rawKey = random(KEY_BYTES);
+  const id = toBase64(random(16));
+  const slot = await makeSlot(id, rawKey);
+  const encrypted = await encrypt(rawKey, null, utf8.encode(JSON.stringify({ v: 2, id })), data);
+  const record = clone({ v: 2, id, data: { iv: encrypted.iv, ct: encrypted.ct }, slots: [slot] });
+  const check = await reopen(record);
+  if (!sameBytes(check.rawKey, rawKey) || JSON.stringify(check.data) !== JSON.stringify(JSON.parse(JSON.stringify(data)))) {
+    throw new VaultError('corrupt', 'Slot verification failed');
+  }
+  return { record, rawKey };
+}
+
+/**
+ * Seal data in a new v2 record that opens with this passphrase only: a new DEK, a new id and a
+ * fresh 16-byte salt. Used to change the passphrase, and to set one on a device-key vault. No
+ * passkey slot is carried over (a passkey wraps the old DEK); the caller removes any device key.
+ *
+ * @param {*} data JSON-serializable payload, at most 1 MiB - 16 bytes as UTF-8 JSON
+ * @param {string} passphrase at least 8 characters after NFC normalization
+ * @param {{iterations?: number}} [options] PBKDF2 iterations, default DEFAULT_ITERATIONS
+ * @returns {Promise<{record: object, rawKey: Uint8Array}>}
+ */
+export async function rekeyWithPassphrase(data, passphrase, { iterations = DEFAULT_ITERATIONS } = {}) {
+  const normalized = checkWeak(passphrase);
+  checkIterations(iterations);
+  return rekey(data, async (id, rawKey) => {
+    const salt = random(SALT_BYTES);
+    const kdf = { name: 'PBKDF2', hash: 'SHA-256', iterations, salt: toBase64(salt) };
+    return wrap(await deriveKey(normalized, salt, iterations), id, { type: 'passphrase', kdf }, rawKey);
+  }, (record) => unlock(record, passphrase));
+}
+
+/**
+ * Seal data in a new v2 record without a passphrase: the DEK (new, as is the id) is wrapped by
+ * deviceKey, a non-extractable AES-GCM-256 key this browser keeps under keyId (lib/devicekey.js).
+ *
+ * @param {*} data JSON-serializable payload
+ * @param {CryptoKey} deviceKey
+ * @param {string} keyId base64 of 16 bytes, the name the device key is stored under
+ * @returns {Promise<{record: object, rawKey: Uint8Array}>}
+ */
+export async function rekeyWithDevice(data, deviceKey, keyId) {
+  checkDeviceKey(deviceKey);
+  v2Base64(keyId, 'key id', 16, 16);
+  return rekey(data, (id, rawKey) => wrap(deviceKey, id, { type: 'device', key: keyId }, rawKey),
+    (record) => unlockWithDevice(record, deviceKey));
+}
+
+/**
+ * Open a device-key vault with the browser's device key.
+ *
+ * @returns {Promise<{data: *, rawKey: Uint8Array}>}
+ * @throws {VaultError} 'no-device' when the record has a passphrase slot instead; 'bad-device'
+ *   when this key does not unwrap the slot
+ */
+export async function unlockWithDevice(record, deviceKey) {
+  const parts = readRecord(record);
+  if (record.v === 1 || !parts.device) throw new VaultError('no-device', 'No device slot');
+  checkDeviceKey(deviceKey);
+  const rawKey = await unwrap(deviceKey, record.id, parts.slots[0], 'bad-device');
+  return { data: await openRecord(rawKey, record), rawKey };
+}
+
+/** → { key } (the device key's id) for a device-key vault, else null. */
+export function deviceSlot(record) {
+  const parts = readRecord(record);
+  return record.v === 2 && parts.device ? { key: parts.slots[0].key } : null;
 }

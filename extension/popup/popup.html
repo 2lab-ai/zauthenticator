@@ -7,6 +7,7 @@
   <title data-i18n="extName">zauthenticator</title>
   <link rel="stylesheet" href="popup.css">
   <script src="../vendor/jsQR.js"></script>
+  <script src="../vendor/qrcode.js"></script>
   <script type="module" src="popup.js"></script>
 </head>
 <body data-state="loading">
@@ -74,6 +75,11 @@
         </form>
         <button type="button" id="unlock-passkey" class="btn block passkey-unlock" data-i18n="passkeyUnlock" hidden>Unlock with passkey</button>
         <p id="unlock-passkey-status" class="status" role="status"></p>
+        <p id="unlock-device-missing" class="error" role="alert" data-i18n="deviceKeyMissing" hidden>This vault has no passphrase, and this browser no longer has the key that opens it, so it cannot be opened here. Uninstalling the extension deletes the vault; do that only to start over, then import a backup.</p>
+        <div id="unlock-device-unavailable" hidden>
+          <p class="error" role="alert" data-i18n="deviceKeyUnavailable">Couldn't read the key this browser keeps for this vault. Your vault is intact. Try again, or restart the browser first. Do not uninstall the extension: that deletes the vault.</p>
+          <button type="button" id="unlock-device-retry" class="btn primary block" data-i18n="deviceKeyRetry">Try again</button>
+        </div>
         <p id="unlock-passkey-error" class="error" role="alert"></p>
       </div>
     </section>
@@ -112,6 +118,30 @@
           <svg class="icon search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
           <input id="search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="searchPlaceholder" data-i18n-label="searchLabel">
         </div>
+      </div>
+      <div id="unlock-bar" class="unlock-bar" hidden>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.9-.8"/></svg>
+        <p id="unlock-left" class="unlock-left" role="timer" aria-live="off"></p>
+        <button type="button" id="extend-btn" class="btn small" aria-expanded="false" aria-controls="extend-panel" data-i18n="extendBtn">Extend</button>
+      </div>
+      <div id="extend-panel" class="extend-panel" hidden>
+        <p class="hint" data-i18n="extendHint">Keep it unlocked longer, for example while an AI agent uses this browser. Lock or quitting the browser still ends it.</p>
+        <div id="extend-choices" class="extend-choices" role="group" data-i18n-label="extendChoicesLabel">
+          <button type="button" class="btn extend-choice" data-ms="3600000" data-i18n="extend1h">1 hour</button>
+          <button type="button" class="btn extend-choice" data-ms="86400000" data-i18n="extend24h">24 hours</button>
+          <button type="button" class="btn extend-choice" data-ms="604800000" data-i18n="extend7d">7 days</button>
+        </div>
+        <button type="button" id="extend-reset" class="btn block" data-i18n="extendReset" hidden>Back to 15 minutes</button>
+        <div id="extend-alarm" class="alarm" role="alertdialog" aria-labelledby="extend-alarm-title" aria-describedby="extend-alarm-text" hidden>
+          <p class="alarm-step"></p>
+          <p id="extend-alarm-title" class="alarm-title"></p>
+          <p id="extend-alarm-text" class="alarm-text"></p>
+          <div class="alarm-actions">
+            <button type="button" class="btn alarm-cancel" data-i18n="alarmCancel">Cancel</button>
+            <button type="button" class="btn alarm-ok"></button>
+          </div>
+        </div>
+        <p id="extend-error" class="error" role="alert"></p>
       </div>
       <p id="list-notice" class="notice" role="status"></p>
       <ul id="accounts" class="accounts"></ul>
@@ -251,6 +281,43 @@
         <h1 id="settings-title" data-i18n="settingsTitle">Settings</h1>
       </div>
 
+      <section id="passphrase-section" class="group" aria-labelledby="passphrase-title">
+        <h2 id="passphrase-title" class="group-title" data-i18n="passphraseTitle">Passphrase</h2>
+        <div class="card passphrase-card">
+          <p id="pass-hint" class="hint" data-i18n="passChangeHint">Change the passphrase that opens this vault. A registered passkey is removed, and other open windows lock.</p>
+          <p id="pass-none" class="alarm-line" data-i18n="passNoneHint" hidden>No passphrase: this vault opens with a key this browser keeps on this computer. Anyone who uses this browser can see your codes.</p>
+          <form id="pass-form" novalidate>
+            <div id="pass-current-field" class="field">
+              <label for="pass-current" data-i18n="passCurrent">Current passphrase</label>
+              <input id="pass-current" type="password" autocomplete="current-password">
+            </div>
+            <div class="field">
+              <label for="pass-new" data-i18n="passNew">New passphrase (at least 8 characters)</label>
+              <input id="pass-new" type="password" autocomplete="new-password" minlength="8">
+            </div>
+            <div class="field">
+              <label for="pass-new2" data-i18n="passNew2">Confirm new passphrase</label>
+              <input id="pass-new2" type="password" autocomplete="new-password" minlength="8">
+            </div>
+            <div class="pass-actions">
+              <button type="submit" id="pass-change" class="btn primary" data-i18n="passChangeBtn">Change passphrase</button>
+              <button type="button" id="pass-remove" class="btn alarm-outline" data-i18n="passRemoveBtn">Remove passphrase</button>
+            </div>
+          </form>
+          <div id="pass-alarm" class="alarm" role="alertdialog" aria-labelledby="pass-alarm-title" aria-describedby="pass-alarm-text" hidden>
+            <p class="alarm-step"></p>
+            <p id="pass-alarm-title" class="alarm-title"></p>
+            <p id="pass-alarm-text" class="alarm-text"></p>
+            <div class="alarm-actions">
+              <button type="button" class="btn alarm-cancel" data-i18n="alarmCancel">Cancel</button>
+              <button type="button" class="btn alarm-ok"></button>
+            </div>
+          </div>
+          <p id="pass-status" class="status" role="status"></p>
+          <p id="pass-error" class="error" role="alert"></p>
+        </div>
+      </section>
+
       <section id="passkey-section" class="group" aria-labelledby="passkey-title" hidden>
         <h2 id="passkey-title" class="group-title" data-i18n="passkeyTitle">Unlock with a passkey</h2>
         <div class="card passkey-card">
@@ -287,9 +354,29 @@
               <svg class="icon" viewBox="0 0 24 24"><path d="M12 4.5V15M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 15v1.5a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V15"/></svg>
             </span>
             <div class="row-body">
-              <p class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
+              <p id="export-hint" class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
+              <div id="export-pass-fields" hidden>
+                <div class="field">
+                  <label for="export-pass" data-i18n="exportPassLabel">Passphrase for the backup file (at least 8 characters)</label>
+                  <input id="export-pass" type="password" autocomplete="new-password" minlength="8">
+                </div>
+                <div class="field">
+                  <label for="export-pass2" data-i18n="exportPass2Label">Confirm it</label>
+                  <input id="export-pass2" type="password" autocomplete="new-password" minlength="8">
+                </div>
+              </div>
+              <p id="export-error" class="error" role="alert"></p>
               <button type="button" id="export-btn" class="btn" data-i18n="exportBtn">Export encrypted backup</button>
               <p id="export-status" class="status" role="status"></p>
+            </div>
+          </div>
+          <div class="card-row">
+            <span class="row-icon" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/></svg>
+            </span>
+            <div class="row-body">
+              <p class="hint" data-i18n="xpEntryHint">Move accounts to another app: copy otpauth:// links or show QR codes that Google Authenticator imports.</p>
+              <button type="button" id="xp-open" class="btn" data-i18n="xpOpen">Export accounts</button>
             </div>
           </div>
           <section class="card-row" aria-labelledby="import-title">
@@ -350,6 +437,52 @@
           </p>
         </div>
       </section>
+    </section>
+    <section class="view" data-view="export" aria-labelledby="xp-title">
+      <div class="view-header">
+        <button type="button" id="xp-back" class="icon-btn" data-i18n-label="backBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>
+        </button>
+        <h1 id="xp-title" data-i18n="xpTitle">Export accounts</h1>
+      </div>
+      <p class="alarm-line" data-i18n="xpWarning">Links and QR codes hold the secret keys. Anyone who sees or copies them can make your codes.</p>
+      <form id="xp-gate" class="card xp-gate" novalidate>
+        <div class="field">
+          <label for="xp-gate-pass" data-i18n="xpGatePass">Re-enter your passphrase to show secret keys</label>
+          <input id="xp-gate-pass" type="password" autocomplete="current-password">
+        </div>
+        <p id="xp-gate-error" class="error" role="alert"></p>
+        <button type="submit" id="xp-gate-submit" class="btn primary block" data-i18n="xpGateSubmit">Continue</button>
+      </form>
+      <div id="xp-body" hidden>
+        <div class="xp-select-row">
+          <label class="xp-check"><input type="checkbox" id="xp-all"> <span data-i18n="xpSelectAll">Select all</span></label>
+          <span id="xp-count" class="hint"></span>
+        </div>
+        <ul id="xp-list" class="xp-list card"></ul>
+        <div class="xp-actions">
+          <button type="button" id="xp-copy" class="btn" data-i18n="xpCopy">Copy links</button>
+          <button type="button" id="xp-show" class="btn primary" data-i18n="xpShow">Show QR</button>
+        </div>
+        <p id="xp-status" class="status" role="status"></p>
+        <p id="xp-error" class="error" role="alert"></p>
+        <div id="xp-qr" class="card xp-qr" hidden>
+          <div id="xp-mode" class="xp-mode" role="radiogroup" data-i18n-label="xpModeLabel" hidden>
+            <label><input type="radio" name="xp-mode" value="google" checked> <span data-i18n="xpModeGoogle">Google Authenticator</span></label>
+            <label><input type="radio" name="xp-mode" value="each"> <span data-i18n="xpModeEach">One QR per account</span></label>
+          </div>
+          <p id="xp-qr-title" class="xp-qr-title"></p>
+          <canvas id="xp-canvas" width="8" height="8" role="img"></canvas>
+          <p id="xp-qr-names" class="xp-qr-names"></p>
+          <p id="xp-qr-how" class="hint"></p>
+          <div class="xp-nav">
+            <button type="button" id="xp-prev" class="btn small" data-i18n="xpPrev">Previous</button>
+            <span id="xp-page" class="hint"></span>
+            <button type="button" id="xp-next" class="btn small" data-i18n="xpNext">Next</button>
+          </div>
+          <button type="button" id="xp-hide" class="btn block" data-i18n="xpHide">Hide QR codes</button>
+        </div>
+      </div>
     </section>
   </main>
 

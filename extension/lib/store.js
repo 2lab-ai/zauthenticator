@@ -1,8 +1,11 @@
-// chrome.storage glue. Six keys exist:
+// chrome.storage glue. Seven keys exist:
 //   chrome.storage.local.vault             the encrypted vault record (ciphertext + KDF params)
 //   chrome.storage.session.vaultKey        { key: base64, v, id? }
 //   chrome.storage.session.lockGen         random generation replaced by every lock
 //   chrome.storage.session.lastActiveAt    last user activity while unlocked (ms since the epoch)
+//   chrome.storage.session.unlockedUntil   end of a manual extension of the unlock time (ms since
+//                                          the epoch), absent when none was chosen; the vault locks
+//                                          at the later of it and lastActiveAt + the idle limit
 //   chrome.storage.session.pendingBind     { origin, accountId, at }: the auto-fill offer the
 //                                          service worker makes after a menu fill (lib/bindings.js)
 //   chrome.storage.session.autofillServed  [{ tab, origin, account, counter, at }]: which code
@@ -13,8 +16,8 @@
 // from trusted extension contexts only (never from content scripts; pinSessionAccess()). The key
 // and its activity time are written together, and an offer and the auto-fill record are written
 // only while a key is stored (checked under the vault lock). clearSessionKey() first writes a new
-// lockGen with vaultKey set to null, then removes vaultKey and the other three, so none of those
-// four outlives a lock. lockGen does outlive a lock, by design: it holds no secret, only random
+// lockGen with vaultKey set to null, then removes vaultKey and the other four, so none of those
+// five outlives a lock. lockGen does outlive a lock, by design: it holds no secret, only random
 // bytes that let a passkey ceremony see that a lock happened while it ran. It is absent after a
 // browser start until the first lock or the first ceremony capture (ensureLockGen() writes one, so
 // no capture is ever issued without it). If writing the new lockGen fails, the removal takes
@@ -26,6 +29,7 @@ export const ACTIVE_KEY = 'lastActiveAt';
 export const PENDING_KEY = 'pendingBind';
 export const SERVED_KEY = 'autofillServed';
 export const LOCK_GEN_KEY = 'lockGen';
+export const UNTIL_KEY = 'unlockedUntil';
 
 export async function getRecord() {
   const items = await chrome.storage.local.get(RECORD_KEY);
@@ -79,8 +83,8 @@ export async function pinSessionAccess() {
   }
 }
 
-// Every lock goes through here: the key, its activity time, any pending offer and the auto-fill
-// record go together.
+// Every lock goes through here: the key, its activity time, a manual extension, any pending offer
+// and the auto-fill record go together.
 export async function clearSessionKey() {
   // Attempt both operations even if either fails; never report a successful lock on failure.
   let failure;
@@ -91,7 +95,7 @@ export async function clearSessionKey() {
   }
   try {
     // A failed generation write must not let an older capture match.
-    await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, PENDING_KEY, SERVED_KEY, ...(failure ? [LOCK_GEN_KEY] : [])]);
+    await chrome.storage.session.remove([SESSION_KEY, ACTIVE_KEY, UNTIL_KEY, PENDING_KEY, SERVED_KEY, ...(failure ? [LOCK_GEN_KEY] : [])]);
   } catch (error) {
     failure ??= error;
   }
@@ -129,6 +133,32 @@ export async function getLastActive() {
 
 export async function touch(now = Date.now()) {
   await chrome.storage.session.set({ [ACTIVE_KEY]: now });
+}
+
+// → ms timestamp at which a manual extension ends, or null when none (or something malformed) is
+// stored.
+export async function getUnlockedUntil() {
+  const items = await chrome.storage.session.get(UNTIL_KEY);
+  const value = items[UNTIL_KEY];
+  return Number.isFinite(value) ? value : null;
+}
+
+// Removes a manual extension without recording activity (a re-key starts the unlock time again).
+export async function clearUnlockedUntil() {
+  await chrome.storage.session.remove(UNTIL_KEY);
+}
+
+// Stores the end of a manual extension (until, ms) together with the activity time now, in one
+// write: choosing an extension is activity. until null removes the extension (back to the idle
+// limit) and records the activity. popup/session.js checks that a key is stored and the bounds.
+export async function setUnlockedUntil(until, now = Date.now()) {
+  if (until !== null && !Number.isFinite(until)) throw new TypeError('setUnlockedUntil: until must be a finite number or null');
+  if (until === null) {
+    await chrome.storage.session.set({ [ACTIVE_KEY]: now });
+    await chrome.storage.session.remove(UNTIL_KEY);
+    return;
+  }
+  await chrome.storage.session.set({ [UNTIL_KEY]: until, [ACTIVE_KEY]: now });
 }
 
 // Stores the auto-fill offer { origin, accountId } with its time. Writes whatever it is given

@@ -33,6 +33,8 @@ user verification (required here) the value cannot be reproduced without that ve
   WebAuthn). Non-goal: syncing; pages still make no network requests. Non-goal (v0.3): changing
   the passphrase (no such flow exists today; when added it must draw a new DEK **and a new `id`**,
   re-encrypt, and drop every passkey slot, so a session holding the old DEK no longer matches).
+  v0.4 added it exactly so (`vault.rekeyWithPassphrase`, `session.changePassphrase`), and removing
+  the passphrase at the owner's request (a device slot; .prd/v0-4/ssot.md).
 
 ## Platform facts (measured or sourced 2026-11-17; receipts in v0-3-passkey/loop.md)
 
@@ -89,7 +91,10 @@ user verification (required here) the value cannot be reproduced without that ve
   16 B; `data.iv` 12 B; `data.ct` 16 B..1 MiB; `slots[0]` is the one and only passphrase slot;
   0..1 passkey slots (cap 1 until a second authenticator is a measured need); `cred` 1..1023 B;
   `prfSalt` 32 B; `wrapped` 48 B; slot `iv` 12 B; `label` ≤ 64 chars; `createdAt` integer; no
-  unknown `type`. A record without a passphrase slot is never accepted or written.
+  unknown `type`. A record without a passphrase slot is never accepted or written — until v0.4,
+  which adds exactly one exception at the owner's request: a record whose only slot is a device
+  slot `{ type: 'device', key, iv, wrapped }` (no passkey slot beside it), written only by
+  `rekeyWithDevice` after the passphrase is checked and two red confirmations (.prd/v0-4/ssot.md).
 - `seal(dek, record, data)` for v2 copies `id` and `slots` unchanged and replaces only
   `data.iv` (fresh random 12 B every call) and `data.ct`. `open()` dispatches on `v`.
 - Slot operations exist only as these functions:

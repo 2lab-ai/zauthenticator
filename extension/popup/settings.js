@@ -5,14 +5,18 @@ import { t } from './i18n.js';
 import { $, setText, withBusy, reason } from './ui.js';
 import { backupFileName, looksLikeRecord, text } from './format.js';
 import { openOwnView } from '../lib/nav.js';
+import { createPassphraseSection } from './passphrase.js';
 
 // A backup is one vault record; anything larger is refused before it is read. A vault at its
 // 1 MiB ciphertext cap (lib/vault.js) exports about 1.37 MiB (base64 plus the record fields).
 const MAX_BACKUP_BYTES = 2 * 1024 * 1024;
 
-export function createSettingsView({ isTab, done, onOrphan }) {
+export function createSettingsView({ isTab, done, onOrphan, onPassphraseChanged = () => {} }) {
   const exportBtn = $('#export-btn');
   const exportStatus = $('#export-status');
+  const exportError = $('#export-error');
+  const exportPass = $('#export-pass');
+  const exportPass2 = $('#export-pass2');
   const importForm = $('#import-form');
   const importFile = $('#import-file');
   const importPass = $('#import-pass');
@@ -25,6 +29,13 @@ export function createSettingsView({ isTab, done, onOrphan }) {
   const bindingsError = $('#bindings-error');
   const bindingTemplate = $('#binding-template');
   const passkeySection = createPasskeySection({ isTab, onOrphan });
+  const passphraseSection = createPassphraseSection({
+    onChanged: (result) => {
+      renderExport();
+      passkeySection.refresh();
+      onPassphraseChanged(result);
+    },
+  });
 
   exportBtn.addEventListener('click', exportBackup);
 
@@ -44,10 +55,39 @@ export function createSettingsView({ isTab, done, onOrphan }) {
     window.close();
   });
 
-  // Export strips the device-bound passkey slot without changing the live vault.
+  // Export strips the device-bound passkey slot without changing the live vault. A vault without a
+  // passphrase is written under a passphrase given for this file (its own key; the device key
+  // opens nothing elsewhere).
   async function exportBackup() {
     setText(exportStatus, '');
-    const record = await session.exportRecord();
+    setText(exportError, '');
+    const gen = session.generation();
+    let record;
+    if (!session.hasPassphrase()) {
+      const pass = exportPass.value;
+      if ([...pass].length < 8) {
+        setText(exportError, t('errTooShort', 8));
+        exportPass.focus();
+        return;
+      }
+      if (pass !== exportPass2.value) {
+        setText(exportError, t('errMismatch'));
+        exportPass2.focus();
+        return;
+      }
+      try {
+        record = await withBusy(exportBtn, t('exporting'), () => session.exportWithPassphrase(pass));
+      } catch (error) {
+        if (session.generation() === gen && error.code !== 'locked') setText(exportError, t('errExportFailed', reason(error)));
+        return;
+      } finally {
+        exportPass.value = '';
+        exportPass2.value = '';
+      }
+      if (session.generation() !== gen) return;
+    } else {
+      record = await session.exportRecord();
+    }
     if (!record) return;
     const blob = new Blob([`${JSON.stringify(record, null, 2)}\n`], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -170,16 +210,29 @@ export function createSettingsView({ isTab, done, onOrphan }) {
   // lock).
   function clearSensitive() {
     passkeySection.clear();
+    passphraseSection.clear();
     setText(exportStatus, '');
+    setText(exportError, '');
+    exportPass.value = '';
+    exportPass2.value = '';
     setText(importError, '');
     importForm.reset();
     bindingsEl.replaceChildren();
     setText(bindingsError, '');
   }
 
+  // With a passphrase the backup uses it; without, it asks for one for the file.
+  function renderExport() {
+    const has = session.hasPassphrase();
+    $('#export-pass-fields').hidden = has;
+    setText($('#export-hint'), t(has ? 'exportHint' : 'exportHintNoPass'));
+  }
+
   function open() {
     clearSensitive();
     renderBindings();
+    renderExport();
+    passphraseSection.open();
     passkeySection.open();
     openTabRow.hidden = isTab;
     // version_name (a preview build's label, which the browser's extensions card shows instead of
@@ -194,6 +247,8 @@ export function createSettingsView({ isTab, done, onOrphan }) {
   function refresh() {
     setText(bindingsError, '');
     renderBindings();
+    renderExport();
+    passphraseSection.render();
     passkeySection.refresh();
   }
 
@@ -255,7 +310,8 @@ export function createPasskeySection({ isTab, onOrphan = () => {}, sessions = se
       const [available, state] = await Promise.all([ceremony.support(), sessions.passkeyState()]);
       if (token !== passkeyToken || !sessions.isUnlocked()) return;
       currentSlot = state.slot;
-      $('#passkey-section').hidden = available === 'no' && !currentSlot;
+      // A vault without a passphrase has no passkey: enrolling one needs the passphrase.
+      $('#passkey-section').hidden = (available === 'no' && !currentSlot) || sessions.hasPassphrase?.() === false;
       $('#passkey-popup').hidden = isTab;
       $('#passkey-tab').hidden = !isTab;
       passkeyForm.hidden = Boolean(currentSlot) || available === 'no';

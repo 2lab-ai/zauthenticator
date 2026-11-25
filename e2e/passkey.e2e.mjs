@@ -66,7 +66,7 @@ const VARIANTS = [
   { name: 'usb-hmac-secret', options: { transport: 'usb', hasHmacSecret: true }, prfOnCreate: false, full: false },
 ];
 // .prd/04-passkey-unlock.md "Session key" + .prd/03-autofill.md.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'autofillServed', 'lockGen'];
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'unlockedUntil', 'pendingBind', 'autofillServed', 'lockGen'];
 
 const json = (value) => JSON.stringify(value);
 const hasPasskey = (record) => Array.isArray(record?.slots) && record.slots.some((s) => s.type === 'passkey');

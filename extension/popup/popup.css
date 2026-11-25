@@ -47,6 +47,13 @@
   --warning: var(--ink);
   --on-warning: var(--canvas);
 
+  /* Red, and only here: the owner asked for the two confirmations in front of a risky change (a
+     long unlock time, removing the passphrase) to be red, and the same red marks an extended unlock
+     time while it lasts. Nothing else takes a hue. 6.0:1 on the alarm tint, 5.9:1 on the canvas. */
+  --alarm: #c2001b;
+  --on-alarm: #ffffff;
+  --alarm-tint: #fdeeee;
+
   /* Every corner in the popup: square. Circles (the countdown) are shapes, not corners. */
   --radius: 0px;
 
@@ -71,6 +78,10 @@
     --hairline: #262626;
     --press: #1f1f1f;
     --surface: #141414;
+    /* 5.6:1 on the alarm tint, 6.1:1 on the canvas. */
+    --alarm: #ff5468;
+    --on-alarm: #000000;
+    --alarm-tint: #2b0c10;
   }
 }
 
@@ -625,7 +636,8 @@ body[data-state="locked"] .view[data-view="locked"],
 body[data-state="list"] .view[data-view="list"],
 body[data-state="add"] .view[data-view="add"],
 body[data-state="settings"] .view[data-view="settings"],
-body[data-state="bind"] .view[data-view="bind"] {
+body[data-state="bind"] .view[data-view="bind"],
+body[data-state="export"] .view[data-view="export"] {
   display: block;
 }
 
@@ -1814,4 +1826,305 @@ body.file-mode .drop-zone {
   .account.copied .copied-badge {
     animation: none;
   }
+}
+
+/* ---- unlock time (list view) ---- */
+
+.unlock-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.unlock-bar[hidden] {
+  display: none;
+}
+
+.unlock-bar .icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.unlock-left {
+  flex: 1 1 auto;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* An extended unlock time is a risk while it lasts: red, outlined, bold. */
+.unlock-bar.extended {
+  border-color: var(--alarm);
+  color: var(--alarm);
+  font-weight: 600;
+}
+
+.extend-panel {
+  margin: 0 12px 10px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--hairline);
+}
+
+.extend-panel > .hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.extend-choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.extend-choices[hidden] {
+  display: none;
+}
+
+#extend-reset {
+  margin-top: 8px;
+}
+
+.extend-panel .error {
+  margin: 10px 0 0;
+}
+
+/* The red two-step confirmation (confirm.js). */
+.alarm {
+  margin-top: 10px;
+  padding: 12px;
+  border: 2px solid var(--alarm);
+  background: var(--alarm-tint);
+  color: var(--text);
+}
+
+.alarm-step {
+  margin: 0 0 4px;
+  color: var(--alarm);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.alarm-title {
+  margin: 0 0 6px;
+  color: var(--alarm);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.alarm-text {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.alarm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn.alarm-ok {
+  border-color: var(--alarm);
+  background: var(--alarm);
+  color: var(--on-alarm);
+  font-weight: 700;
+}
+
+.btn.alarm-ok:where(:not(:disabled)):hover {
+  border-color: var(--alarm);
+  background: var(--alarm);
+  filter: brightness(0.92);
+}
+
+/* A danger action that leads into the red confirmation (Remove passphrase): red outline. */
+.btn.alarm-outline {
+  border-color: var(--alarm);
+  color: var(--alarm);
+}
+
+/* ---- passphrase (settings) ---- */
+
+.passphrase-card {
+  padding: 12px;
+}
+
+.passphrase-card > .hint {
+  margin: 0 0 10px;
+}
+
+.pass-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.passphrase-card .status,
+.passphrase-card .error {
+  margin: 10px 0 0;
+}
+
+/* A standing risk (no passphrase): red text with a red rule. */
+.alarm-line {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--alarm);
+  color: var(--alarm);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#export-pass-fields {
+  margin: 8px 0;
+}
+
+/* No passphrase: there is nothing to lock with. */
+body.no-passphrase #lock-btn {
+  display: none;
+}
+
+/* ---- export accounts ---- */
+
+.view[data-view="export"] > .alarm-line {
+  margin: 0 0 12px;
+}
+
+.xp-gate {
+  padding: 12px;
+}
+
+.xp-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+}
+
+.xp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.xp-list {
+  max-height: 220px;
+  margin: 0 0 10px;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.xp-list label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.xp-list label:hover {
+  background: var(--hover);
+}
+
+.xp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xp-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.xp-qr {
+  padding: 12px;
+  text-align: center;
+}
+
+.xp-mode {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.xp-mode[hidden] {
+  display: none;
+}
+
+.xp-qr-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+/* Always dark modules on white, whatever the theme: scanners expect it. */
+#xp-canvas {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto 8px;
+  background: #ffffff;
+  image-rendering: pixelated;
+}
+
+.xp-qr-names {
+  margin: 0 0 4px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.xp-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+/* ---- passphrase fields: input source and Caps Lock (keyhint.js) ---- */
+
+.key-hint {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* Not focused: hidden, but its line stays (no layout shift under the pointer; keyhint.js). */
+.key-hint.off {
+  visibility: hidden;
+}
+
+.key-source {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Caps Lock on: inverted, bold, with the ⇪ glyph from the text. */
+.key-hint.caps-on .key-caps {
+  padding: 0 4px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
 }
