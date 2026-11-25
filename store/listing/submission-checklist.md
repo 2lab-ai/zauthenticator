@@ -15,9 +15,12 @@ The owner asked on 2026-11-25 for the 0.4 features, a release and an Edge Add-on
       0.4.0: passphrase change and removal (the device key), export as links and QR codes, the
       unlock time with Extend, input source and Caps Lock hints. Lengths:
       [Text lengths](chrome-web-store.md#text-lengths).
-- [ ] Merge to `main`, push the tag `v0.4.0`, check the release zip's sha256.
-- [ ] Edge Add-ons: upload `zauthenticator-0.4.0.zip` as an update of the live listing, paste the
-      0.4.0 descriptions and notes, publish.
+- [x] Merge to `main`, push the tag `v0.4.0`, check the release zip's sha256 (PR #8; sha256
+      fd9a0f98…073f).
+- [x] Edge Add-ons: upload `zauthenticator-0.4.0.zip` as an update of the live listing, paste the
+      0.4.0 descriptions and notes, publish. Done 2026-11-25; In review. From the next tag the
+      release workflow submits the package through the Update API (PR #1), and the descriptions
+      stay a Partner Center edit.
 - [x] Screenshots regenerated from the 0.4.0 UI (`node scripts/build-screenshots.mjs`): the list
       shows the lock time with Extend; `5-settings.png` shows the passkey section (now below the
       passphrase section) and About with "Version 0.4.0".
