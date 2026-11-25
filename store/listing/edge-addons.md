@@ -184,7 +184,9 @@ tab", "Add passkey", "Unlock with passkey"; the menu is named "zauthenticator" a
 as "issuer · label".
 
 For an update, the first line says what changed in that version (Partner Center asks for this for
-updates).
+updates). A tag release sends [`edge-certification-notes.txt`](edge-certification-notes.txt) through
+the Update REST API and rewrites that file's first line to the git tag; edit the following lines
+when the tester steps change. The API does not upload this file's text into the store listing.
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 
 Length: 1,964 characters (limit 2,000; see [Text lengths](chrome-web-store.md#text-lengths)).

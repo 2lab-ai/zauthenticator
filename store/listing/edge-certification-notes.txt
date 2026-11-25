@@ -1,0 +1,16 @@
+Changed in 0.3.0: optional passkey unlock (WebAuthn PRF) next to the passphrase. No new permissions.
+
+zauthenticator generates two-factor (TOTP) codes on the device. No account or test credentials are needed. Its own pages and worker make no network requests; passkey requests are made by the browser.
+
+How to test:
+1. Click the toolbar icon and create a passphrase of 8 or more characters (for example: certification-test-1).
+2. Click "Add account", paste this link into the otpauth:// links box and click "Add from links":
+   otpauth://totp/Example:test@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
+   The account "Example" appears with a 6-digit code (RFC 6238) and a countdown; clicking the code copies it.
+3. On any https page, right-click a text field, open the "zauthenticator" menu and choose "Example · test@example.com". The code is typed in; nothing is submitted.
+4. A small window then offers auto-fill on that exact site. Click "Allow" and accept the browser's prompt for that one site ("Not now" stores nothing). Later visits fill the code automatically, but only into a field marked as a code field (autocomplete="one-time-code", or a name, label or placeholder such as "otp" or "2fa"); a plain text field is not filled, by design.
+5. Settings lists the site under auto-fill sites; "Remove" deletes it and gives up the access.
+6. Click the lock button: the right-click menu then shows "Unlock zauthenticator…" and nothing is filled.
+7. Optional: passkey unlock needs a PRF-capable authenticator (a phone over the QR code flow, or a security key with a PIN); everything else can be tested without one. In Settings click "Open in a tab", re-enter the passphrase, click "Add passkey" and approve both prompts. Then lock; in the toolbar popup click "Unlock with passkey" and click it again in the window that opens.
+
+Permission justifications are in the Privacy section. No remote code. Source code (MIT): https://github.com/2lab-ai/zauthenticator

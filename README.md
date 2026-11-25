@@ -343,6 +343,18 @@ exactly `extension/`, and publishes it with its sha256. Only the publishing job 
 repository, and every action is pinned by commit SHA. That zip is what is uploaded to the stores;
 the listing texts live in [`store/listing/`](store/listing/).
 
+The same tag then submits that zip to the existing Microsoft Edge Add-ons product
+([Update REST API v1.1](https://learn.microsoft.com/en-us/microsoft-edge/extensions/update/api/using-addons-api)).
+Succeeded means Microsoft has the submission (In review, up to seven business days), not that the
+store is serving the new version. The API cannot change the description, screenshots or privacy
+text. Reviewer notes are `store/listing/edge-certification-notes.txt` with the first line rewritten
+to the tag. The job needs three repository secrets, created once at Partner Center under
+Microsoft Edge → Publish API (Client ID, API key, and the product GUID from the extension overview,
+not the public store listing id): `EDGE_ADDONS_CLIENT_ID`, `EDGE_ADDONS_API_KEY`,
+`EDGE_ADDONS_PRODUCT_ID`. Until those exist the job logs `EDGE_SUBMIT=skipped` and the GitHub
+release still stands. A second submission while one is already in review fails with
+`InProgressSubmission`.
+
 ## License
 
 [MIT](LICENSE). The vendored QR decoder keeps its own license (Apache-2.0), shipped as
