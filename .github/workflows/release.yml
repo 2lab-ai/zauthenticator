@@ -3,6 +3,7 @@ name: release
 # Tag v<version> → the tag must match extension/manifest.json, the full CI verification
 # (ci.yml: unit tests, trust gate and its self-test, Chromium e2e) must pass on the tagged
 # commit, and only then is the zip built and published. Only the publish job can write.
+# The edge job then submits that same zip to the existing Edge Add-ons product for review.
 # Actions are pinned by commit SHA; the comment names the release tag the SHA was resolved from.
 on:
   push:
@@ -92,3 +93,43 @@ jobs:
             echo "Check it with \`sha256sum zauthenticator-${VERSION}.zip\` (macOS: \`shasum -a 256 zauthenticator-${VERSION}.zip\`)."
           } > "$RUNNER_TEMP/release-notes.md"
           gh release create "$TAG" "$ZIP" --verify-tag --title "zauthenticator ${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md"
+
+  # Submits the released zip to the existing Edge Add-ons product. Microsoft still reviews it
+  # (up to seven business days); this does not publish listing text. Without the three secrets
+  # the job logs EDGE_SUBMIT=skipped and the GitHub release still stands.
+  # https://learn.microsoft.com/en-us/microsoft-edge/extensions/update/api/using-addons-api
+  edge:
+    needs: [tag-version, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Build zip
+        run: node scripts/build-zip.mjs
+
+      - name: Zip matches the GitHub release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.tag-version.outputs.version }}
+        run: |
+          gh release download "$TAG" --pattern "zauthenticator-${VERSION}.zip" --dir "$RUNNER_TEMP"
+          cmp "dist/zauthenticator-${VERSION}.zip" "$RUNNER_TEMP/zauthenticator-${VERSION}.zip"
+
+      - name: Submit the package to Edge Add-ons
+        env:
+          EDGE_ADDONS_CLIENT_ID: ${{ secrets.EDGE_ADDONS_CLIENT_ID }}
+          EDGE_ADDONS_API_KEY: ${{ secrets.EDGE_ADDONS_API_KEY }}
+          EDGE_ADDONS_PRODUCT_ID: ${{ secrets.EDGE_ADDONS_PRODUCT_ID }}
+          VERSION: ${{ needs.tag-version.outputs.version }}
+        run: node scripts/edge-submit.mjs "dist/zauthenticator-${VERSION}.zip"

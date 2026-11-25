@@ -27,7 +27,7 @@ the browser and keeps the secrets behind them on your device.
 **From a store** (the easiest way; the browser keeps it updated):
 
 - Chrome Web Store: coming soon (the link will be added here once the listing is live)
-- Microsoft Edge Add-ons: coming soon (the link will be added here once the listing is live)
+- Microsoft Edge Add-ons: https://microsoftedge.microsoft.com/addons/detail/dliacchcdohpbldddfmhmcpcdhdnakdp
 
 **Manually, from a release** (you run exactly the files you downloaded; nothing updates them):
 
@@ -417,6 +417,20 @@ exactly `extension/`, and publishes it with its sha256. Only the publishing job 
 repository, and every action is pinned by commit SHA. That zip is what is uploaded to the stores;
 the listing texts live in [`store/listing/`](store/listing/).
 
+The same tag then submits that zip to the existing Microsoft Edge Add-ons product
+([Update REST API v1.1](https://learn.microsoft.com/en-us/microsoft-edge/extensions/update/api/using-addons-api)).
+Succeeded means Microsoft has the submission (In review, up to seven business days), not that the
+store is serving the new version. The API cannot change the description, screenshots or privacy
+text. Reviewer notes are `store/listing/edge-certification-notes.txt` with the first line rewritten
+to the tag. The job needs three repository secrets, created once at Partner Center under
+Microsoft Edge → Publish API (Client ID, API key, and the product GUID from the extension overview,
+not the public store listing id): `EDGE_ADDONS_CLIENT_ID`, `EDGE_ADDONS_API_KEY`,
+`EDGE_ADDONS_PRODUCT_ID`. Until those exist the job logs `EDGE_SUBMIT=skipped` and the GitHub
+release still stands. A second submission while one is already in review fails with
+`InProgressSubmission`. The three secrets were set on 2026-11-25; Partner Center API keys expire
+(this one on 2027-02-05), so renew the key on the Publish API page and update
+`EDGE_ADDONS_API_KEY` before that.
+
 ## License
 
 [MIT](LICENSE). The vendored QR decoder keeps its own license (Apache-2.0), shipped as
@@ -439,8 +453,9 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 
 ### 설치
 
-- **스토어에서 설치**: Chrome 웹 스토어와 Microsoft Edge 추가 기능에 곧 올라가요(공개되면 여기에 링크를
-  넣을게요). 스토어로 설치하면 브라우저가 알아서 업데이트해요.
+- **스토어에서 설치**: Microsoft Edge 추가 기능에 올라가 있어요:
+  https://microsoftedge.microsoft.com/addons/detail/dliacchcdohpbldddfmhmcpcdhdnakdp . Chrome 웹 스토어는 곧
+  올라가요(공개되면 여기에 링크를 넣을게요). 스토어로 설치하면 브라우저가 알아서 업데이트해요.
 - **직접 설치**: [Releases](https://github.com/2lab-ai/zauthenticator/releases)에서
   `zauthenticator-<버전>.zip`을 받아 계속 둘 폴더에 압축을 풀어요. `chrome://extensions`나
   `edge://extensions`에서 **개발자 모드**를 켜고 **압축해제된 확장 프로그램을 로드합니다**를 눌러 그 폴더(`manifest.json`이 있는 폴더)를

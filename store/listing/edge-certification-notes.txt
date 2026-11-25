@@ -1,0 +1,16 @@
+Changed in 0.4.0: change or remove the passphrase (two red confirmations; then a non-extractable browser key), export accounts as otpauth links or QR codes, an unlock-time display with Extend, input source and Caps Lock hints. No new permissions.
+
+zauthenticator generates two-factor (TOTP) codes on the device. No account or test credentials are needed. Its pages and worker make no network requests.
+
+How to test:
+1. Click the toolbar icon and create a passphrase (for example: certification-test-1).
+2. Click "Add account", paste into the otpauth:// links box and click "Add from links":
+   otpauth://totp/Example:test@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
+   "Example" shows a 6-digit code; clicking it copies it. The list shows when it locks; "Extend" asks twice before 1 hour, 24 hours or 7 days.
+3. On an https page, right-click a text field, open "zauthenticator", choose "Example · test@example.com". The code is typed; nothing is submitted. The window that follows offers auto-fill for that site ("Allow" + the browser's prompt; "Not now" stores nothing).
+4. Settings > Backup > "Export accounts": re-enter the passphrase, tick accounts, "Copy links" or "Show QR".
+5. Settings > Passphrase: "Change passphrase", or "Remove passphrase" (current passphrase, then two red confirmations); "Set passphrase" restores one. Typing in passphrase fields shows the input source and Caps Lock.
+6. Lock: the right-click menu shows "Unlock zauthenticator…" and nothing is filled.
+7. Optional: passkey unlock needs a PRF-capable authenticator. Settings > "Open in a tab", re-enter the passphrase, "Add passkey", approve both prompts.
+
+Permission justifications are in the Privacy section. No remote code. Source (MIT): https://github.com/2lab-ai/zauthenticator
