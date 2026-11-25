@@ -791,5 +791,98 @@
         "example": "23"
       }
     }
+  },
+  "passphraseTitle": {
+    "message": "암호"
+  },
+  "passChangeHint": {
+    "message": "이 보관함을 여는 암호를 바꿔요. 등록한 패스키는 삭제되고, 열려 있는 다른 창은 잠겨요."
+  },
+  "passNoneHint": {
+    "message": "암호 없음: 이 보관함은 이 컴퓨터의 이 브라우저가 보관하는 키로 열려요. 이 브라우저를 쓰는 누구나 코드를 볼 수 있어요."
+  },
+  "passCurrent": {
+    "message": "현재 암호"
+  },
+  "passNew": {
+    "message": "새 암호(8자 이상)"
+  },
+  "passNew2": {
+    "message": "새 암호 확인"
+  },
+  "passChangeBtn": {
+    "message": "암호 변경"
+  },
+  "passSetBtn": {
+    "message": "암호 설정"
+  },
+  "passRemoveBtn": {
+    "message": "암호 제거"
+  },
+  "passRemoveNeedsCurrent": {
+    "message": "암호를 제거하려면 현재 암호를 입력하세요."
+  },
+  "passRemoveWarnTitle": {
+    "message": "암호를 제거할까요?"
+  },
+  "passRemoveWarnText": {
+    "message": "이 컴퓨터에서 이 브라우저를 쓸 수 있는 누구나(사람이든 AI 에이전트든) 암호 없이 코드를 보고 입력할 수 있어요. 계정은 이 브라우저가 보관하는 키로 계속 암호화되지만, 브라우저 프로필을 잃거나 확장 프로그램 데이터를 지우면 백업이 없는 한 되찾을 수 없어요. 패스키도 함께 삭제돼요."
+  },
+  "passRemoveFinalTitle": {
+    "message": "마지막 확인"
+  },
+  "passRemoveFinalText": {
+    "message": "지금 이 보관함의 암호를 제거할까요? 나중에 설정에서 새 암호를 정할 수 있어요."
+  },
+  "passChanged": {
+    "message": "암호를 바꿨어요."
+  },
+  "passChangedPasskey": {
+    "message": "암호를 바꿨어요. 패스키는 삭제됐어요. 필요하면 다시 추가하고, 휴대폰이나 보안 키에 남은 예전 패스키도 지우세요."
+  },
+  "passSet": {
+    "message": "암호를 설정했어요. 브라우저가 보관하던 키는 삭제했어요."
+  },
+  "passRemoved": {
+    "message": "암호를 제거했어요. 이제 이 브라우저에서는 암호 없이 열려요."
+  },
+  "passRemovedPasskey": {
+    "message": "암호와 패스키를 제거했어요. 휴대폰이나 보안 키에 남은 패스키도 지우세요."
+  },
+  "passFailed": {
+    "message": "암호를 바꾸지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "exportHintNoPass": {
+    "message": "이 보관함에는 암호가 없어서 백업 파일에 쓸 암호를 따로 정해요. 파일과 그 암호를 안전한 곳에 보관하세요."
+  },
+  "exportPassLabel": {
+    "message": "백업 파일 암호(8자 이상)"
+  },
+  "exportPass2Label": {
+    "message": "백업 파일 암호 확인"
+  },
+  "exporting": {
+    "message": "암호화하는 중…"
+  },
+  "errExportFailed": {
+    "message": "내보내지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "deviceKeyMissing": {
+    "message": "이 보관함에는 암호가 없는데, 이 브라우저가 보관하던 키가 사라졌어요. 여기서는 열 수 없어요. 확장 프로그램을 다시 설치하고 백업을 가져오세요."
+  },
+  "unlockDevice": {
+    "message": "암호 없음 · 이 브라우저에서는 늘 열려 있어요"
   }
 }

@@ -55,11 +55,18 @@ export function createUnlockTime({ onExpired = () => {} } = {}) {
       setText(leftEl, '');
       return;
     }
+    // No passphrase: it never locks for time, and there is nothing to extend.
+    extendBtn.hidden = state.device;
+    bar.classList.toggle('extended', Boolean(state.until) || state.device);
+    if (state.device) {
+      setOpen(false);
+      setText(leftEl, t('unlockDevice'));
+      return;
+    }
     const left = state.lockAt - now;
     if (left <= 0) onExpired();
     const key = state.until ? 'unlockLeftExtended' : 'unlockLeft';
     setText(leftEl, t(key, [formatLeft(Math.max(0, left)), formatAt(state.lockAt, now)]));
-    bar.classList.toggle('extended', Boolean(state.until));
     resetBtn.hidden = !state.until;
   }
 

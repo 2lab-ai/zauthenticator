@@ -1054,6 +1054,130 @@ try {
     checkLockedEmpty(rep, 'lock-session-empty:extended', 'manual lock during a 24 h extension', seeded, (await readStorage(pageA)).session);
   });
 
+  // Passphrase (v0.4, issue #4): a wrong current passphrase changes nothing; change re-keys; remove
+  // needs two red confirmations and then opens with a non-extractable key this browser keeps; a
+  // new passphrase brings it back. The step ends with PASSPHRASE set again for the later steps.
+  await stepRun('passphrase-change-remove', async () => {
+    const NEW_PASS = 'e2e a second passphrase';
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    const record = async () => (await readStorage(pageA)).local.vault;
+    const before = await record();
+    await pageA.click('#settings-btn');
+    await waitState(pageA, 'settings', 10000);
+    await pageA.fill('#pass-current', WRONG_PASSPHRASE);
+    await pageA.fill('#pass-new', NEW_PASS);
+    await pageA.fill('#pass-new2', NEW_PASS);
+    await pageA.click('#pass-change');
+    await pageA.waitForFunction(() => document.querySelector('#pass-error').textContent !== '', null, { timeout: 15000 });
+    const wrong = { error: await pageA.textContent('#pass-error'), same: JSON.stringify(await record()) === JSON.stringify(before) };
+    rep.check('passphrase-change-wrong', wrong.same && wrong.error.length > 0, `wrong current passphrase -> "${wrong.error}", record unchanged ${wrong.same}`);
+
+    await pageA.fill('#pass-current', PASSPHRASE);
+    await pageA.click('#pass-change');
+    await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '', null, { timeout: 30000 });
+    const changed = await record();
+    let opensNew = false;
+    let opensOld = true;
+    try { opensNew = Array.isArray((await decryptRecord(changed, NEW_PASS)).accounts); } catch { opensNew = false; }
+    try { await decryptRecord(changed, PASSPHRASE); } catch { opensOld = false; }
+    rep.check(
+      'passphrase-change',
+      changed.v === 2 && changed.id !== before.id && changed.slots.length === 1 && opensNew && !opensOld && (await stateOf(pageA)) === 'settings',
+      `record v${changed.v}, new id ${changed.id !== before.id}, slots [${changed.slots.map((x) => x.type)}], opens with the new passphrase ${opensNew}, with the old ${opensOld}; status "${await pageA.textContent('#pass-status')}"`,
+    );
+    checkStorage(rep, 'storage-ciphertext-only:passphrase-change', await readStorage(pageA));
+
+    // Remove: the current passphrase first, then two red confirmations; Cancel at step 1 keeps it.
+    await pageA.fill('#pass-current', NEW_PASS);
+    await pageA.click('#pass-remove');
+    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
+    const red = await pageA.evaluate(() => getComputedStyle(document.querySelector('#pass-alarm .alarm-ok')).backgroundColor);
+    await pageA.click('#pass-alarm .alarm-cancel');
+    const keptAfterCancel = JSON.stringify(await record()) === JSON.stringify(changed);
+    await pageA.click('#pass-remove');
+    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
+    await pageA.waitForTimeout(700);
+    await pageA.click('#pass-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '2');
+    const keptAtStep2 = JSON.stringify(await record()) === JSON.stringify(changed);
+    await pageA.waitForTimeout(700);
+    await pageA.click('#pass-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '' && document.querySelector('#pass-alarm').hidden, null, { timeout: 30000 });
+    const removed = await record();
+    const idb = await pageA.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('zauthenticator-device');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const tx = db.transaction('keys', 'readonly');
+      const store = tx.objectStore('keys');
+      const keys = await new Promise((resolve) => { const r = store.getAllKeys(); r.onsuccess = () => resolve(r.result); });
+      const key = await new Promise((resolve) => { const r = store.get(keys[0]); r.onsuccess = () => resolve(r.result); });
+      db.close();
+      let exported = 'refused';
+      try { await crypto.subtle.exportKey('raw', key); exported = 'EXPORTED'; } catch { /* non-extractable */ }
+      return { ids: keys, extractable: key?.extractable, algorithm: key?.algorithm?.name, exported };
+    });
+    rep.check(
+      'passphrase-remove-confirm',
+      red === 'rgb(194, 0, 27)' && keptAfterCancel && keptAtStep2,
+      `red button ${red}; record unchanged after Cancel ${keptAfterCancel} and at step 2 ${keptAtStep2}`,
+    );
+    rep.check(
+      'passphrase-remove',
+      removed.v === 2 && removed.slots.length === 1 && removed.slots[0].type === 'device' && idb.ids.length === 1 && idb.ids[0] === removed.slots[0].key &&
+        idb.extractable === false && idb.algorithm === 'AES-GCM' && idb.exported === 'refused',
+      `slots [${removed.slots.map((x) => x.type)}]; IndexedDB keys ${idb.ids.length} (named by the slot ${idb.ids[0] === removed.slots[0]?.key}), extractable ${idb.extractable}, exportKey ${idb.exported}`,
+    );
+    checkStorage(rep, 'storage-ciphertext-only:no-passphrase', await readStorage(pageA));
+
+    // Without a passphrase: no Lock button, no idle lock, and a fresh session opens by itself.
+    await pageA.click('#settings-back');
+    await waitState(pageA, 'list', 10000);
+    const noLock = await pageA.evaluate(() => getComputedStyle(document.querySelector('#lock-btn')).display === 'none');
+    await pageA.waitForFunction(() => document.querySelector('#unlock-left').textContent !== '' && document.querySelector('#extend-btn').hidden, null, { timeout: 15000 });
+    const bar = await pageA.textContent('#unlock-left');
+    await pageA.evaluate((t) => chrome.storage.session.set({ lastActiveAt: t }), Date.now() - (IDLE_LOCK_MS + 60 * 1000));
+    await pageA.reload();
+    const afterIdle = await waitState(pageA, 'list', 10000).then(() => 'list', async () => stateOf(pageA));
+    await pageA.evaluate(() => chrome.storage.session.clear());
+    await pageA.reload();
+    const afterRestart = await waitState(pageA, 'list', 10000).then(() => 'list', async () => stateOf(pageA));
+    rep.check(
+      'no-passphrase-opens',
+      noLock && afterIdle === 'list' && afterRestart === 'list' && (await labels(pageA)).length > 0,
+      `Lock button hidden ${noLock}; bar "${bar}"; 16 min idle + reload -> ${afterIdle}; session storage cleared + reload -> ${afterRestart}`,
+    );
+
+    // Set a passphrase again: the device key is deleted and the passphrase opens it.
+    await pageA.click('#settings-btn');
+    await waitState(pageA, 'settings', 10000);
+    const setLabel = await pageA.textContent('#pass-change');
+    await pageA.fill('#pass-new', PASSPHRASE);
+    await pageA.fill('#pass-new2', PASSPHRASE);
+    await pageA.click('#pass-change');
+    await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '', null, { timeout: 30000 });
+    const restored = await record();
+    const idbAfter = await pageA.evaluate(async () => {
+      const db = await new Promise((resolve) => { const req = indexedDB.open('zauthenticator-device'); req.onsuccess = () => resolve(req.result); });
+      const ids = await new Promise((resolve) => { const r = db.transaction('keys').objectStore('keys').getAllKeys(); r.onsuccess = () => resolve(r.result); });
+      db.close();
+      return ids.length;
+    });
+    await pageA.click('#settings-back');
+    await waitState(pageA, 'list', 10000);
+    await pageA.click('#lock-btn');
+    await waitState(pageA, 'locked', 10000);
+    await unlock(pageA);
+    rep.check(
+      'passphrase-set-again',
+      restored.slots[0].type === 'passphrase' && idbAfter === 0 && (await stateOf(pageA)) === 'list',
+      `button "${setLabel}"; slots [${restored.slots.map((x) => x.type)}]; IndexedDB keys after ${idbAfter}; lock + unlock with the passphrase -> ${await stateOf(pageA)}`,
+    );
+  });
+
   // A stored key that does not open the vault is dropped when a page finds it, with everything
   // else in session storage.
   await stepRun('wrong-session-key', async () => {

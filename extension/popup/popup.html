@@ -74,6 +74,7 @@
         </form>
         <button type="button" id="unlock-passkey" class="btn block passkey-unlock" data-i18n="passkeyUnlock" hidden>Unlock with passkey</button>
         <p id="unlock-passkey-status" class="status" role="status"></p>
+        <p id="unlock-device-missing" class="error" role="alert" data-i18n="deviceKeyMissing" hidden>This vault has no passphrase, and the key this browser kept for it is gone. It cannot be opened here. Reinstall the extension and import a backup.</p>
         <p id="unlock-passkey-error" class="error" role="alert"></p>
       </div>
     </section>
@@ -275,6 +276,43 @@
         <h1 id="settings-title" data-i18n="settingsTitle">Settings</h1>
       </div>
 
+      <section id="passphrase-section" class="group" aria-labelledby="passphrase-title">
+        <h2 id="passphrase-title" class="group-title" data-i18n="passphraseTitle">Passphrase</h2>
+        <div class="card passphrase-card">
+          <p id="pass-hint" class="hint" data-i18n="passChangeHint">Change the passphrase that opens this vault. A registered passkey is removed, and other open windows lock.</p>
+          <p id="pass-none" class="alarm-line" data-i18n="passNoneHint" hidden>No passphrase: this vault opens with a key this browser keeps on this computer. Anyone who uses this browser can see your codes.</p>
+          <form id="pass-form" novalidate>
+            <div id="pass-current-field" class="field">
+              <label for="pass-current" data-i18n="passCurrent">Current passphrase</label>
+              <input id="pass-current" type="password" autocomplete="current-password">
+            </div>
+            <div class="field">
+              <label for="pass-new" data-i18n="passNew">New passphrase (at least 8 characters)</label>
+              <input id="pass-new" type="password" autocomplete="new-password" minlength="8">
+            </div>
+            <div class="field">
+              <label for="pass-new2" data-i18n="passNew2">Confirm new passphrase</label>
+              <input id="pass-new2" type="password" autocomplete="new-password" minlength="8">
+            </div>
+            <div class="pass-actions">
+              <button type="submit" id="pass-change" class="btn primary" data-i18n="passChangeBtn">Change passphrase</button>
+              <button type="button" id="pass-remove" class="btn alarm-outline" data-i18n="passRemoveBtn">Remove passphrase</button>
+            </div>
+          </form>
+          <div id="pass-alarm" class="alarm" role="alertdialog" aria-labelledby="pass-alarm-title" aria-describedby="pass-alarm-text" hidden>
+            <p class="alarm-step"></p>
+            <p id="pass-alarm-title" class="alarm-title"></p>
+            <p id="pass-alarm-text" class="alarm-text"></p>
+            <div class="alarm-actions">
+              <button type="button" class="btn alarm-cancel" data-i18n="alarmCancel">Cancel</button>
+              <button type="button" class="btn alarm-ok"></button>
+            </div>
+          </div>
+          <p id="pass-status" class="status" role="status"></p>
+          <p id="pass-error" class="error" role="alert"></p>
+        </div>
+      </section>
+
       <section id="passkey-section" class="group" aria-labelledby="passkey-title" hidden>
         <h2 id="passkey-title" class="group-title" data-i18n="passkeyTitle">Unlock with a passkey</h2>
         <div class="card passkey-card">
@@ -311,7 +349,18 @@
               <svg class="icon" viewBox="0 0 24 24"><path d="M12 4.5V15M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 15v1.5a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V15"/></svg>
             </span>
             <div class="row-body">
-              <p class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
+              <p id="export-hint" class="hint" data-i18n="exportHint">The backup file is encrypted with your passphrase. Keep it somewhere safe.</p>
+              <div id="export-pass-fields" hidden>
+                <div class="field">
+                  <label for="export-pass" data-i18n="exportPassLabel">Passphrase for the backup file (at least 8 characters)</label>
+                  <input id="export-pass" type="password" autocomplete="new-password" minlength="8">
+                </div>
+                <div class="field">
+                  <label for="export-pass2" data-i18n="exportPass2Label">Confirm it</label>
+                  <input id="export-pass2" type="password" autocomplete="new-password" minlength="8">
+                </div>
+              </div>
+              <p id="export-error" class="error" role="alert"></p>
               <button type="button" id="export-btn" class="btn" data-i18n="exportBtn">Export encrypted backup</button>
               <p id="export-status" class="status" role="status"></p>
             </div>

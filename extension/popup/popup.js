@@ -66,6 +66,7 @@ async function main() {
     isTab,
     done: (result) => showList(`${t('importDone')} ${summary(result)}`),
     onOrphan: showOrphanNotice,
+    onPassphraseChanged: syncMode,
   });
   // "Unlock with passkey": the toolbar popup opens the unlock window; in that window (or a tab)
   // the click runs the ceremony.
@@ -148,17 +149,38 @@ async function show(state, options = {}) {
     unlockTime.stop();
   }
   document.body.dataset.state = state;
+  syncMode();
   $('#main').scrollTop = 0;
   if (state === 'setup') $('#setup-pass').focus();
   else if (state === 'locked') {
     $('#unlock-pass').focus();
     passkeyUnlock.refresh();
+    showDeviceMissing(token);
   }
   else if (state === 'list') list.focus();
   else if (state === 'add') add.open(options);
   else if (state === 'settings') settings.open();
   else if (state === 'bind') bind.focus();
   showOrphanNotice();
+}
+
+// Without a passphrase there is nothing to lock with: the Lock button goes (popup.css).
+function syncMode() {
+  document.body.classList.toggle('no-passphrase', session.isUnlocked() && !session.hasPassphrase());
+}
+
+// The locked view of a vault without a passphrase is reached only when its device key is gone:
+// there is no passphrase to type, only the way out.
+async function showDeviceMissing(token) {
+  let device = false;
+  try {
+    ({ device } = await session.vaultInfo());
+  } catch {
+    device = false;
+  }
+  if (token !== showToken || document.body.dataset.state !== 'locked') return;
+  $('#unlock-device-missing').hidden = !device;
+  $('#unlock-form').hidden = device;
 }
 
 // An enrollment that created a passkey on the phone or key but could not store it (this page
@@ -418,7 +440,9 @@ async function reconcile() {
       if (document.body.dataset.state === 'list') await list.render();
       else if (document.body.dataset.state === 'settings') settings.refresh();
     } else if (result === 'locked') {
-      await showLocked();
+      // A vault without a passphrase opens again by itself (another page re-keyed it).
+      if ((await session.vaultInfo()).device) await route(await session.resume());
+      else await showLocked();
     } else if (result === 'setup') {
       clearSensitive();
       await show('setup');

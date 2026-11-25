@@ -1953,3 +1953,44 @@ body.file-mode .drop-zone {
   border-color: var(--alarm);
   color: var(--alarm);
 }
+
+/* ---- passphrase (settings) ---- */
+
+.passphrase-card {
+  padding: 12px;
+}
+
+.passphrase-card > .hint {
+  margin: 0 0 10px;
+}
+
+.pass-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.passphrase-card .status,
+.passphrase-card .error {
+  margin: 10px 0 0;
+}
+
+/* A standing risk (no passphrase): red text with a red rule. */
+.alarm-line {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--alarm);
+  color: var(--alarm);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#export-pass-fields {
+  margin: 8px 0;
+}
+
+/* No passphrase: there is nothing to lock with. */
+body.no-passphrase #lock-btn {
+  display: none;
+}

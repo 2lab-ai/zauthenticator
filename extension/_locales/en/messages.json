@@ -797,5 +797,98 @@
         "example": "23"
       }
     }
+  },
+  "passphraseTitle": {
+    "message": "Passphrase"
+  },
+  "passChangeHint": {
+    "message": "Change the passphrase that opens this vault. A registered passkey is removed, and other open windows lock."
+  },
+  "passNoneHint": {
+    "message": "No passphrase: this vault opens with a key this browser keeps on this computer. Anyone who uses this browser can see your codes."
+  },
+  "passCurrent": {
+    "message": "Current passphrase"
+  },
+  "passNew": {
+    "message": "New passphrase (at least 8 characters)"
+  },
+  "passNew2": {
+    "message": "Confirm new passphrase"
+  },
+  "passChangeBtn": {
+    "message": "Change passphrase"
+  },
+  "passSetBtn": {
+    "message": "Set passphrase"
+  },
+  "passRemoveBtn": {
+    "message": "Remove passphrase"
+  },
+  "passRemoveNeedsCurrent": {
+    "message": "Enter the current passphrase to remove it."
+  },
+  "passRemoveWarnTitle": {
+    "message": "Remove the passphrase?"
+  },
+  "passRemoveWarnText": {
+    "message": "Anyone who can use this browser on this computer, a person or an AI agent, will see and fill your codes without a passphrase. Your accounts stay encrypted with a key this browser keeps; if this browser profile is lost or its extension data is cleared, they are gone unless you have a backup. A passkey is removed too."
+  },
+  "passRemoveFinalTitle": {
+    "message": "Last check"
+  },
+  "passRemoveFinalText": {
+    "message": "Remove the passphrase from this vault now? You can set a new one later in Settings."
+  },
+  "passChanged": {
+    "message": "Passphrase changed."
+  },
+  "passChangedPasskey": {
+    "message": "Passphrase changed. The passkey was removed; add it again if you want it. Delete the old one on your phone or key too."
+  },
+  "passSet": {
+    "message": "Passphrase set. The key this browser kept was deleted."
+  },
+  "passRemoved": {
+    "message": "Passphrase removed. This vault now opens without one in this browser."
+  },
+  "passRemovedPasskey": {
+    "message": "Passphrase removed, and the passkey with it. Delete the passkey on your phone or key too."
+  },
+  "passFailed": {
+    "message": "Couldn't change the passphrase: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "exportHintNoPass": {
+    "message": "This vault has no passphrase, so the backup file gets its own. Keep the file and that passphrase somewhere safe."
+  },
+  "exportPassLabel": {
+    "message": "Passphrase for the backup file (at least 8 characters)"
+  },
+  "exportPass2Label": {
+    "message": "Confirm it"
+  },
+  "exporting": {
+    "message": "Encrypting…"
+  },
+  "errExportFailed": {
+    "message": "Couldn't export: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "deviceKeyMissing": {
+    "message": "This vault has no passphrase, and the key this browser kept for it is gone. It cannot be opened here. Reinstall the extension and import a backup."
+  },
+  "unlockDevice": {
+    "message": "No passphrase · stays unlocked in this browser"
   }
 }

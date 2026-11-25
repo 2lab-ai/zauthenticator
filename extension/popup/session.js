@@ -11,9 +11,15 @@
 // The service worker imports this module too, so it imports nothing that needs a document or
 // a window. The worker never unlocks its instance: it reads with readUnlocked() and
 // withVaultState(), which go to storage every time, and writes only the auto-fill offer
-// (setPendingBind()).
+// (setPendingBind()) and, for a vault without a passphrase, the session key it opens with the
+// device key.
+//
+// A vault without a passphrase (vault.deviceSlot(), lib/devicekey.js) has nothing to ask for: every
+// reader that finds no usable session opens it with this browser's device key and stores the
+// session key as an unlock does, and the idle limit and a manual extension do not apply.
 import * as vault from '../lib/vault.js';
 import * as store from '../lib/store.js';
+import * as devicekey from '../lib/devicekey.js';
 import { normalize } from '../lib/otpauth.js';
 import { bindingsOf, normalizeOrigin, withBinding, withoutAccountBindings, withoutBinding } from '../lib/bindings.js';
 import { duplicateKey } from './format.js';
@@ -36,6 +42,7 @@ let rawKey = null;   // Uint8Array while unlocked
 let data = null;     // { accounts: [...], bindings?: [...] } as stored plus the ids withIds() gives, while unlocked
 let recordCt = null; // ciphertext of the record `data` was read from or sealed into
 let recordRev = null;
+let mode = null;     // 'passphrase' | 'device' while unlocked: how the record `data` came from opens
 let epoch = 0;       // the generation; forget() bumps it
 
 function exclusive(task) {
@@ -44,6 +51,17 @@ function exclusive(task) {
 
 export function isUnlocked() {
   return rawKey !== null;
+}
+
+// While unlocked: false when the vault has no passphrase (it opens with the device key).
+export function hasPassphrase() {
+  return mode !== 'device';
+}
+
+// Read from storage, no key needed (the locked view): { device } is true for a vault without a
+// passphrase.
+export function vaultInfo() {
+  return exclusive(async () => ({ device: isDevice(await store.getRecord()) }));
 }
 
 // Changes whenever this page locks or forgets the vault. UI work that awaits compares it
@@ -78,6 +96,7 @@ export function resume() {
       drop();
       return 'setup';
     }
+    if (isDevice(record)) return resumeDevice(record, gen);
     const session = await checkedSession(record);
     if (!session) {
       drop();
@@ -111,6 +130,51 @@ export function resume() {
     remember(key, record, current);
     return 'list';
   });
+}
+
+// resume() for a vault without a passphrase: open it (the stored session or the device key) and
+// show the list; 'locked' only when the device key is missing or does not open it.
+async function resumeDevice(record, gen) {
+  const opened = await openDeviceSession(record);
+  if (!opened) {
+    drop();
+    return 'locked';
+  }
+  if (epoch === gen && rawKey !== null && !sameBytes(rawKey, opened.key)) {
+    forget();
+    gen = epoch;
+  }
+  if (epoch !== gen) return 'locked';
+  await store.touch();
+  if (epoch !== gen) return 'locked';
+  remember(opened.key, record, opened.current);
+  return 'list';
+}
+
+// Call under the vault lock, for a vault without a passphrase. → { key, current }: the stored
+// session when it is this record's and opens it (its age does not matter), else a new one opened
+// with the device key and stored; null when the device key is missing or does not open the vault.
+async function openDeviceSession(record) {
+  const stored = await checkedSession(record);
+  if (stored) {
+    try {
+      return { key: stored.key, current: loaded(await vault.open(stored.key, record)) };
+    } catch (error) {
+      if (error instanceof SessionError) throw error;
+      // not this vault's key: open with the device key below
+    }
+  }
+  let opened;
+  try {
+    const deviceKey = await devicekey.getDeviceKey(vault.deviceSlot(record).key);
+    if (!deviceKey) return null;
+    opened = await vault.unlockWithDevice(record, deviceKey);
+  } catch {
+    return null;
+  }
+  const current = loaded(opened.data);
+  await store.setSessionKey(opened.rawKey, vault.identity(record));
+  return { key: opened.rawKey, current };
 }
 
 export function create(passphrase) {
@@ -158,6 +222,7 @@ function forget() {
   data = null;
   recordCt = null;
   recordRev = null;
+  mode = null;
 }
 
 // forget(), but only when this page holds a key: nothing else is in flight to invalidate.
@@ -218,7 +283,7 @@ export function touch() {
       forget();
       return 'locked';
     }
-    if (isStale(activity)) return 'idle';
+    if (expired(record, activity)) return 'idle';
     await store.touch();
     return 'touched';
   });
@@ -242,7 +307,7 @@ export function lockIfIdle() {
       forget();
       return true;
     }
-    if (!isStale(activity)) return false;
+    if (!expired(record, activity)) return false;
     forget();
     await store.clearSessionKey();
     return true;
@@ -296,6 +361,15 @@ async function openStored(gen) {
     readActivity(),
     store.getPendingBind(),
   ]);
+  if (isDevice(record)) {
+    const opened = await openDeviceSession(record);
+    if (epoch !== gen) return { data: null, pending: null };
+    if (!opened) {
+      drop();
+      return { data: null, pending };
+    }
+    return { data: { ...opened.current, accounts: opened.current.accounts.filter(isEntry) }, pending };
+  }
   const session = await checkedSession(record);
   if (epoch !== gen) return { data: null, pending: null };
   if (!record || !session) {
@@ -333,7 +407,7 @@ export function setPendingBind(offer) {
     if (epoch !== gen) return false;
     const [record, activity] = await Promise.all([store.getRecord(), readActivity()]);
     const key = await checkedSession(record);
-    if (epoch !== gen || !key || isStale(activity)) return false;
+    if (epoch !== gen || !key || expired(record, activity)) return false;
     await store.setPendingBind({ origin, accountId });
     return true;
   });
@@ -541,8 +615,9 @@ export function unlockState() {
   return exclusive(async () => {
     const [activity, record] = await Promise.all([readActivity(), store.getRecord()]);
     const stored = await checkedSession(record);
-    if (epoch !== gen || rawKey !== key || !stored || !sameBytes(stored.key, key) || isStale(activity)) return null;
-    return { lockAt: lockTime(activity), until: activity.until };
+    if (epoch !== gen || rawKey !== key || !stored || !sameBytes(stored.key, key) || expired(record, activity)) return null;
+    if (isDevice(record)) return { lockAt: null, until: null, device: true };
+    return { lockAt: lockTime(activity), until: activity.until, device: false };
   });
 }
 
@@ -559,14 +634,16 @@ export function extendUnlock(ms) {
   return exclusive(async () => {
     const [activity, record] = await Promise.all([readActivity(), store.getRecord()]);
     const stored = await checkedSession(record);
-    if (epoch !== gen || rawKey !== key || !stored || !sameBytes(stored.key, key) || isStale(activity)) {
+    if (epoch !== gen || rawKey !== key || !stored || !sameBytes(stored.key, key) || expired(record, activity)) {
       throw new SessionError('locked');
     }
+    // Nothing to extend: a vault without a passphrase stays open.
+    if (isDevice(record)) throw new SessionError('no-passphrase');
     const now = Date.now();
     const until = ms === 0 ? null : now + ms;
     await store.setUnlockedUntil(until, now);
     if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
-    return { lockAt: lockTime({ last: now, until }), until };
+    return { lockAt: lockTime({ last: now, until }), until, device: false };
   });
 }
 
@@ -685,6 +762,119 @@ export function removePasskey(cred) {
   });
 }
 
+// The checks every passphrase change starts with, under the vault lock: this page holds the
+// stored session's key and the session has not expired. → the stored record
+async function ownRecord(gen, key) {
+  const record = await store.getRecord();
+  const stored = await checkedSession(record);
+  if (epoch !== gen || rawKey !== key || !record || !stored || !sameBytes(stored.key, key) ||
+      expired(record, await readActivity())) {
+    throw new SessionError('locked');
+  }
+  return record;
+}
+
+// Saves a re-keyed record (a new DEK and id) and makes this page and the session use its key. Once
+// the record is saved nothing here rejects, as in enrollPasskey(): { saved: true, locked: true }
+// when this page locked meanwhile or the session key could not be written (then the shared session
+// is locked as well; the old key no longer matches the new record's identity anyway).
+async function commitRekey(gen, result, current) {
+  await store.saveRecord(result.record);
+  if (gen !== epoch) return { saved: true, locked: true };
+  try {
+    await store.setSessionKey(result.rawKey, vault.identity(result.record));
+  } catch {
+    if (gen === epoch) forget();
+    try { await store.clearSessionKey(); } catch { /* the old key does not match the new record */ }
+    return { saved: true, locked: true };
+  }
+  if (gen !== epoch) return { saved: true, locked: true };
+  remember(result.rawKey, result.record, current);
+  return { saved: true, locked: false };
+}
+
+// Changes the passphrase, or sets one on a vault without (current is then not used). The vault is
+// sealed again under a new data key and id (vault.rekeyWithPassphrase), so a registered passkey is
+// gone and every other page, whose key no longer matches, locks; a device key is deleted.
+// Throws VaultError 'bad-passphrase' for a wrong current passphrase, 'weak-passphrase' for a new one
+// under 8 characters, SessionError('locked'); nothing is written then.
+// → { saved: true, locked, hadPasskey }
+export function changePassphrase(current, next, { iterations = vault.DEFAULT_ITERATIONS } = {}) {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.reject(new SessionError('locked'));
+  return exclusive(async () => {
+    const check = () => {
+      if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    };
+    const record = await ownRecord(gen, key);
+    const device = isDevice(record);
+    if (!device) await vault.unlock(record, current);
+    check();
+    const hadPasskey = !device && vault.passkeySlot(record) !== null;
+    const contents = loaded(await vault.open(key, record));
+    const result = await vault.rekeyWithPassphrase(contents, next, { iterations });
+    check();
+    const committed = await commitRekey(gen, result, contents);
+    // The vault no longer names a device key: none is kept.
+    if (device) {
+      try { await devicekey.deleteDeviceKeys(null); } catch { /* an unused key opens nothing stored */ }
+    }
+    return { ...committed, hadPasskey };
+  });
+}
+
+// Removes the passphrase after checking it: the vault is sealed again under a new data key and id,
+// wrapped by a new device key that this browser keeps (lib/devicekey.js); a passkey is gone with
+// the old key. The caller has the user confirm twice first. Throws 'bad-passphrase',
+// SessionError('locked' | 'no-passphrase') or a device-key error; nothing is stored then (a device
+// key made for it is deleted again). → { saved: true, locked, hadPasskey }
+export function removePassphrase(current) {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.reject(new SessionError('locked'));
+  return exclusive(async () => {
+    const check = () => {
+      if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    };
+    const record = await ownRecord(gen, key);
+    if (isDevice(record)) throw new SessionError('no-passphrase');
+    await vault.unlock(record, current);
+    check();
+    const hadPasskey = vault.passkeySlot(record) !== null;
+    const contents = loaded(await vault.open(key, record));
+    const made = await devicekey.createDeviceKey();
+    let result;
+    try {
+      result = await vault.rekeyWithDevice(contents, made.key, made.id);
+      check();
+    } catch (error) {
+      try { await devicekey.deleteDeviceKey(made.id); } catch { /* unused */ }
+      throw error;
+    }
+    const committed = await commitRekey(gen, result, contents);
+    // Device keys of earlier removals open nothing stored now.
+    try { await devicekey.deleteDeviceKeys(made.id); } catch { /* unused keys */ }
+    return { ...committed, hadPasskey };
+  });
+}
+
+// A backup of a vault without a passphrase: its contents sealed under the given passphrase in a
+// record of its own (vault.create: a separate key, which the live vault does not share). Only while
+// unlocked. → the record, for the backup file
+export function exportWithPassphrase(passphrase) {
+  const gen = epoch;
+  const key = rawKey;
+  if (!key) return Promise.reject(new SessionError('locked'));
+  return exclusive(async () => {
+    const record = await ownRecord(gen, key);
+    const contents = loaded(await vault.open(key, record));
+    const sealed = await vault.create(passphrase, contents);
+    if (epoch !== gen || rawKey !== key) throw new SessionError('locked');
+    return sealed.record;
+  });
+}
+
 export function exportRecord() {
   return exclusive(async () => {
     const record = await store.getRecord();
@@ -697,6 +887,23 @@ function remember(key, record, current) {
   data = current;
   recordCt = ciphertext(record);
   recordRev = JSON.stringify(record);
+  mode = isDevice(record) ? 'device' : 'passphrase';
+}
+
+// → true for a stored record without a passphrase (a device slot); false for anything else,
+// a malformed record included (its readers fail as before).
+function isDevice(record) {
+  try {
+    return Boolean(record) && vault.deviceSlot(record) !== null;
+  } catch {
+    return false;
+  }
+}
+
+// → true when the session must lock now: past its lock time (isStale), except for a vault without
+// a passphrase, which never locks for time.
+function expired(record, activity) {
+  return !isDevice(record) && isStale(activity);
 }
 
 // The decrypted data of a record, ready to show: normalizeData(), then withIds().

@@ -443,3 +443,75 @@ test('v2 malformed records and bounds reject before any KDF', async (t) => {
   }
   assert.equal(calls(), 0);
 });
+
+// ---- v0.4: change the passphrase, or remove it (device slot) ----
+
+const deviceKey = () => crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+const KEY_ID = Buffer.alloc(16, 9).toString('base64');
+const PK = { cred: new Uint8Array([1, 2, 3]), prfSalt: new Uint8Array(32).fill(4), prf: new Uint8Array(32).fill(5), label: 'phone' };
+
+test('rekeyWithPassphrase: new id and DEK, one passphrase slot, the old passphrase no longer opens it', async () => {
+  const { record: v1 } = await create(PASS, DATA, FAST);
+  const { record: withPasskey, rawKey: oldKey } = await vault.addPasskeySlot(v1, PASS, PK);
+  const a = await vault.rekeyWithPassphrase(DATA, 'a brand new passphrase', FAST);
+  const b = await vault.rekeyWithPassphrase(DATA, 'a brand new passphrase', FAST);
+  assert.equal(a.record.v, 2);
+  assert.equal(a.record.slots.length, 1);
+  assert.equal(a.record.slots[0].type, 'passphrase');
+  assert.notEqual(a.record.id, b.record.id);
+  assert.notEqual(a.record.id, withPasskey.id);
+  assert.notDeepEqual(a.rawKey, oldKey);
+  assert.equal(vault.passkeySlot(a.record), null);
+  assert.deepEqual((await unlock(a.record, 'a brand new passphrase')).data, DATA);
+  await assert.rejects(unlock(a.record, PASS), isVaultError('bad-passphrase'));
+  await assert.rejects(vault.rekeyWithPassphrase(DATA, 'short', FAST), isVaultError('weak-passphrase'));
+});
+
+test('rekeyWithDevice: opens with that device key only, never with a passphrase, exports nothing', async () => {
+  const key = await deviceKey();
+  const { record, rawKey } = await vault.rekeyWithDevice(DATA, key, KEY_ID);
+  assert.deepEqual(record.slots.map((s) => Object.keys(s)), [['type', 'key', 'iv', 'wrapped']]);
+  assert.deepEqual(vault.deviceSlot(record), { key: KEY_ID });
+  assert.deepEqual(vault.identity(record), { v: 2, id: record.id });
+  const opened = await vault.unlockWithDevice(record, key);
+  assert.deepEqual(opened.data, DATA);
+  assert.deepEqual(opened.rawKey, rawKey);
+  await assert.rejects(vault.unlockWithDevice(record, await deviceKey()), isVaultError('bad-device'));
+  await assert.rejects(unlock(record, PASS), isVaultError('no-passphrase'));
+  assert.throws(() => vault.exportCopy(record), isVaultError('no-passphrase'));
+  assert.equal(vault.passkeySlot(record), null);
+  await assert.rejects(vault.addPasskeySlot(record, PASS, PK), isVaultError('no-passphrase'));
+  // seal keeps the device slot; the DEK still opens it.
+  const sealed = await seal(rawKey, record, { accounts: [] });
+  assert.deepEqual(sealed.slots, record.slots);
+  assert.deepEqual(await open(rawKey, sealed), { accounts: [] });
+  assert.match(await vault.revision(sealed), /^[0-9a-f]{64}$/);
+  // A passphrase vault is not a device vault.
+  const { record: v1 } = await create(PASS, DATA, FAST);
+  assert.equal(vault.deviceSlot(v1), null);
+  await assert.rejects(vault.unlockWithDevice(v1, key), isVaultError('no-device'));
+});
+
+test('device slot: key id and wrapped key are authenticated; shape is enforced', async () => {
+  const key = await deviceKey();
+  const { record } = await vault.rekeyWithDevice(DATA, key, KEY_ID);
+  const other = structuredClone(record);
+  other.slots[0].key = Buffer.alloc(16, 8).toString('base64');
+  await assert.rejects(vault.unlockWithDevice(other, key), isVaultError('bad-device'));
+  const flipped = structuredClone(record);
+  flipped.slots[0].wrapped = flipFirstByte(flipped.slots[0].wrapped);
+  await assert.rejects(vault.unlockWithDevice(flipped, key), isVaultError('bad-device'));
+  const withPasskey = structuredClone(record);
+  withPasskey.slots.push({ type: 'passkey', cred: 'AQID', prfSalt: Buffer.alloc(32).toString('base64'), label: '', createdAt: 1, iv: Buffer.alloc(12).toString('base64'), wrapped: Buffer.alloc(48).toString('base64') });
+  assert.throws(() => vault.identity(withPasskey), isVaultError('corrupt'));
+  const extra = structuredClone(record);
+  extra.slots[0].extra = 1;
+  assert.throws(() => vault.identity(extra), isVaultError('corrupt'));
+  const shortKey = structuredClone(record);
+  shortKey.slots[0].key = Buffer.alloc(8).toString('base64');
+  assert.throws(() => vault.identity(shortKey), isVaultError('corrupt'));
+  const extractable = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  await assert.rejects(vault.rekeyWithDevice(DATA, extractable, KEY_ID), TypeError);
+  await assert.rejects(vault.rekeyWithDevice(DATA, new Uint8Array(32), KEY_ID), TypeError);
+  await assert.rejects(vault.rekeyWithDevice(DATA, key, 'not-16-bytes'), isVaultError('corrupt'));
+});
