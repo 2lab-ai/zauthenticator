@@ -812,6 +812,37 @@ const livePages = new Set(); // pages to describe when a step fails
 const consoles = [];
 
 // Runs one step; an exception becomes a FAIL line for that step with every open page's state.
+// A Google Authenticator MigrationPayload (protobuf), read independently of extension/lib.
+function decodeMigration(buf) {
+  let pos = 0;
+  const varint = (b) => { let n = 0; let shift = 0; for (;;) { const byte = b[pos++]; n += (byte & 0x7f) * 2 ** shift; if (byte < 0x80) return n; shift += 7; } };
+  const fields = (b, end) => {
+    const out = [];
+    while (pos < end) {
+      const key = varint(b);
+      if ((key & 7) === 0) out.push([key >> 3, varint(b)]);
+      else if ((key & 7) === 2) { const len = varint(b); out.push([key >> 3, b.subarray(pos, pos + len)]); pos += len; } else throw new Error(`wire type ${key & 7}`);
+    }
+    return out;
+  };
+  const top = fields(buf, buf.length);
+  const result = { otp: [], version: 0, batchSize: 0, batchIndex: 0, batchId: 0 };
+  for (const [field, value] of top) {
+    if (field === 1) {
+      const saved = pos;
+      pos = 0;
+      const inner = fields(value, value.length);
+      pos = saved;
+      const get = (n) => inner.find(([f]) => f === n)?.[1];
+      result.otp.push({ secret: Buffer.from(get(1)), name: get(2) ? Buffer.from(get(2)).toString('utf8') : '', issuer: get(3) ? Buffer.from(get(3)).toString('utf8') : '', algorithm: get(4), digits: get(5), type: get(6) });
+    } else if (field === 2) result.version = value;
+    else if (field === 3) result.batchSize = value;
+    else if (field === 4) result.batchIndex = value;
+    else if (field === 5) result.batchId = value;
+  }
+  return result;
+}
+
 async function stepRun(name, fn) {
   try {
     await fn();
@@ -1176,6 +1207,68 @@ try {
       restored.slots[0].type === 'passphrase' && idbAfter === 0 && (await stateOf(pageA)) === 'list',
       `button "${setLabel}"; slots [${restored.slots.map((x) => x.type)}]; IndexedDB keys after ${idbAfter}; lock + unlock with the passphrase -> ${await stateOf(pageA)}`,
     );
+  });
+
+  // Export accounts (v0.4, issue #5): the passphrase again, then links to the clipboard and QR
+  // codes drawn in the page, read back with the page's own jsQR decoder. Several accounts give a
+  // Google Authenticator transfer QR; the 7-digit account follows as its own otpauth QR.
+  await stepRun('export-accounts', async () => {
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    const stored = (await labels(pageA)).length;
+    await pageA.click('#settings-btn');
+    await waitState(pageA, 'settings', 10000);
+    await pageA.click('#xp-open');
+    await waitState(pageA, 'export', 10000);
+    await pageA.fill('#xp-gate-pass', WRONG_PASSPHRASE);
+    await pageA.click('#xp-gate-submit');
+    await pageA.waitForFunction(() => document.querySelector('#xp-gate-error').textContent !== '', null, { timeout: 30000 });
+    const gated = await pageA.evaluate(() => ({ body: document.querySelector('#xp-body').hidden, rows: document.querySelectorAll('#xp-list li').length }));
+    await pageA.fill('#xp-gate-pass', PASSPHRASE);
+    await pageA.click('#xp-gate-submit');
+    await pageA.waitForFunction(() => !document.querySelector('#xp-body').hidden, null, { timeout: 30000 });
+    const rowCount = await pageA.evaluate(() => document.querySelectorAll('#xp-list li').length);
+    rep.check('export-gate', gated.body && gated.rows === 0 && rowCount === stored, `wrong passphrase -> list hidden ${gated.body}, ${gated.rows} rows; right one -> ${rowCount} rows (vault has ${stored})`);
+
+    await pageA.check('#xp-all');
+    await pageA.click('#xp-copy');
+    await pageA.waitForFunction(() => document.querySelector('#xp-status').textContent !== '' || document.querySelector('#xp-error').textContent !== '', null, { timeout: 10000 });
+    const clip = (await pageA.evaluate(() => navigator.clipboard.readText())).split('\n');
+    const secrets = [ACCOUNTS[0].secret, ...CONCURRENT_ACCOUNTS.map((a) => a.secret)];
+    const linked = secrets.filter((secret) => clip.some((line) => line.startsWith('otpauth://totp/') && line.includes(`secret=${secret}&`)));
+    rep.check('export-copy-links', clip.length === stored && linked.length === secrets.length, `clipboard holds ${clip.length} lines, all otpauth://totp/; the secrets of ${linked.length}/${secrets.length} known accounts found`);
+
+    const readQr = () => pageA.evaluate(() => {
+      const canvas = document.querySelector('#xp-canvas');
+      const image = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      const found = window.jsQR(image.data, image.width, image.height);
+      return { text: found ? found.data : null, title: document.querySelector('#xp-qr-title').textContent, names: document.querySelector('#xp-qr-names').textContent, page: document.querySelector('#xp-page').textContent };
+    });
+    await pageA.click('#xp-show');
+    await pageA.waitForFunction(() => !document.querySelector('#xp-qr').hidden, null, { timeout: 10000 });
+    const first = await readQr();
+    const payload = first.text?.startsWith('otpauth-migration://offline?data=')
+      ? decodeMigration(Buffer.from(decodeURIComponent(first.text.slice('otpauth-migration://offline?data='.length)), 'base64'))
+      : null;
+    await pageA.click('#xp-next');
+    const second = await readQr();
+    const sixDigit = [ACCOUNTS[0], CONCURRENT_ACCOUNTS[0]];
+    const inPayload = payload ? sixDigit.filter((a) => payload.otp.some((o) => o.secret.equals(Buffer.from(base32ToBytes(a.secret))) && o.name === a.label)) : [];
+    rep.check(
+      'export-qr-google',
+      payload !== null && payload.version === 1 && payload.batchSize === 1 && payload.otp.length === 2 && inPayload.length === 2 &&
+        second.text?.startsWith('otpauth://totp/') && second.text.includes(`secret=${CONCURRENT_ACCOUNTS[1].secret}&`) && second.text.includes('digits=7'),
+      `QR 1 "${first.title}" [${first.names}] -> migration payload ${payload ? `v${payload.version}, batch ${payload.batchIndex + 1}/${payload.batchSize}, ${payload.otp.length} accounts, ${inPayload.length} matched by secret and name` : `not read (${first.text?.slice(0, 40)})`}; QR 2 "${second.title}" [${second.names}] ${second.page} -> ${second.text?.slice(0, 60)}…`,
+    );
+    await pageA.check('#xp-mode input[value="each"]');
+    const each = await readQr();
+    rep.check('export-qr-each', each.text?.startsWith('otpauth://totp/') && each.page === `1 / ${stored}`, `one QR per account: ${each.page}, first -> ${each.text?.slice(0, 50)}…`);
+    await pageA.click('#xp-back');
+    await waitState(pageA, 'settings', 10000);
+    const cleared = await pageA.evaluate(() => ({ rows: document.querySelectorAll('#xp-list li').length, width: document.querySelector('#xp-canvas').width, qr: document.querySelector('#xp-qr').hidden }));
+    rep.check('export-cleared', cleared.rows === 0 && cleared.width === 8 && cleared.qr, `after Back: ${cleared.rows} rows, canvas width ${cleared.width}, QR area hidden ${cleared.qr}`);
+    await pageA.click('#settings-back');
+    await waitState(pageA, 'list', 10000);
   });
 
   // A stored key that does not open the vault is dropped when a page finds it, with everything

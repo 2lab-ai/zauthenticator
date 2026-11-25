@@ -1,4 +1,4 @@
-// Popup entry point. body[data-state] ∈ setup | locked | list | add | settings | bind selects
+// Popup entry point. body[data-state] ∈ setup | locked | list | add | settings | bind | export selects
 // the visible view (popup.css). The same page also runs as a full tab (popup.html#add-file,
 // popup.html#settings) for file pickers, which can close a popup on some platforms, and in a
 // small window the service worker opens (popup.html#bind, popup.html#unlock; lib/nav.js
@@ -12,10 +12,11 @@ import { createListView, paintAvatar, clearAvatar } from './list.js';
 import { createAddView, summary } from './add.js';
 import { createSettingsView, createPasskeyUnlock, accountTitle, takeOrphanNotice } from './settings.js';
 import { createUnlockTime } from './unlock-time.js';
+import { createExportView } from './export.js';
 import { openOwnWindow } from '../lib/nav.js';
 
 const MIN_PASSPHRASE_LENGTH = 8;
-const UNLOCKED_VIEWS = ['list', 'add', 'settings', 'bind'];
+const UNLOCKED_VIEWS = ['list', 'add', 'settings', 'bind', 'export'];
 // The window views: #bind offers to remember the site of the last menu fill; #unlock only asks
 // for the passphrase.
 const WINDOW_VIEWS = ['bind', 'unlock'];
@@ -38,6 +39,7 @@ let recheck = false;   // a storage change arrived meanwhile: re-check once that
 let reconciling = Promise.resolve();
 let passkeyUnlock;
 let unlockTime;
+let exportView;
 
 main().catch((error) => {
   setText($('.loading'), t('errStartup', reason(error)));
@@ -76,6 +78,7 @@ async function main() {
     onUnlocked: enterUnlocked,
   });
   bind = createBindView();
+  exportView = createExportView({ back: () => show('settings') });
   // The list view's lock time and Extend. A lock time that has passed is checked like an idle one.
   unlockTime = createUnlockTime({ onExpired: () => { idleLock().catch(() => {}); } });
 
@@ -134,6 +137,8 @@ async function show(state, options = {}) {
   const token = ++showToken;
   // Never an unlocked view without an unlocked session (e.g. a late callback after a lock).
   if (UNLOCKED_VIEWS.includes(state) && !session.isUnlocked()) state = 'locked';
+  // Secret keys shown for an export never outlive the view.
+  if (state !== 'export') exportView.clear();
   if (state === 'list') {
     // Rows and codes are ready before the list becomes visible.
     await list.render();
@@ -160,6 +165,7 @@ async function show(state, options = {}) {
   else if (state === 'list') list.focus();
   else if (state === 'add') add.open(options);
   else if (state === 'settings') settings.open();
+  else if (state === 'export') exportView.open();
   else if (state === 'bind') bind.focus();
   showOrphanNotice();
 }
@@ -220,6 +226,7 @@ async function showList(message) {
 function clearSensitive() {
   passkeyUnlock.clear();
   unlockTime.clear();
+  exportView.clear();
   list.clear();
   add.clearSensitive();
   settings.clearSensitive();
@@ -258,13 +265,17 @@ function wireNavigation() {
   $('#lock-btn').addEventListener('click', lock);
   $('#add-cancel').addEventListener('click', () => showList());
   $('#settings-back').addEventListener('click', () => showList());
+  $('#xp-open').addEventListener('click', () => show('export'));
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
     const state = document.body.dataset.state;
     const target = event.target;
     const typing = target instanceof HTMLElement && target.matches('input, textarea, select');
-    if ((state === 'add' || state === 'settings') && !typing) {
+    if (state === 'export' && !typing) {
+      event.preventDefault();
+      show('settings');
+    } else if ((state === 'add' || state === 'settings') && !typing) {
       event.preventDefault();
       showList();
     } else if (state === 'bind') {

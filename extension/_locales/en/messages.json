@@ -890,5 +890,143 @@
   },
   "unlockDevice": {
     "message": "No passphrase · stays unlocked in this browser"
+  },
+  "xpEntryHint": {
+    "message": "Move accounts to another app: copy otpauth:// links or show QR codes that Google Authenticator imports."
+  },
+  "xpOpen": {
+    "message": "Export accounts"
+  },
+  "xpTitle": {
+    "message": "Export accounts"
+  },
+  "xpWarning": {
+    "message": "Links and QR codes hold the secret keys. Anyone who sees or copies them can make your codes."
+  },
+  "xpGatePass": {
+    "message": "Re-enter your passphrase to show secret keys"
+  },
+  "xpGateSubmit": {
+    "message": "Continue"
+  },
+  "xpSelectAll": {
+    "message": "Select all"
+  },
+  "xpCount": {
+    "message": "$N$ of $TOTAL$ selected",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "2"
+      },
+      "total": {
+        "content": "$2",
+        "example": "5"
+      }
+    }
+  },
+  "xpCopy": {
+    "message": "Copy links"
+  },
+  "xpShow": {
+    "message": "Show QR"
+  },
+  "xpModeLabel": {
+    "message": "QR format"
+  },
+  "xpModeGoogle": {
+    "message": "Google Authenticator"
+  },
+  "xpModeEach": {
+    "message": "One QR per account"
+  },
+  "xpPrev": {
+    "message": "Previous"
+  },
+  "xpNext": {
+    "message": "Next"
+  },
+  "xpHide": {
+    "message": "Hide QR codes"
+  },
+  "xpPage": {
+    "message": "$I$ / $N$",
+    "placeholders": {
+      "i": {
+        "content": "$1",
+        "example": "1"
+      },
+      "n": {
+        "content": "$2",
+        "example": "3"
+      }
+    }
+  },
+  "xpCopied": {
+    "message": "Copied $N$ otpauth:// links, one per line. They hold the secret keys: paste them only where you mean to.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "xpSkippedInvalid": {
+    "message": "$N$ with an invalid key left out.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "xpNoneValid": {
+    "message": "None of the selected accounts has a valid key."
+  },
+  "xpGoogleTitle": {
+    "message": "Google Authenticator · QR $I$ of $N$",
+    "placeholders": {
+      "i": {
+        "content": "$1",
+        "example": "1"
+      },
+      "n": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "xpGoogleHow": {
+    "message": "On the phone: Google Authenticator → menu → Transfer accounts → Import accounts, then scan every QR in order."
+  },
+  "xpSingleTitle": {
+    "message": "otpauth:// QR"
+  },
+  "xpSingleHow": {
+    "message": "Any authenticator app scans it. Google Authenticator: + → Scan a QR code."
+  },
+  "xpNotGooglePeriod": {
+    "message": "Not in the Google Authenticator transfer QR: its codes do not change every 30 seconds."
+  },
+  "xpNotGoogleDigits": {
+    "message": "Not in the Google Authenticator transfer QR: it has 7-digit codes."
+  },
+  "xpQrLabel": {
+    "message": "QR code for $NAMES$",
+    "placeholders": {
+      "names": {
+        "content": "$1",
+        "example": "Example · alice"
+      }
+    }
+  },
+  "xpQrFailed": {
+    "message": "Couldn't draw the QR code: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "too-long"
+      }
+    }
   }
 }

@@ -7,6 +7,7 @@
   <title data-i18n="extName">zauthenticator</title>
   <link rel="stylesheet" href="popup.css">
   <script src="../vendor/jsQR.js"></script>
+  <script src="../vendor/qrcode.js"></script>
   <script type="module" src="popup.js"></script>
 </head>
 <body data-state="loading">
@@ -365,6 +366,15 @@
               <p id="export-status" class="status" role="status"></p>
             </div>
           </div>
+          <div class="card-row">
+            <span class="row-icon" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/></svg>
+            </span>
+            <div class="row-body">
+              <p class="hint" data-i18n="xpEntryHint">Move accounts to another app: copy otpauth:// links or show QR codes that Google Authenticator imports.</p>
+              <button type="button" id="xp-open" class="btn" data-i18n="xpOpen">Export accounts</button>
+            </div>
+          </div>
           <section class="card-row" aria-labelledby="import-title">
             <span class="row-icon" aria-hidden="true">
               <svg class="icon" viewBox="0 0 24 24"><path d="M12 15V4.5M7.5 9L12 4.5 16.5 9"/><path d="M4.5 15v1.5a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V15"/></svg>
@@ -423,6 +433,52 @@
           </p>
         </div>
       </section>
+    </section>
+    <section class="view" data-view="export" aria-labelledby="xp-title">
+      <div class="view-header">
+        <button type="button" id="xp-back" class="icon-btn" data-i18n-label="backBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>
+        </button>
+        <h1 id="xp-title" data-i18n="xpTitle">Export accounts</h1>
+      </div>
+      <p class="alarm-line" data-i18n="xpWarning">Links and QR codes hold the secret keys. Anyone who sees or copies them can make your codes.</p>
+      <form id="xp-gate" class="card xp-gate" novalidate>
+        <div class="field">
+          <label for="xp-gate-pass" data-i18n="xpGatePass">Re-enter your passphrase to show secret keys</label>
+          <input id="xp-gate-pass" type="password" autocomplete="current-password">
+        </div>
+        <p id="xp-gate-error" class="error" role="alert"></p>
+        <button type="submit" id="xp-gate-submit" class="btn primary block" data-i18n="xpGateSubmit">Continue</button>
+      </form>
+      <div id="xp-body" hidden>
+        <div class="xp-select-row">
+          <label class="xp-check"><input type="checkbox" id="xp-all"> <span data-i18n="xpSelectAll">Select all</span></label>
+          <span id="xp-count" class="hint"></span>
+        </div>
+        <ul id="xp-list" class="xp-list card"></ul>
+        <div class="xp-actions">
+          <button type="button" id="xp-copy" class="btn" data-i18n="xpCopy">Copy links</button>
+          <button type="button" id="xp-show" class="btn primary" data-i18n="xpShow">Show QR</button>
+        </div>
+        <p id="xp-status" class="status" role="status"></p>
+        <p id="xp-error" class="error" role="alert"></p>
+        <div id="xp-qr" class="card xp-qr" hidden>
+          <div id="xp-mode" class="xp-mode" role="radiogroup" data-i18n-label="xpModeLabel" hidden>
+            <label><input type="radio" name="xp-mode" value="google" checked> <span data-i18n="xpModeGoogle">Google Authenticator</span></label>
+            <label><input type="radio" name="xp-mode" value="each"> <span data-i18n="xpModeEach">One QR per account</span></label>
+          </div>
+          <p id="xp-qr-title" class="xp-qr-title"></p>
+          <canvas id="xp-canvas" width="8" height="8" role="img"></canvas>
+          <p id="xp-qr-names" class="xp-qr-names"></p>
+          <p id="xp-qr-how" class="hint"></p>
+          <div class="xp-nav">
+            <button type="button" id="xp-prev" class="btn small" data-i18n="xpPrev">Previous</button>
+            <span id="xp-page" class="hint"></span>
+            <button type="button" id="xp-next" class="btn small" data-i18n="xpNext">Next</button>
+          </div>
+          <button type="button" id="xp-hide" class="btn block" data-i18n="xpHide">Hide QR codes</button>
+        </div>
+      </div>
     </section>
   </main>
 

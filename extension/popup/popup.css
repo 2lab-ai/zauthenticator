@@ -636,7 +636,8 @@ body[data-state="locked"] .view[data-view="locked"],
 body[data-state="list"] .view[data-view="list"],
 body[data-state="add"] .view[data-view="add"],
 body[data-state="settings"] .view[data-view="settings"],
-body[data-state="bind"] .view[data-view="bind"] {
+body[data-state="bind"] .view[data-view="bind"],
+body[data-state="export"] .view[data-view="export"] {
   display: block;
 }
 
@@ -1993,4 +1994,110 @@ body.file-mode .drop-zone {
 /* No passphrase: there is nothing to lock with. */
 body.no-passphrase #lock-btn {
   display: none;
+}
+
+/* ---- export accounts ---- */
+
+.view[data-view="export"] > .alarm-line {
+  margin: 0 0 12px;
+}
+
+.xp-gate {
+  padding: 12px;
+}
+
+.xp-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+}
+
+.xp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.xp-list {
+  max-height: 220px;
+  margin: 0 0 10px;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.xp-list label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.xp-list label:hover {
+  background: var(--hover);
+}
+
+.xp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xp-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.xp-qr {
+  padding: 12px;
+  text-align: center;
+}
+
+.xp-mode {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.xp-mode[hidden] {
+  display: none;
+}
+
+.xp-qr-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+/* Always dark modules on white, whatever the theme: scanners expect it. */
+#xp-canvas {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto 8px;
+  background: #ffffff;
+  image-rendering: pixelated;
+}
+
+.xp-qr-names {
+  margin: 0 0 4px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.xp-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0;
 }

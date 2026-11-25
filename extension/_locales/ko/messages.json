@@ -884,5 +884,143 @@
   },
   "unlockDevice": {
     "message": "암호 없음 · 이 브라우저에서는 늘 열려 있어요"
+  },
+  "xpEntryHint": {
+    "message": "다른 앱으로 계정을 옮겨요. otpauth:// 링크를 복사하거나 Google Authenticator가 바로 가져오는 QR 코드를 보여줘요."
+  },
+  "xpOpen": {
+    "message": "계정 내보내기"
+  },
+  "xpTitle": {
+    "message": "계정 내보내기"
+  },
+  "xpWarning": {
+    "message": "링크와 QR 코드에는 비밀 키가 들어 있어요. 보거나 복사한 사람은 누구나 코드를 만들 수 있어요."
+  },
+  "xpGatePass": {
+    "message": "비밀 키를 보려면 암호를 다시 입력하세요"
+  },
+  "xpGateSubmit": {
+    "message": "계속"
+  },
+  "xpSelectAll": {
+    "message": "모두 선택"
+  },
+  "xpCount": {
+    "message": "$TOTAL$개 중 $N$개 선택",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "2"
+      },
+      "total": {
+        "content": "$2",
+        "example": "5"
+      }
+    }
+  },
+  "xpCopy": {
+    "message": "링크 복사"
+  },
+  "xpShow": {
+    "message": "QR 보기"
+  },
+  "xpModeLabel": {
+    "message": "QR 형식"
+  },
+  "xpModeGoogle": {
+    "message": "Google Authenticator"
+  },
+  "xpModeEach": {
+    "message": "계정마다 QR 하나"
+  },
+  "xpPrev": {
+    "message": "이전"
+  },
+  "xpNext": {
+    "message": "다음"
+  },
+  "xpHide": {
+    "message": "QR 코드 숨기기"
+  },
+  "xpPage": {
+    "message": "$I$ / $N$",
+    "placeholders": {
+      "i": {
+        "content": "$1",
+        "example": "1"
+      },
+      "n": {
+        "content": "$2",
+        "example": "3"
+      }
+    }
+  },
+  "xpCopied": {
+    "message": "otpauth:// 링크 $N$개를 한 줄에 하나씩 복사했어요. 비밀 키가 들어 있으니 원하는 곳에만 붙여넣으세요.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "xpSkippedInvalid": {
+    "message": "키가 잘못된 $N$개는 뺐어요.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "xpNoneValid": {
+    "message": "선택한 계정 중 키가 올바른 것이 없어요."
+  },
+  "xpGoogleTitle": {
+    "message": "Google Authenticator · QR $N$개 중 $I$번째",
+    "placeholders": {
+      "i": {
+        "content": "$1",
+        "example": "1"
+      },
+      "n": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "xpGoogleHow": {
+    "message": "휴대폰에서: Google Authenticator → 메뉴 → 계정 이전 → 계정 가져오기를 누르고 QR을 순서대로 모두 스캔하세요."
+  },
+  "xpSingleTitle": {
+    "message": "otpauth:// QR"
+  },
+  "xpSingleHow": {
+    "message": "어떤 OTP 앱으로도 스캔할 수 있어요. Google Authenticator: + → QR 코드 스캔."
+  },
+  "xpNotGooglePeriod": {
+    "message": "Google Authenticator 이전 QR에는 넣을 수 없어요. 코드 주기가 30초가 아니에요."
+  },
+  "xpNotGoogleDigits": {
+    "message": "Google Authenticator 이전 QR에는 넣을 수 없어요. 코드가 7자리예요."
+  },
+  "xpQrLabel": {
+    "message": "$NAMES$의 QR 코드",
+    "placeholders": {
+      "names": {
+        "content": "$1",
+        "example": "Example · alice"
+      }
+    }
+  },
+  "xpQrFailed": {
+    "message": "QR 코드를 그리지 못했어요: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "too-long"
+      }
+    }
   }
 }
