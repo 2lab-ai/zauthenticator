@@ -113,6 +113,21 @@ test('certification notes keep the tester steps and name this version', () => {
   assert.doesNotMatch(notes, /0\.3\.0/);
 });
 
+test('certification notes keep a first line already written for this version', () => {
+  const template = 'Changed in 0.4.0: export accounts as links or QR codes.\n\nHow to test:\n1. Click the toolbar icon.\n';
+  const notes = certificationNotes(template, '0.4.0');
+  assert.equal(notes, 'Changed in 0.4.0: export accounts as links or QR codes.\n\nHow to test:\n1. Click the toolbar icon.');
+});
+
+test('the shipped notes file fits the limit for its manifest version', async () => {
+  const fs = await import('node:fs');
+  const template = fs.readFileSync(new URL('../store/listing/edge-certification-notes.txt', import.meta.url), 'utf8');
+  const { version } = JSON.parse(fs.readFileSync(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
+  const notes = certificationNotes(template, version);
+  assert.ok(notes.startsWith(`Changed in ${version}: `));
+  assert.ok(notes.length <= 2000, `${notes.length} characters`);
+});
+
 test('certification notes refuse a body over 2000 characters', () => {
   const template = `Changed in 0.3.0: x\n${'a'.repeat(1990)}`;
   assert.throws(() => certificationNotes(template, '0.3.0'), /2000/);

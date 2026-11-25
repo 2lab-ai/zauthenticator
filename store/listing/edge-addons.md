@@ -194,9 +194,11 @@ passphrase", "Remove passphrase", "Set passphrase", "Unlock zauthenticator…", 
 "issuer · label".
 
 For an update, the first line says what changed in that version (Partner Center asks for this for
-updates). A tag release sends [`edge-certification-notes.txt`](edge-certification-notes.txt) through
-the Update REST API and rewrites that file's first line to the git tag; edit the following lines
-when the tester steps change. The API does not upload this file's text into the store listing.
+updates). The text below is [`edge-certification-notes.txt`](edge-certification-notes.txt), which
+a tag release sends through the Update REST API: write its first line as `Changed in <version>: …`
+for the version being tagged and it is sent as is; a first line for another version is replaced by
+"package built from git tag". The API does not upload this text into the store listing (the
+descriptions stay a Partner Center edit).
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 
 Length: 1,768 characters (limit 2,000). Passkey unlock is optional in the test: it needs

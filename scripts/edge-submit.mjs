@@ -26,10 +26,14 @@ export function certificationNotes(template, version) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`version must be MAJOR.MINOR.PATCH, got ${version}`);
   }
-  const text = String(template).replace(/\r\n/g, '\n');
+  const text = String(template).replace(/\r\n/g, '\n').replace(/\n+$/, '');
   const nl = text.indexOf('\n');
+  const first = nl === -1 ? text : text.slice(0, nl);
   const rest = nl === -1 ? '' : text.slice(nl + 1);
-  const notes = `Changed in ${version}: package built from git tag v${version}.\n${rest}`;
+  // A first line already written for this version ("Changed in 0.4.0: …") says what changed and is
+  // kept; a stale one is replaced, so reviewers never read another version's change line.
+  const head = first.startsWith(`Changed in ${version}:`) ? first : `Changed in ${version}: package built from git tag v${version}.`;
+  const notes = `${head}\n${rest}`;
   if (notes.length > NOTES_LIMIT) {
     throw new Error(`certification notes are ${notes.length} characters (limit ${NOTES_LIMIT})`);
   }
