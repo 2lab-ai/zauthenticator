@@ -36,8 +36,9 @@ They do not include the PRF output or the data key in plain form, and your secre
 encrypted. A vault that never had a passkey keeps the earlier format.
 
 - **Your passphrase is never stored.** After you unlock, the derived key is kept in the browser's
-  session storage, in memory, until you lock or the browser quits. After 15 minutes without use,
-  the next time the extension reads the key (opening the popup, a menu choice or an auto-fill
+  session storage, in memory, until you lock or the browser quits. After 15 minutes without use
+  (from version 0.4: after the end of an unlock time you extended, if that is later; never
+  without a passphrase), the next time the extension reads the key (opening the popup, a menu choice or an auto-fill
   request) it removes the key before any code is shown or filled. From version 0.3, session
   storage holds the key together with the vault's version and identity, and also a random lock
   counter (`lockGen`) that is not secret: each lock replaces it instead of removing it, so a
@@ -80,8 +81,10 @@ If you remove the passphrase (Settings, after two confirmations), the vault is e
 under a new random data key, and that data key is stored encrypted with a device key: a random
 AES-256 key that the browser generates on your computer as non-extractable (WebCrypto) and keeps in
 the extension's IndexedDB storage, in this browser profile. The extension can encrypt and decrypt
-with it but cannot read its value, and it never leaves the browser profile; backups and exports
-never contain it. The extension does not read disk serial numbers or build a fingerprint of your
+with it but cannot read its value, and backups and exports never contain it. "Non-extractable" is
+enforced by the browser's API, not on disk: the browser stores the key in the profile's files, so
+anyone who can copy those files (for example malware running as you, or a full backup of your
+home folder) can decrypt the vault. The extension does not read disk serial numbers or build a fingerprint of your
 computer. Without a passphrase, the extension opens without asking and does not lock for time, so
 anyone who can use this browser profile, or copy it whole, can see your codes. Setting a
 passphrase again deletes the device key.

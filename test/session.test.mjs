@@ -1495,7 +1495,7 @@ test('remove passphrase: wrong passphrase stores nothing; success opens with the
   assert.deepEqual(await a.unlockState(), { lockAt: null, until: null, device: true });
   await assert.rejects(a.extendUnlock(60 * 60 * 1000), (e) => e.code === 'no-passphrase');
   await assert.rejects(a.removePassphrase(PASS), (e) => e.code === 'no-passphrase');
-  assert.deepEqual(await a.vaultInfo(), { device: true });
+  assert.deepEqual(await a.vaultInfo(), { device: true, deviceKey: 'present' });
   // No idle lock without a passphrase.
   areas.session.set('lastActiveAt', STALE());
   assert.equal(await a.lockIfIdle(), false);
@@ -1524,7 +1524,48 @@ test('a vault without a passphrase whose device key is gone stays locked', async
   const b = await page();
   assert.equal(await b.resume(), 'locked');
   assert.equal(await b.readUnlocked(), null);
-  assert.deepEqual(await b.vaultInfo(), { device: true });
+  assert.deepEqual(await b.vaultInfo(), { device: true, deviceKey: 'missing' });
+});
+
+test('a device key that cannot be read right now is not reported as gone; the vault opens later', async () => {
+  idb.clear();
+  await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  await a.resume();
+  await a.removePassphrase(PASS);
+  areas.session.clear();
+  const realOpen = globalThis.indexedDB.open;
+  globalThis.indexedDB.open = () => {
+    const req = {};
+    setTimeout(() => { req.error = new Error('Internal error opening backing store'); req.onerror?.(); }, 0);
+    return req;
+  };
+  try {
+    const b = await page();
+    assert.equal(await b.resume(), 'locked');
+    assert.deepEqual(await b.vaultInfo(), { device: true, deviceKey: 'unavailable' });
+    assert.ok(await store.getRecord(), 'the record stays');
+  } finally {
+    globalThis.indexedDB.open = realOpen;
+  }
+  const c = await page();
+  assert.equal(await c.resume(), 'list');
+  assert.equal(c.accounts().length, 1);
+});
+
+test('a re-key drops a manual extension; a backup passphrase is only for a vault without one', async () => {
+  idb.clear();
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.extendUnlock(7 * 24 * 60 * 60 * 1000);
+  await assert.rejects(a.exportWithPassphrase('backup passphrase'), (e) => e.code === 'has-passphrase');
+  await a.removePassphrase(PASS);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  await a.changePassphrase(null, NEW, FAST_KDF);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), true);
 });
 
 test('set a passphrase again: the device key is deleted; backups without a passphrase use their own', async () => {

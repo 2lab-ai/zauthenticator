@@ -143,6 +143,11 @@ export async function getUnlockedUntil() {
   return Number.isFinite(value) ? value : null;
 }
 
+// Removes a manual extension without recording activity (a re-key starts the unlock time again).
+export async function clearUnlockedUntil() {
+  await chrome.storage.session.remove(UNTIL_KEY);
+}
+
 // Stores the end of a manual extension (until, ms) together with the activity time now, in one
 // write: choosing an extension is activity. until null removes the extension (back to the idle
 // limit) and records the activity. popup/session.js checks that a key is stored and the bounds.

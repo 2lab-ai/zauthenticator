@@ -72,7 +72,8 @@ In **Settings**, **Passphrase**:
 - **Remove passphrase**: enter the current one, then confirm twice on red warnings. After that the
   extension opens without asking. Your accounts stay encrypted, with a random key that this browser
   generated on this computer and keeps as *non-extractable*: the extension can use it but cannot
-  read it, and it is never exported or synced. A disk serial number or a "computer fingerprint" is
+  read it, and it is never exported or synced. The browser still stores it in the profile's
+  files, so anyone who can copy your browser profile can decrypt the vault. A disk serial number or a "computer fingerprint" is
   not used: an extension cannot read a disk serial, and a fingerprint changes after a driver update
   or a new monitor, which would lock you out for good. Without a passphrase there is no Lock button
   and no automatic lock, and a backup asks for a passphrase just for that file. **Anyone who can use
@@ -226,7 +227,8 @@ your accounts.
 **What stays on your device.** Your secret keys, account names and auto-fill sites are stored in
 the browser's storage for this extension, inside a vault encrypted with a key made from your
 passphrase. The passphrase is never stored. After you unlock, the key is held in the browser's
-session memory until you lock or the browser quits; after 15 minutes without use it is removed
+session memory until you lock or the browser quits; after 15 minutes without use (or the end of
+an unlock time you extended, from version 0.4) it is removed
 the next time anything asks for it (see the limits below). While it is unlocked, session memory
 also holds a small auto-fill record: for each tab and allowed site that got a code, the tab
 number, the site's address, the account's internal id, which code period it was (the TOTP
@@ -313,7 +315,7 @@ secret key, the account name and your passphrase never reach the page.
 - No timer runs for the lock time. The unlocked key stays in the browser's session memory
   until the next thing that reads it (opening the popup, a menu choice or an auto-fill request);
   that read locks the vault and clears the key before any code is shown or filled. In the same
-  way, if the browser's background worker was asleep when the 15 minutes passed, account names
+  way, if the browser's background worker was asleep when the lock time passed, account names
   can stay in the right-click menu until it next wakes; choosing one then opens the unlock window
   instead of filling.
 
@@ -460,7 +462,8 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
   보관함이 새 데이터 키로 다시 암호화되므로 등록한 패스키는 지워지고(필요하면 다시 등록하세요), 열려 있는
   다른 창은 잠겨요. **암호 제거**는 현재 비밀번호를 넣은 뒤 빨간 경고를 두 번 확인해야 해요. 그 뒤로는 묻지
   않고 열려요. 계정은 이 컴퓨터에서 이 브라우저가 만든 임의의 키로 계속 암호화되고, 이 키는 *추출 불가*로
-  보관돼서 확장 프로그램도 쓰기만 할 뿐 읽을 수 없고, 내보내거나 동기화되지 않아요. 디스크 시리얼이나 "컴퓨터
+  보관돼서 확장 프로그램도 쓰기만 할 뿐 읽을 수 없고, 내보내거나 동기화되지 않아요. 다만 브라우저는 이 키를
+  프로필 파일에 저장하므로, 브라우저 프로필을 복사할 수 있는 사람은 보관함을 풀 수 있어요. 디스크 시리얼이나 "컴퓨터
   지문"은 쓰지 않아요. 확장 프로그램은 디스크 시리얼을 읽을 수 없고, 지문은 드라이버 업데이트나 모니터 교체로
   바뀌어 영영 못 열게 될 수 있어서예요. 비밀번호가 없으면 잠그기 버튼과 자동 잠금이 없고, 백업은 그 파일에만
   쓸 비밀번호를 따로 물어요. **이 브라우저 프로필을 쓸 수 있는 누구나 코드를 볼 수 있고**, 프로필이나 확장

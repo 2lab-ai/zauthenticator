@@ -38,7 +38,10 @@ Only the latest release is supported.
   unencrypted to `chrome.storage.local` or `chrome.storage.sync`, included in an export, made
   readable outside the extension's trusted contexts (its pages and service worker; the content
   script and web pages are outside), or recoverable from the stored record without the
-  passphrase.
+  passphrase. Exceptions by design, from version 0.4: a vault whose owner removed the passphrase
+  opens with the browser's device key, so anyone who can use or copy that browser profile can
+  open it; and **Export accounts** shows or copies the secrets as otpauth links and QR codes when
+  the owner asks.
 - **Auto-fill to the wrong place**: a code delivered to a page or frame whose exact origin you did
   not bind (a look-alike or a subdomain included), a code delivered while the vault is locked or
   idle, anything other than the code (a secret, an account name, the key) reaching a page, a

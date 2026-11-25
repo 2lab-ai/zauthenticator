@@ -91,7 +91,10 @@ user verification (required here) the value cannot be reproduced without that ve
   16 B; `data.iv` 12 B; `data.ct` 16 B..1 MiB; `slots[0]` is the one and only passphrase slot;
   0..1 passkey slots (cap 1 until a second authenticator is a measured need); `cred` 1..1023 B;
   `prfSalt` 32 B; `wrapped` 48 B; slot `iv` 12 B; `label` ≤ 64 chars; `createdAt` integer; no
-  unknown `type`. A record without a passphrase slot is never accepted or written.
+  unknown `type`. A record without a passphrase slot is never accepted or written — until v0.4,
+  which adds exactly one exception at the owner's request: a record whose only slot is a device
+  slot `{ type: 'device', key, iv, wrapped }` (no passkey slot beside it), written only by
+  `rekeyWithDevice` after the passphrase is checked and two red confirmations (.prd/v0-4/ssot.md).
 - `seal(dek, record, data)` for v2 copies `id` and `slots` unchanged and replaces only
   `data.iv` (fresh random 12 B every call) and `data.ct`. `open()` dispatches on `v`.
 - Slot operations exist only as these functions:

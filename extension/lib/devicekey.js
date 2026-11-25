@@ -9,8 +9,10 @@
 // fingerprint made of what a page can see (screen, GPU, fonts, versions) changes with a driver
 // update or a new monitor, after which the vault would never open again.
 //
-// What protects it is the profile: anyone who can use this browser profile, or copy it whole, can
-// use the key. The record in chrome.storage.local alone does not open without it.
+// What protects it is the profile. "Non-extractable" is enforced by the WebCrypto API, not on disk:
+// the browser keeps the key in this profile's IndexedDB files, so anyone who can use this browser
+// profile, or copy its files, can decrypt the vault. The record in chrome.storage.local alone does
+// not open without it.
 
 const DB_NAME = 'zauthenticator-device';
 const STORE = 'keys';
@@ -37,7 +39,9 @@ async function inStore(mode, fn) {
   const db = await openDb();
   try {
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
+      // 'strict': a written or deleted key is flushed to disk before the transaction completes,
+      // so a power loss right after cannot leave a stored record without its key.
+      const tx = db.transaction(STORE, mode, mode === 'readwrite' ? { durability: 'strict' } : undefined);
       let result;
       const req = fn(tx.objectStore(STORE));
       req.onsuccess = () => { result = req.result; };

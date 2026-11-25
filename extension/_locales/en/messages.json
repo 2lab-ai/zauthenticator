@@ -832,7 +832,7 @@
     "message": "Remove the passphrase?"
   },
   "passRemoveWarnText": {
-    "message": "Anyone who can use this browser on this computer, a person or an AI agent, will see and fill your codes without a passphrase. Your accounts stay encrypted with a key this browser keeps; if this browser profile is lost or its extension data is cleared, they are gone unless you have a backup. A passkey is removed too."
+    "message": "Anyone who can use this browser on this computer, a person or an AI agent, will see and fill your codes without a passphrase. Your accounts stay encrypted with a key this browser keeps in its profile files: the extension cannot read it, but anyone who copies the browser profile (malware, a full backup of your home folder) can decrypt them. If the profile or the extension's data is lost, only a backup brings them back. A passkey is removed too."
   },
   "passRemoveFinalTitle": {
     "message": "Last check"
@@ -886,7 +886,7 @@
     }
   },
   "deviceKeyMissing": {
-    "message": "This vault has no passphrase, and the key this browser kept for it is gone. It cannot be opened here. Reinstall the extension and import a backup."
+    "message": "This vault has no passphrase, and this browser no longer has the key that opens it, so it cannot be opened here. Uninstalling the extension deletes the vault; do that only to start over, then import a backup."
   },
   "unlockDevice": {
     "message": "No passphrase · stays unlocked in this browser"
@@ -1082,5 +1082,11 @@
   },
   "capsUnknown": {
     "message": "Caps Lock: shown at the first key"
+  },
+  "deviceKeyUnavailable": {
+    "message": "Couldn't read the key this browser keeps for this vault. Your vault is intact. Try again, or restart the browser first. Do not uninstall the extension: that deletes the vault."
+  },
+  "deviceKeyRetry": {
+    "message": "Try again"
   }
 }

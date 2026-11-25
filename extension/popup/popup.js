@@ -178,18 +178,25 @@ function syncMode() {
   document.body.classList.toggle('no-passphrase', session.isUnlocked() && !session.hasPassphrase());
 }
 
-// The locked view of a vault without a passphrase is reached only when its device key is gone:
-// there is no passphrase to type, only the way out.
+// The locked view of a vault without a passphrase has no passphrase to type. It says why it is
+// locked: the device key could not be read right now (the vault is intact: Try again), or this
+// browser no longer has it (nothing here can open the vault). A vault whose key is present opens
+// itself instead of showing this view.
 async function showDeviceMissing(token) {
-  let device = false;
+  let info = { device: false, deviceKey: null };
   try {
-    ({ device } = await session.vaultInfo());
+    info = await session.vaultInfo();
   } catch {
-    device = false;
+    info = { device: false, deviceKey: null };
   }
   if (token !== showToken || document.body.dataset.state !== 'locked') return;
-  $('#unlock-device-missing').hidden = !device;
-  $('#unlock-form').hidden = device;
+  if (info.device && info.deviceKey === 'present') {
+    await route(await session.resume());
+    return;
+  }
+  $('#unlock-device-missing').hidden = !(info.device && info.deviceKey === 'missing');
+  $('#unlock-device-unavailable').hidden = !(info.device && info.deviceKey === 'unavailable');
+  $('#unlock-form').hidden = info.device;
 }
 
 // An enrollment that created a passkey on the phone or key but could not store it (this page
@@ -335,6 +342,7 @@ function wireSetup() {
 }
 
 function wireUnlock() {
+  $('#unlock-device-retry').addEventListener('click', () => local(async () => route(await session.resume())));
   const form = $('#unlock-form');
   const passEl = $('#unlock-pass');
   const errorEl = $('#unlock-error');
@@ -454,9 +462,14 @@ async function reconcile() {
       if (document.body.dataset.state === 'list') await list.render();
       else if (document.body.dataset.state === 'settings') settings.refresh();
     } else if (result === 'locked') {
-      // A vault without a passphrase opens again by itself (another page re-keyed it).
-      if ((await session.vaultInfo()).device) await route(await session.resume());
-      else await showLocked();
+      // A vault without a passphrase opens again by itself (another page re-keyed it); what was
+      // typed in this page goes first, as with any lock another page causes.
+      if ((await session.vaultInfo()).device) {
+        clearSensitive();
+        await route(await session.resume());
+      } else {
+        await showLocked();
+      }
     } else if (result === 'setup') {
       clearSensitive();
       await show('setup');
