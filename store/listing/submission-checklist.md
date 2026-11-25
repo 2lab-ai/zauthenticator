@@ -5,6 +5,22 @@ for every update after that. The texts to paste are in [chrome-web-store.md](chr
 and [edge-addons.md](edge-addons.md). Facts were checked on 2026-11-16 against the sources named;
 **unverified** marks what the documentation does not state.
 
+## 0.4.0 release
+
+The owner asked on 2026-11-25 for the 0.4 features, a release and an Edge Add-ons update
+(.prd/v0-4/ssot.md). No new permission.
+
+- [x] `extension/manifest.json` `version` is `0.4.0`.
+- [x] README, PRIVACY (effective 2026-11-25), both listings and the certification notes describe
+      0.4.0: passphrase change and removal (the device key), export as links and QR codes, the
+      unlock time with Extend, input source and Caps Lock hints. Lengths:
+      [Text lengths](chrome-web-store.md#text-lengths).
+- [ ] Merge to `main`, push the tag `v0.4.0`, check the release zip's sha256.
+- [ ] Edge Add-ons: upload `zauthenticator-0.4.0.zip` as an update of the live listing, paste the
+      0.4.0 descriptions and notes, publish.
+- Screenshots are the 0.3.0 ones; the views they show did not change apart from the lock-time
+  line in the list.
+
 ## 0.3.0 release
 
 The owner authorized the 0.3.0 release on 2026-11-20: "v0.3 배포해주고 익스텐션도 버전업한고

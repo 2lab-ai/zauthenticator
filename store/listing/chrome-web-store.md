@@ -1,4 +1,4 @@
-# Chrome Web Store listing: zauthenticator 0.3.0
+# Chrome Web Store listing: zauthenticator 0.4.0
 
 Everything to paste into the Chrome Web Store Developer Dashboard, tab by tab. Requirements were
 checked against the official documentation on 2026-11-16; each one names its source. A value the
@@ -63,14 +63,19 @@ Features
 - Fill a code into a site: right-click the code field and choose the account.
 - Optional auto-fill: allow a site once, and on later visits the code field is filled for you while zauthenticator is unlocked. Until you submit, an expiring code is replaced with the new one once, and if the site rejects the code a fresh one is filled once; the same code is never filled twice, and a site gets at most 3 codes per tab in 5 minutes. Auto-fill stops as soon as you type or delete in the field, leave the page, or lock, and it never submits a form.
 - Optional passkey unlock uses a PRF-capable authenticator. Open Settings in a full tab, re-enter your passphrase and approve two prompts (create and verify). Unlock uses a separate window. Keep your passphrase: it unlocks without the passkey, and importing a backup asks for it. Enroll separately for each installation.
+- Change the passphrase, or remove it after two red confirmations: the vault then stays encrypted with a key this browser keeps on this computer and cannot read out, and it opens without asking.
+- Export accounts to another app: pick one or more, copy their otpauth:// links, or show QR codes that Google Authenticator imports directly (Transfer accounts > Import accounts).
+- Passphrase fields show the input source your keys produce (for example Latin letters or Korean) and whether Caps Lock is on; never the typed characters.
 - Export and import an encrypted backup.
-- Locks when you click Lock, after 15 minutes without use, and when the browser quits.
+- Shows when it will lock. Opening or using it keeps it unlocked for at least 15 more minutes; Extend keeps it unlocked for 1 hour, 24 hours or 7 days (for example for an AI agent working in the browser) after two red confirmations. Lock and quitting the browser lock at once.
 - English and Korean.
 
 Privacy
 - No account, no vault sync, no analytics, no telemetry. The extension's own pages and its background worker cannot connect to any server.
 - Secret keys, account names and auto-fill sites are stored only on your device, in a vault encrypted with AES-256-GCM. Until you add a passkey, the key is derived from your passphrase (PBKDF2-SHA-256, 600,000 iterations). Adding one switches the vault to a random data key, stored twice in encrypted form: under the key from your passphrase and under a key derived from your authenticator's PRF output. The passphrase is never stored.
 - Passkey requests are made by the browser, not the extension. The browser and your authenticator provider handle WebAuthn and may sync passkeys; your secret keys and the vault's contents are not sent to them.
+- Without a passphrase, the vault's data key is encrypted with a non-extractable key the browser generates and keeps in the extension's own storage; it never leaves the browser profile, and backups and exports never contain it. The extension reads no disk serial and builds no fingerprint of your computer.
+- Exported links and QR codes hold the secret keys; they are made on your device only when you ask and are never stored or sent by the extension.
 - A site receives only the 6-8 digit code, and only when you allowed that site or right-clicked its field.
 - Scanning a QR code on the current page takes one picture of the visible part of that tab, only when you click the scan button. It is decoded on your device and never stored or sent.
 - No site access is granted at install. When you allow auto-fill on a site, the browser asks for access to that one site; removing the site gives the access up.
@@ -79,6 +84,7 @@ Good to know
 - The passphrase cannot be recovered, and importing a backup asks for the passphrase it was made with, so a backup protects you against losing the device or browser profile, not against forgetting the passphrase.
 - A backup of a vault with a passkey omits the passkey but keeps the vault's data key, so removing the passkey neither changes that key nor revokes older copies.
 - Enrolling a passkey converts the vault to the 0.3 format, which version 0.2.0 cannot open. If you might need an older version, export a backup before you enroll.
+- Without a passphrase, anyone who can use this browser profile can see your codes; an extended unlock time does the same until it ends.
 - Codes are computed from your computer's clock, so keep its time set automatically.
 - Uninstalling the extension deletes its vault.
 
@@ -96,14 +102,19 @@ zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 
 - 사이트의 코드 입력란에서 마우스 오른쪽 버튼을 누르고 계정을 고르면 코드가 입력돼요.
 - 원하면 자동 입력도 돼요. 사이트를 한 번 허용해 두면 다음부터는 잠금이 풀려 있는 동안 코드 입력란을 자동으로 채워요. 입력한 코드가 제출 전에 만료되면 새 코드로 한 번 바꾸고, 사이트가 코드를 거부하면 새 코드로 한 번 다시 채워요. 같은 코드를 두 번 넣지 않고, 한 탭에서 한 사이트에 넣는 코드는 5분에 3개까지예요. 입력란에 직접 입력하거나 지우면, 페이지를 떠나면, 잠기면 바로 멈춰요. 폼을 제출하지는 않아요.
 - PRF를 지원하는 인증기로 선택적 패스키 잠금 해제를 사용할 수 있어요. 설정을 전체 탭으로 열어 비밀번호를 다시 입력하고 생성·확인 요청 두 번을 승인하세요. 잠금 해제는 별도 창에서 해요. 패스키 없이 잠금을 풀 때와 백업을 가져올 때는 비밀번호를 써요. 설치마다 따로 등록해야 해요.
+- 마스터 비밀번호를 바꾸거나, 빨간 확인을 두 번 거쳐 없앨 수 있어요. 없애면 보관함은 이 컴퓨터의 이 브라우저가 보관하고 꺼낼 수 없는 키로 계속 암호화되고, 묻지 않고 열려요.
+- 계정을 다른 앱으로 내보낼 수 있어요. 하나 이상 골라 otpauth:// 링크를 복사하거나, Google Authenticator가 바로 가져오는 QR 코드(계정 이전 > 계정 가져오기)를 보여 줘요.
+- 비밀번호 입력란에 지금 키가 어떤 입력 소스(영문, 한글 등)로 들어가는지와 Caps Lock 상태를 보여 줘요. 입력한 글자는 보여 주지 않아요.
 - 암호화된 백업을 내보내고 가져올 수 있어요.
-- 잠그기 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 종료하면 잠겨요.
+- 언제 잠기는지 보여 줘요. 열거나 쓰면 적어도 15분 더 열려 있고, 연장을 누르면 빨간 확인을 두 번 거쳐 1시간, 24시간, 7일 동안 열어 둘 수 있어요(예: 브라우저에서 일하는 AI 에이전트). 잠그거나 브라우저를 종료하면 바로 잠겨요.
 - 한국어와 영어를 지원해요.
 
 개인정보
 - 회원 가입, 보관함 동기화, 사용 통계 수집이 없어요. 확장 프로그램 화면과 백그라운드 워커는 어떤 서버에도 연결할 수 없어요.
 - 비밀 키, 계정 이름, 자동 입력 사이트는 이 기기에만 저장되고 AES-256-GCM으로 암호화돼요. 패스키를 등록하기 전에는 마스터 비밀번호에서 만든 키(PBKDF2-SHA-256, 60만 회 반복)로 암호화해요. 패스키를 등록하면 임의의 데이터 키로 바꾸고, 그 키를 비밀번호에서 만든 키와 인증기의 PRF 출력에서 만든 키로 각각 암호화해 두 번 저장해요. 비밀번호 자체는 저장하지 않아요.
 - 패스키 요청은 확장 프로그램이 아니라 브라우저가 해요. WebAuthn은 브라우저와 인증기 제공자가 처리하며 패스키를 동기화할 수 있지만 TOTP 비밀 키와 보관함 내용은 전송하지 않아요.
+- 비밀번호가 없으면 보관함의 데이터 키는 브라우저가 만들어 확장 프로그램 저장소에 보관하는 추출 불가 키로 암호화돼요. 이 키는 브라우저 프로필 밖으로 나가지 않고 백업과 내보내기에 들어가지 않아요. 디스크 시리얼이나 컴퓨터 지문은 읽지 않아요.
+- 내보낸 링크와 QR 코드에는 비밀 키가 들어 있어요. 요청할 때만 기기 안에서 만들고, 확장 프로그램이 저장하거나 보내지 않아요.
 - 사이트가 받는 건 6–8자리 코드뿐이고, 허용한 사이트나 직접 오른쪽 클릭한 입력란에만 들어가요.
 - 지금 페이지의 QR 코드를 스캔할 때는 "이 페이지에서 스캔" 버튼을 누른 순간에만 탭에서 보이는 부분을 한 장 캡처해요. 이 이미지는 기기 안에서 읽고, 저장하거나 보내지 않아요.
 - 설치할 때는 사이트 접근 권한을 받지 않아요. 자동 입력을 허용하면 브라우저가 그 사이트 하나에 접근해도 되는지 묻고, 설정의 자동 입력 사이트에서 삭제하면 그 권한도 반납해요.
@@ -112,6 +123,7 @@ zauthenticator는 로그인할 때 쓰는 2단계 인증(TOTP) 코드를 보여 
 - 마스터 비밀번호는 복구할 수 없어요. 백업을 가져올 때는 그 백업을 만들 때 쓴 비밀번호를 묻기 때문에, 비밀번호를 잊었을 때는 백업도 도움이 되지 않아요. 백업은 기기나 브라우저 프로필을 잃었을 때를 위한 거예요.
 - 패스키를 등록한 보관함의 백업에는 패스키가 빠지지만 보관함의 데이터 키는 그대로라서, 패스키를 삭제해도 그 키는 바뀌지 않고 이전 복사본도 폐기되지 않아요.
 - 패스키를 등록하면 보관함이 0.3 형식으로 바뀌어서 0.2.0에서는 열 수 없어요. 이전 버전이 필요할 수도 있다면 등록하기 전에 백업을 내보내 두세요.
+- 비밀번호가 없으면 이 브라우저 프로필을 쓸 수 있는 누구나 코드를 볼 수 있어요. 잠금 해제를 연장한 동안도 마찬가지예요.
 - 코드는 컴퓨터 시계로 계산해요. 시간이 자동으로 맞춰지도록 설정해 두세요.
 - 확장 프로그램을 삭제하면 보관함도 함께 지워져요.
 
@@ -317,15 +329,15 @@ source: https://developer.chrome.com/docs/webstore/publish, checked 2026-11-16
 
 ## Text lengths
 
-Measured on 2026-11-20 for the 0.3.0 texts: Unicode characters of each `text` block, line breaks
+Measured on 2026-11-25 for the 0.4.0 texts: Unicode characters of each `text` block, line breaks
 counted as one character (the second figure counts each line break as two, in case a form
 counts CR LF). No text contains a character outside the Basic Multilingual Plane, so UTF-16
 lengths are the same.
 
 | Text | Where | Characters | Limit |
 |---|---|---|---|
-| Detailed description, English | [above](#detailed-description) | 3,416 (3,443) | Edge: 250 to 10,000; this store: **unverified** |
-| Detailed description, Korean | [above](#detailed-description) | 1,897 (1,924) | as above |
+| Detailed description, English | [above](#detailed-description) | 4,726 (4,759) | Edge: 250 to 10,000; this store: **unverified** |
+| Detailed description, Korean | [above](#detailed-description) | 2,578 (2,611) | as above |
 | Single purpose description | [above](#single-purpose-description) | 397 | **unverified** |
 | storage justification | [above](#permission-justifications) | 951 | 1,000 per box, **unverified** in the docs; kept under it |
 | activeTab justification | [above](#permission-justifications) | 491 | as above |
@@ -334,4 +346,4 @@ lengths are the same.
 | Host permission justification | [above](#permission-justifications) | 593 | as above |
 | Background service worker (on request) | [above](#permission-justifications) | 456 | as above |
 | Remote code (if a box is shown) | [above](#remote-code) | 272 | as above |
-| Notes for certification | [edge-addons.md](edge-addons.md#notes-for-certification) | 1,964 (1,979) | 2,000 (Partner Center) |
+| Notes for certification | [edge-addons.md](edge-addons.md#notes-for-certification) | 1,768 (1,783) | 2,000 (Partner Center) |

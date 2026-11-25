@@ -33,6 +33,8 @@ user verification (required here) the value cannot be reproduced without that ve
   WebAuthn). Non-goal: syncing; pages still make no network requests. Non-goal (v0.3): changing
   the passphrase (no such flow exists today; when added it must draw a new DEK **and a new `id`**,
   re-encrypt, and drop every passkey slot, so a session holding the old DEK no longer matches).
+  v0.4 added it exactly so (`vault.rekeyWithPassphrase`, `session.changePassphrase`), and removing
+  the passphrase at the owner's request (a device slot; .prd/v0-4/ssot.md).
 
 ## Platform facts (measured or sourced 2026-11-17; receipts in v0-3-passkey/loop.md)
 

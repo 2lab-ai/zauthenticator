@@ -4,14 +4,17 @@ An open-source authenticator for Chrome and Edge: it shows your two-factor (TOTP
 the browser and keeps the secrets behind them on your device.
 
 - **Open source, readable.** MIT license. Plain JavaScript with no bundler, no minifier and no
-  npm dependencies at run time (one vendored QR decoder, pinned by hash), so you can read what
-  runs.
+  npm dependencies at run time (a vendored QR decoder and, from version 0.4, a vendored QR
+  encoder, both pinned by hash), so you can read what runs.
 - **Codes are made on your device**, from the secret key and your computer's clock.
 - **No account, no vault sync, no telemetry.** The extension's own pages and its background worker
   cannot connect to any server.
 - **Encrypted with your passphrase.** Secrets are stored only inside an encrypted vault, and the
   passphrase itself is never stored. From version 0.3 you can also unlock with a passkey; the
-  passphrase keeps working.
+  passphrase keeps working. From version 0.4 you can change the passphrase, or remove it after two
+  red confirmations: the vault then stays encrypted with a key this browser keeps.
+- **Your accounts can leave with you** (from version 0.4): copy them as otpauth:// links, or show
+  QR codes that Google Authenticator imports directly.
 - **Optional auto-fill, one site at a time.** You choose the sites. A site gets the 6–8 digit
   code and nothing else.
 
@@ -54,6 +57,29 @@ The first time you open the popup, you choose a passphrase of 8 characters or mo
 your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened
 (from version 0.3, unless a passkey you enrolled still works), and the extension cannot import
 your backups, because import asks for the passphrase the backup was made with.
+
+While you type in any passphrase field, a line under it shows the input source your keys produce
+(for example Latin letters or Korean Hangul, or an input method composing) and whether Caps Lock
+is on (from version 0.4). Only the kind of character is shown, never what you typed.
+
+### Change or remove the passphrase (from version 0.4)
+
+In **Settings**, **Passphrase**:
+
+- **Change passphrase**: enter the current one and the new one twice. The vault is encrypted again
+  under a new data key, so a passkey you enrolled is removed (enroll it again if you want it) and
+  other open windows of the extension lock. Backups you exported before keep the old passphrase.
+- **Remove passphrase**: enter the current one, then confirm twice on red warnings. After that the
+  extension opens without asking. Your accounts stay encrypted, with a random key that this browser
+  generated on this computer and keeps as *non-extractable*: the extension can use it but cannot
+  read it, and it is never exported or synced. A disk serial number or a "computer fingerprint" is
+  not used: an extension cannot read a disk serial, and a fingerprint changes after a driver update
+  or a new monitor, which would lock you out for good. Without a passphrase there is no Lock button
+  and no automatic lock, and a backup asks for a passphrase just for that file. **Anyone who can use
+  this browser profile can see your codes**, and if the profile or the extension's data is lost,
+  only a backup brings the accounts back.
+- **Set passphrase**: a vault without one can get one again at any time; the browser's key is then
+  deleted.
 
 ### Unlock with a passkey (from version 0.3)
 
@@ -159,10 +185,37 @@ From version 0.3:
 - Backups exported before you enrolled use your earlier passphrase key, because enrolling draws a
   new DEK.
 
+From version 0.4, a vault without a passphrase asks for a passphrase for the backup file: the file
+is encrypted under its own key, which the vault does not share.
+
+### Export accounts to another app (from version 0.4)
+
+**Settings → Backup → Export accounts** moves accounts to another authenticator. Enter your
+passphrase again (a vault without one skips this), tick one or more accounts, then:
+
+- **Copy links** puts one `otpauth://` link per line on the clipboard. Any authenticator that
+  imports otpauth links reads them, and so does zauthenticator's own **Add account**.
+- **Show QR** draws QR codes in the popup. One account gives its `otpauth://` QR, which any
+  authenticator scans (Google Authenticator: **+ → Scan a QR code**). Several accounts give Google
+  Authenticator transfer QR codes: on the phone open **Transfer accounts → Import accounts** and
+  scan each code in order. Google's format has no room for a code period other than 30 seconds
+  or for 7-digit codes, so such an account follows as its own otpauth QR. **One QR per account**
+  shows every account as an otpauth QR instead.
+
+Links and QR codes hold the secret keys in plain form: anyone who sees a QR code or the copied
+text can make your codes. They are made in the popup and never sent anywhere; leaving the view or
+locking removes them from the screen, but copied text stays on the clipboard until something
+else replaces it.
+
 ### Lock
 
-Click **Lock** to lock right away. zauthenticator also locks after 15 minutes without use, and
-when the browser fully quits (on macOS, Cmd+Q; closing the windows is not enough). While it is
+Click **Lock** to lock right away. zauthenticator also locks 15 minutes after you last used it,
+and when the browser fully quits (on macOS, Cmd+Q; closing the windows is not enough). From version
+0.4 the account list shows when it will lock, and opening or using the extension moves that time
+to at least 15 minutes from now. **Extend** keeps it unlocked for 1 hour, 24 hours or 7 days, for
+example while an AI agent works in this browser and needs codes; it asks twice, in red, because
+until then anyone using this browser can see and fill your codes. **Back to 15 minutes** ends an
+extension; Lock and quitting the browser still end it at once. While it is
 locked nothing is filled, and the right-click menu offers **Unlock zauthenticator…** instead of
 your accounts.
 
@@ -182,6 +235,12 @@ in 5 minutes and never the same code twice. Entries older than 5 minutes no long
 dropped the next time the record changes; choosing an account from the right-click menu clears
 that tab and site; locking removes the whole record. Nothing is sent to the developer or anyone
 else; there is no server.
+
+**From version 0.4.** Session memory also holds the end of an unlock time you extended
+(`unlockedUntil`), removed by every lock. If you remove the passphrase, the vault's data key is
+encrypted with a key that the browser keeps in the extension's IndexedDB storage, generated as
+non-extractable (WebCrypto): page code can encrypt and decrypt with it but never read it. It does
+not leave this browser profile; backups and exports never contain it.
 
 **From version 0.3, with a passkey.** Enrolling a passkey re-encrypts the vault under a random
 data key (DEK). The DEK is stored twice, each copy encrypted: once with a key made from your
@@ -231,7 +290,7 @@ secret key, the account name and your passphrase never reach the page.
 
 **Limits worth knowing:**
 
-- The passphrase cannot be recovered, and it cannot be changed. Restoring a backup
+- The passphrase cannot be recovered (from version 0.4 it can be changed or removed). Restoring a backup
   in the extension asks for the passphrase it was made with: a backup protects you against losing
   the device or the browser profile, not against forgetting the passphrase. From version 0.3, a
   backup shares the vault's DEK, so it is not isolated from anyone who holds that key (see
@@ -247,7 +306,11 @@ secret key, the account name and your passphrase never reach the page.
 - It does not protect against malware running as your user, a compromised browser or profile, or
   someone using your browser while it is unlocked. Copied codes sit in the system clipboard,
   where other applications can read them.
-- No timer runs for the 15-minute lock. The unlocked key stays in the browser's session memory
+- Without a passphrase (from version 0.4), the vault is only as safe as the browser profile:
+  anyone who can use it, or copy it whole, can open your codes.
+- An extended unlock time (from version 0.4) keeps codes available to anyone using this browser,
+  people and AI agents alike, until it ends or you lock.
+- No timer runs for the lock time. The unlocked key stays in the browser's session memory
   until the next thing that reads it (opening the popup, a menu choice or an auto-fill request);
   that read locks the vault and clears the key before any code is shown or filled. In the same
   way, if the browser's background worker was asleep when the 15 minutes passed, account names
@@ -301,6 +364,15 @@ to), and a site's entry on the extension's details page before and after **Remov
 - npm registry integrity of `jsqr@1.4.0`:
   `sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==`
 - sha256 of `jsQR.js`: `bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859`
+
+From version 0.4, `extension/vendor/qrcode.js` is qrcode-generator 2.0.4 (MIT, Kazuhiko Arase):
+the file `dist/qrcode.js` of the npm package `qrcode-generator@2.0.4`, unmodified, used to draw
+export QR codes. The npm package carries no license file, so `extension/vendor/qrcode.LICENSE` is
+the MIT license from the upstream repository (github.com/kazuhikoarase/qrcode-generator).
+
+- npm registry integrity of `qrcode-generator@2.0.4`:
+  `sha512-mZSiP6RnbHl4xL2Ap5HfkjLnmxfKcPWpWe/c+5XxCuetEenqmNFf1FH/ftXPCtFG5/TDobjsjz6sSNL0Sr8Z9g==`
+- sha256 of `qrcode.js`: `79ec86f82856005b1c887905cfccfcfbec3821ca61c7fd5a952faa5f778f791c`
 
 To check it yourself, from the repository root:
 
@@ -357,7 +429,10 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 - **코드는 이 기기에서 만들어요**: 비밀 키와 컴퓨터 시계만으로 계산해요.
 - **회원 가입·보관함 동기화·사용 통계 수집이 없어요**: 확장 프로그램 화면과 백그라운드 워커는 어떤 서버에도 연결할 수 없어요.
 - **마스터 비밀번호로 암호화해요**: 비밀 키는 암호화된 보관함 안에만 저장되고, 비밀번호 자체는 어디에도 저장하지 않아요.
-  0.3부터는 패스키로도 잠금을 풀 수 있고, 비밀번호도 계속 쓸 수 있어요.
+  0.3부터는 패스키로도 잠금을 풀 수 있고, 비밀번호도 계속 쓸 수 있어요. 0.4부터는 비밀번호를 바꾸거나,
+  빨간 확인을 두 번 거쳐 없앨 수 있어요. 없애도 보관함은 이 브라우저가 보관하는 키로 계속 암호화돼요.
+- **계정을 다른 앱으로 옮길 수 있어요** (0.4부터): otpauth:// 링크로 복사하거나, Google Authenticator가 바로
+  가져오는 QR 코드를 보여 줘요.
 - **자동 입력은 사이트마다 직접 허용해요**: 사이트가 받는 건 6–8자리 코드뿐이에요.
 
 ### 설치
@@ -375,10 +450,22 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 
 ### 사용법
 
-- **처음 열 때** 마스터 비밀번호(8자 이상)를 만들어요. 비밀번호는 복구할 수 없고 바꿀 수도 없으니 잊지 않도록 해 주세요.
+- **처음 열 때** 마스터 비밀번호(8자 이상)를 만들어요. 비밀번호는 복구할 수 없으니 잊지 않도록 해 주세요.
   잊으면 저장한 계정을 열 수 없고(0.3부터는 등록한 패스키가 아직 동작하면 열 수 있어요), 백업을 가져올 때도
   그 백업을 만들 때 쓴 비밀번호를 묻기 때문에 백업으로도 되살릴 수 없어요. 백업은 기기나 브라우저 프로필을
   잃었을 때를 위한 거예요.
+- **비밀번호 입력란** (0.4부터): 입력하는 동안 아래 줄에 지금 키가 어떤 입력 소스로 들어가는지(영문, 한글,
+  입력기 조합 중 등)와 Caps Lock이 켜져 있는지 보여 줘요. 입력한 글자 자체는 보여 주지 않아요.
+- **비밀번호 변경·제거** (0.4부터): **설정 → 암호**에서 현재 비밀번호와 새 비밀번호(두 번)를 넣으면 바뀌어요.
+  보관함이 새 데이터 키로 다시 암호화되므로 등록한 패스키는 지워지고(필요하면 다시 등록하세요), 열려 있는
+  다른 창은 잠겨요. **암호 제거**는 현재 비밀번호를 넣은 뒤 빨간 경고를 두 번 확인해야 해요. 그 뒤로는 묻지
+  않고 열려요. 계정은 이 컴퓨터에서 이 브라우저가 만든 임의의 키로 계속 암호화되고, 이 키는 *추출 불가*로
+  보관돼서 확장 프로그램도 쓰기만 할 뿐 읽을 수 없고, 내보내거나 동기화되지 않아요. 디스크 시리얼이나 "컴퓨터
+  지문"은 쓰지 않아요. 확장 프로그램은 디스크 시리얼을 읽을 수 없고, 지문은 드라이버 업데이트나 모니터 교체로
+  바뀌어 영영 못 열게 될 수 있어서예요. 비밀번호가 없으면 잠그기 버튼과 자동 잠금이 없고, 백업은 그 파일에만
+  쓸 비밀번호를 따로 물어요. **이 브라우저 프로필을 쓸 수 있는 누구나 코드를 볼 수 있고**, 프로필이나 확장
+  프로그램 데이터를 잃으면 백업으로만 되찾을 수 있어요. 언제든 **암호 설정**으로 다시 비밀번호를 정할 수 있고,
+  그러면 브라우저의 키는 지워져요.
 - **계정 추가**: 지금 보고 있는 페이지의 QR 코드(툴바 아이콘을 눌러 스캔), QR 이미지, `otpauth://` 링크,
   설정 키 직접 입력 중 편한 방법을 쓰면 돼요.
 - **코드 복사**: 코드를 클릭하면 복사돼요. 다음 코드까지 남은 시간도 보여요.
@@ -427,8 +514,23 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
     암호화한 데이터를 풀 수 있어요. 예를 들어 패스키 슬롯이 남은 이전 보관함 복사본과 그에 맞는 인증기·사용자
     확인을 가진 사람, 또는 잠금이 풀린 세션에서 DEK를 가져간 사람이에요.
   - 패스키를 등록하기 전에 내보낸 백업은 이전 비밀번호 키를 써요. 등록할 때 새 DEK를 만들기 때문이에요.
-- **잠금**: 잠그기 버튼을 누르거나, 15분 동안 쓰지 않거나, 브라우저를 완전히 종료하면(macOS는 Cmd+Q) 잠겨요.
-  잠겨 있는 동안에는 아무것도 입력하지 않아요.
+  - 0.4부터 비밀번호가 없는 보관함은 백업 파일에 쓸 비밀번호를 물어요. 그 파일은 보관함과 공유하지 않는 별도
+    키로 암호화돼요.
+- **계정 내보내기** (0.4부터): **설정 → 백업 → 계정 내보내기**에서 비밀번호를 다시 입력하고(비밀번호가 없는
+  보관함은 건너뛰어요) 계정을 하나 이상 고르면 돼요. **링크 복사**는 `otpauth://` 링크를 한 줄에 하나씩
+  클립보드에 넣어요(zauthenticator의 계정 추가도 이 형식을 읽어요). **QR 보기**는 팝업 안에 QR 코드를 그려요.
+  계정 하나면 어떤 OTP 앱으로도 스캔하는 `otpauth://` QR이고(Google Authenticator: **+ → QR 코드 스캔**), 여러
+  개면 Google Authenticator 이전 QR이에요. 휴대폰에서 **계정 이전 → 계정 가져오기**를 열고 QR을 순서대로
+  스캔하세요. Google 형식에는 30초가 아닌 주기나 7자리 코드를 넣을 수 없어서 그런 계정은 따로 otpauth QR로
+  이어져요. **계정마다 QR 하나**를 고르면 모든 계정을 otpauth QR로 보여 줘요. 링크와 QR에는 비밀 키가 그대로
+  들어 있으니 다른 사람이 보지 않게 하세요. 화면을 떠나거나 잠그면 지워지지만, 복사한 글자는 다른 걸 복사할
+  때까지 클립보드에 남아요.
+- **잠금**: 잠그기 버튼을 누르거나, 마지막으로 쓰고 15분이 지나거나, 브라우저를 완전히 종료하면(macOS는
+  Cmd+Q) 잠겨요. 잠겨 있는 동안에는 아무것도 입력하지 않아요. 0.4부터 계정 목록에 언제 잠기는지 보이고,
+  확장 프로그램을 열거나 쓰면 그 시각이 적어도 지금부터 15분 뒤로 늘어나요. **연장**을 누르면 1시간, 24시간,
+  7일 동안 잠금 해제해 둘 수 있어요(예: AI 에이전트가 이 브라우저에서 코드를 써야 할 때). 그동안 이 브라우저를
+  쓰는 누구나 코드를 보고 입력할 수 있어서 빨간 확인을 두 번 거쳐요. **15분으로 되돌리기**로 끝낼 수 있고,
+  잠그거나 브라우저를 종료하면 바로 끝나요.
 
 ### 개인정보와 보안
 
@@ -460,6 +562,10 @@ zauthenticator는 Chrome과 Edge에서 쓰는 오픈소스 2단계 인증(TOTP) 
 - 권한: `storage`(암호화된 보관함 저장), `activeTab`(툴바 아이콘이나 오른쪽 클릭 메뉴를 쓴 그 탭에서만 QR
   스캔·코드 입력), `contextMenus`(오른쪽 클릭 메뉴), `scripting`(코드 입력과 자동 입력 등록), 그리고 허용한
   사이트 하나씩만 받는 선택적 `https` 사이트 접근이에요. 설치할 때는 어떤 사이트 권한도 받지 않아요.
+- 0.4부터 세션 메모리에는 연장한 잠금 해제 시각(`unlockedUntil`)도 있고, 잠글 때마다 지워져요. 비밀번호를
+  없애면 보관함의 데이터 키는 브라우저가 확장 프로그램의 IndexedDB에 *추출 불가*로 보관하는 키로 암호화돼요.
+  이 키는 이 브라우저 프로필 밖으로 나가지 않고, 백업이나 내보내기에도 들어가지 않아요. 비밀번호가 없으면
+  보관함의 안전은 브라우저 프로필에 달려 있어요.
 - 컴퓨터 시계가 틀리면 코드도 틀려요. 보관함 동기화는 일부러 넣지 않았어요(패스키 제공자는 패스키를 따로
   동기화할 수 있어요). 백업 파일이나 브라우저 프로필을 가진 사람은 비밀번호를 오프라인에서 추측해 볼 수
   있으니 긴 비밀번호를 쓰세요. 0.3부터 패스키 슬롯이 있는 프로필 복사본은 그에 맞는 인증기와 사용자
