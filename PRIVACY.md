@@ -1,12 +1,14 @@
 # Privacy policy
 
-**zauthenticator** browser extension. Effective date: 2026-11-17.
+**zauthenticator** browser extension. Effective date: 2026-11-25.
 
 In short: zauthenticator keeps your data on your device, encrypted with your passphrase. The
 developer receives nothing. The extension has no server, no account, no analytics and no
 telemetry, and it does not sell, share or transfer your data. From version 0.3 you can also
 unlock it with a passkey; the browser then exchanges a few values with your own authenticator, as
-described under [Passkey unlock](#passkey-unlock-from-version-03).
+described under [Passkey unlock](#passkey-unlock-from-version-03). From version 0.4 you can remove
+the passphrase; the vault then stays encrypted with a key that only this browser keeps
+([Without a passphrase](#without-a-passphrase-from-version-04)).
 
 ## Data the extension stores on your device
 
@@ -34,8 +36,9 @@ They do not include the PRF output or the data key in plain form, and your secre
 encrypted. A vault that never had a passkey keeps the earlier format.
 
 - **Your passphrase is never stored.** After you unlock, the derived key is kept in the browser's
-  session storage, in memory, until you lock or the browser quits. After 15 minutes without use,
-  the next time the extension reads the key (opening the popup, a menu choice or an auto-fill
+  session storage, in memory, until you lock or the browser quits. After 15 minutes without use
+  (from version 0.4: after the end of an unlock time you extended, if that is later; never
+  without a passphrase), the next time the extension reads the key (opening the popup, a menu choice or an auto-fill
   request) it removes the key before any code is shown or filled. From version 0.3, session
   storage holds the key together with the vault's version and identity, and also a random lock
   counter (`lockGen`) that is not secret: each lock replaces it instead of removing it, so a
@@ -63,6 +66,28 @@ encrypted. A vault that never had a passkey keeps the earlier format.
   earlier passphrase key, because enrolling draws a new data key.
 - **Codes you copy** are placed on your system clipboard, where other applications on your device
   can read them.
+- **Exported links and QR codes** (from version 0.4): when you export accounts, the extension
+  shows QR codes in the popup or copies `otpauth://` links to your clipboard. They contain the
+  secret keys and account names in plain form, so anyone who sees the QR code or the copied text
+  can generate your codes. They are made on your device only when you ask, are not stored or sent
+  by the extension, and leave the screen when you leave the export view or lock; copied text stays
+  on your clipboard until something replaces it.
+- **The unlock time** (from version 0.4): if you extend the unlock time, session storage (in
+  memory) also holds when the extension is to end it (`unlockedUntil`). Every lock removes it.
+
+## Without a passphrase (from version 0.4)
+
+If you remove the passphrase (Settings, after two confirmations), the vault is encrypted again
+under a new random data key, and that data key is stored encrypted with a device key: a random
+AES-256 key that the browser generates on your computer as non-extractable (WebCrypto) and keeps in
+the extension's IndexedDB storage, in this browser profile. The extension can encrypt and decrypt
+with it but cannot read its value, and backups and exports never contain it. "Non-extractable" is
+enforced by the browser's API, not on disk: the browser stores the key in the profile's files, so
+anyone who can copy those files (for example malware running as you, or a full backup of your
+home folder) can decrypt the vault. The extension does not read disk serial numbers or build a fingerprint of your
+computer. Without a passphrase, the extension opens without asking and does not lock for time, so
+anyone who can use this browser profile, or copy it whole, can see your codes. Setting a
+passphrase again deletes the device key.
 
 ## What the extension reads from web pages
 
@@ -138,14 +163,17 @@ extension installed from there; the extension itself takes no part in that.
 ## Your controls
 
 - **See your data**: the popup lists your accounts, and Settings lists your auto-fill sites.
-- **Export and import** an encrypted backup from Settings.
+- **Export and import** an encrypted backup from Settings. From version 0.4, **export accounts**
+  as links or QR codes to move them to another app.
+- **Change or remove the passphrase** (from version 0.4) in Settings, or set one again.
 - **Delete** an account (its auto-fill sites go with it), or **remove** an auto-fill site, which
   also gives up the extension's access to that site. You can also remove site access from the
   extension's details page in the browser.
 - **Remove a passkey** (from version 0.3) in Settings; delete it from the phone, key or password
   manager too. This does not change backups or older copies already made.
-- **Lock** the vault at any time; it also locks after 15 minutes without use and when the browser
-  quits.
+- **Lock** the vault at any time; it also locks 15 minutes after the last use (or, from version 0.4,
+  when an unlock time you extended ends) and when the browser quits. Without a passphrase it does
+  not lock.
 - **Uninstall** the extension to delete everything it stored, including the vault.
 
 ## Store policies
@@ -188,6 +216,19 @@ effective date above updated, and the repository's history shows every earlier v
   키를 가진 사람(패스키 슬롯이 남은 이전 복사본과 그에 맞는 인증기·사용자 확인을 가진 사람, 또는 잠금이 풀린
   세션에서 키를 가져간 사람)은 비밀번호 없이 백업과 같은 키로 나중에 암호화된 데이터를 풀 수 있어요. 패스키를
   등록하기 전에 내보낸 백업은 이전 비밀번호 키를 써요.
+
+## 한국어 요약: 0.4에서 바뀐 점
+
+- **비밀번호 제거**: 설정에서 빨간 확인을 두 번 거쳐 비밀번호를 없애면, 보관함은 새 데이터 키로 다시
+  암호화되고 그 키는 브라우저가 이 컴퓨터에서 만든 *추출 불가* 키(WebCrypto, 확장 프로그램의 IndexedDB에
+  보관)로 암호화돼요. 확장 프로그램도 이 키 값을 읽을 수 없고, 브라우저 프로필 밖으로 나가지 않으며, 백업과
+  내보내기에 들어가지 않아요. 디스크 시리얼이나 컴퓨터 지문은 읽지 않아요. 비밀번호가 없으면 묻지 않고 열리고
+  시간이 지나도 잠기지 않으니, 이 브라우저 프로필을 쓸 수 있는 누구나 코드를 볼 수 있어요. 다시 비밀번호를
+  정하면 이 키는 지워져요.
+- **계정 내보내기**: 요청할 때만 팝업에 QR 코드를 그리거나 `otpauth://` 링크를 클립보드에 복사해요. 여기에는
+  비밀 키가 그대로 들어 있어요. 확장 프로그램은 이것을 저장하거나 보내지 않고, 화면을 떠나거나 잠그면 지워요.
+  복사한 글자는 다른 걸 복사할 때까지 클립보드에 남아요.
+- **잠금 해제 연장**: 연장하면 세션 저장소(메모리)에 끝나는 시각(`unlockedUntil`)을 두고, 잠글 때마다 지워요.
 
 ## Contact
 

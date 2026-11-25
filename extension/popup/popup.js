@@ -1,4 +1,4 @@
-// Popup entry point. body[data-state] ∈ setup | locked | list | add | settings | bind selects
+// Popup entry point. body[data-state] ∈ setup | locked | list | add | settings | bind | export selects
 // the visible view (popup.css). The same page also runs as a full tab (popup.html#add-file,
 // popup.html#settings) for file pickers, which can close a popup on some platforms, and in a
 // small window the service worker opens (popup.html#bind, popup.html#unlock; lib/nav.js
@@ -11,10 +11,13 @@ import { $, setText, withBusy, reason, clearAnnouncement } from './ui.js';
 import { createListView, paintAvatar, clearAvatar } from './list.js';
 import { createAddView, summary } from './add.js';
 import { createSettingsView, createPasskeyUnlock, accountTitle, takeOrphanNotice } from './settings.js';
+import { createUnlockTime } from './unlock-time.js';
+import { createExportView } from './export.js';
+import { attachKeyHints } from './keyhint.js';
 import { openOwnWindow } from '../lib/nav.js';
 
 const MIN_PASSPHRASE_LENGTH = 8;
-const UNLOCKED_VIEWS = ['list', 'add', 'settings', 'bind'];
+const UNLOCKED_VIEWS = ['list', 'add', 'settings', 'bind', 'export'];
 // The window views: #bind offers to remember the site of the last menu fill; #unlock only asks
 // for the passphrase.
 const WINDOW_VIEWS = ['bind', 'unlock'];
@@ -36,6 +39,8 @@ let localOps = 0;      // > 0 while this page starts up, creates, unlocks or loc
 let recheck = false;   // a storage change arrived meanwhile: re-check once that ends
 let reconciling = Promise.resolve();
 let passkeyUnlock;
+let unlockTime;
+let exportView;
 
 main().catch((error) => {
   setText($('.loading'), t('errStartup', reason(error)));
@@ -46,6 +51,8 @@ async function main() {
   localize(document);
   localize($('#account-template').content);
   localize($('#binding-template').content);
+  // Every passphrase field: the input source the keys produce and Caps Lock.
+  attachKeyHints(document);
 
   // tabs.getCurrent() finds a Tab both in a full tab and in the service worker's window; only the
   // toolbar popup has none. The hash tells the two apart (only openOwnWindow uses #bind, #unlock).
@@ -64,6 +71,7 @@ async function main() {
     isTab,
     done: (result) => showList(`${t('importDone')} ${summary(result)}`),
     onOrphan: showOrphanNotice,
+    onPassphraseChanged: syncMode,
   });
   // "Unlock with passkey": the toolbar popup opens the unlock window; in that window (or a tab)
   // the click runs the ceremony.
@@ -73,6 +81,9 @@ async function main() {
     onUnlocked: enterUnlocked,
   });
   bind = createBindView();
+  exportView = createExportView({ back: () => show('settings') });
+  // The list view's lock time and Extend. A lock time that has passed is checked like an idle one.
+  unlockTime = createUnlockTime({ onExpired: () => { idleLock().catch(() => {}); } });
 
   wireNavigation();
   wireSetup();
@@ -129,6 +140,8 @@ async function show(state, options = {}) {
   const token = ++showToken;
   // Never an unlocked view without an unlocked session (e.g. a late callback after a lock).
   if (UNLOCKED_VIEWS.includes(state) && !session.isUnlocked()) state = 'locked';
+  // Secret keys shown for an export never outlive the view.
+  if (state !== 'export') exportView.clear();
   if (state === 'list') {
     // Rows and codes are ready before the list becomes visible.
     await list.render();
@@ -138,21 +151,52 @@ async function show(state, options = {}) {
       return;
     }
     list.start();
+    unlockTime.start();
   } else {
     list.stop();
+    unlockTime.stop();
   }
   document.body.dataset.state = state;
+  syncMode();
   $('#main').scrollTop = 0;
   if (state === 'setup') $('#setup-pass').focus();
   else if (state === 'locked') {
     $('#unlock-pass').focus();
     passkeyUnlock.refresh();
+    showDeviceMissing(token);
   }
   else if (state === 'list') list.focus();
   else if (state === 'add') add.open(options);
   else if (state === 'settings') settings.open();
+  else if (state === 'export') exportView.open();
   else if (state === 'bind') bind.focus();
   showOrphanNotice();
+}
+
+// Without a passphrase there is nothing to lock with: the Lock button goes (popup.css).
+function syncMode() {
+  document.body.classList.toggle('no-passphrase', session.isUnlocked() && !session.hasPassphrase());
+}
+
+// The locked view of a vault without a passphrase has no passphrase to type. It says why it is
+// locked: the device key could not be read right now (the vault is intact: Try again), or this
+// browser no longer has it (nothing here can open the vault). A vault whose key is present opens
+// itself instead of showing this view.
+async function showDeviceMissing(token) {
+  let info = { device: false, deviceKey: null };
+  try {
+    info = await session.vaultInfo();
+  } catch {
+    info = { device: false, deviceKey: null };
+  }
+  if (token !== showToken || document.body.dataset.state !== 'locked') return;
+  if (info.device && info.deviceKey === 'present') {
+    await route(await session.resume());
+    return;
+  }
+  $('#unlock-device-missing').hidden = !(info.device && info.deviceKey === 'missing');
+  $('#unlock-device-unavailable').hidden = !(info.device && info.deviceKey === 'unavailable');
+  $('#unlock-form').hidden = info.device;
 }
 
 // An enrollment that created a passkey on the phone or key but could not store it (this page
@@ -191,6 +235,8 @@ async function showList(message) {
 // codes, every input of every view, status lines and the screen-reader live region.
 function clearSensitive() {
   passkeyUnlock.clear();
+  unlockTime.clear();
+  exportView.clear();
   list.clear();
   add.clearSensitive();
   settings.clearSensitive();
@@ -229,13 +275,17 @@ function wireNavigation() {
   $('#lock-btn').addEventListener('click', lock);
   $('#add-cancel').addEventListener('click', () => showList());
   $('#settings-back').addEventListener('click', () => showList());
+  $('#xp-open').addEventListener('click', () => show('export'));
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
     const state = document.body.dataset.state;
     const target = event.target;
     const typing = target instanceof HTMLElement && target.matches('input, textarea, select');
-    if ((state === 'add' || state === 'settings') && !typing) {
+    if (state === 'export' && !typing) {
+      event.preventDefault();
+      show('settings');
+    } else if ((state === 'add' || state === 'settings') && !typing) {
       event.preventDefault();
       showList();
     } else if (state === 'bind') {
@@ -292,6 +342,7 @@ function wireSetup() {
 }
 
 function wireUnlock() {
+  $('#unlock-device-retry').addEventListener('click', () => local(async () => route(await session.resume())));
   const form = $('#unlock-form');
   const passEl = $('#unlock-pass');
   const errorEl = $('#unlock-error');
@@ -342,7 +393,12 @@ function wireIdleLock() {
     lastTouch = now;
     // session.touch() refuses to refresh a session that already sat idle too long, so the
     // first event in a page woken after the limit locks it instead of reviving it.
-    session.touch().then((result) => (result === 'idle' ? idleLock() : undefined)).catch(() => {});
+    // A recorded activity moves the lock time: the list view shows the new one.
+    session.touch().then((result) => {
+      if (result === 'idle') return idleLock();
+      if (result === 'touched' && document.body.dataset.state === 'list') return unlockTime.refresh();
+      return undefined;
+    }).catch(() => {});
   };
   for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel']) {
     document.addEventListener(type, activity, { capture: true, passive: true });
@@ -406,7 +462,14 @@ async function reconcile() {
       if (document.body.dataset.state === 'list') await list.render();
       else if (document.body.dataset.state === 'settings') settings.refresh();
     } else if (result === 'locked') {
-      await showLocked();
+      // A vault without a passphrase opens again by itself (another page re-keyed it); what was
+      // typed in this page goes first, as with any lock another page causes.
+      if ((await session.vaultInfo()).device) {
+        clearSensitive();
+        await route(await session.resume());
+      } else {
+        await showLocked();
+      }
     } else if (result === 'setup') {
       clearSensitive();
       await show('setup');

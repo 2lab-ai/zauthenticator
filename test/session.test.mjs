@@ -1301,3 +1301,290 @@ test('withVaultState: locked → data null; idle or a key that does not open the
   assert.equal(await w.withVaultState(async () => 42), 42);
   await assert.rejects(w.withVaultState(async () => { throw new Error('boom'); }), /boom/);
 });
+
+// ---- unlock time: idle limit after the last use, or a manual extension (v0.4) ----
+
+const HOUR = 60 * 60 * 1000;
+const near = (a, b, slack = 5000) => Math.abs(a - b) <= slack;
+
+test('opening a page leaves at least 15 minutes and shows no extension', async () => {
+  await seed();
+  areas.session.set('lastActiveAt', Date.now() - 10 * 60 * 1000);
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const state = await a.unlockState();
+  assert.equal(state.until, null);
+  assert.ok(near(state.lockAt, Date.now() + a.IDLE_LOCK_MS), 'lock time is 15 minutes from the open');
+});
+
+test('a manual extension keeps the worker and idle checks unlocked past the idle limit', async () => {
+  await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  assert.equal(await a.resume(), 'list');
+  const state = await a.extendUnlock(24 * HOUR);
+  assert.ok(near(state.until, Date.now() + 24 * HOUR));
+  assert.equal(state.lockAt, state.until);
+  assert.equal(areas.session.get('unlockedUntil'), state.until);
+  // 16 minutes without use: past the idle limit, inside the extension.
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), false);
+  const worker = await page();
+  const data = await worker.readUnlocked();
+  assert.equal(data.accounts.length, 1);
+  // Opening a page again does not shorten it.
+  const b = await page();
+  assert.equal(await b.resume(), 'list');
+  assert.equal((await b.unlockState()).lockAt, state.until);
+});
+
+test('back to 15 minutes drops the extension; unsupported lengths write nothing', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.extendUnlock(HOUR);
+  const reset = await a.extendUnlock(0);
+  assert.equal(reset.until, null);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  assert.ok(near(reset.lockAt, Date.now() + a.IDLE_LOCK_MS));
+  for (const bad of [1, -HOUR, 2 * HOUR, 30 * 24 * HOUR, NaN, '3600000']) {
+    await assert.rejects(a.extendUnlock(bad), TypeError);
+  }
+  assert.equal(areas.session.has('unlockedUntil'), false);
+});
+
+test('every lock removes the extension; an ended or impossible extension locks', async () => {
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.extendUnlock(7 * 24 * HOUR);
+  await a.lock();
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  assert.equal(await a.unlockState(), null);
+  await assert.rejects(a.extendUnlock(HOUR), (e) => e.code === 'locked');
+
+  // Ended: the extension and the idle limit both passed.
+  await seed();
+  areas.session.set('lastActiveAt', Date.now() - 2 * HOUR);
+  areas.session.set('unlockedUntil', Date.now() - HOUR);
+  assert.equal(await (await page()).readUnlocked(), null);
+  assert.equal(areas.session.has('vaultKey'), false);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+
+  // Further away than the longest choice: the clock was set back (or the value was not ours).
+  await seed();
+  areas.session.set('unlockedUntil', Date.now() + 8 * 24 * HOUR);
+  assert.equal(await (await page()).resume(), 'locked');
+  assert.equal(areas.session.has('vaultKey'), false);
+});
+
+test('an extension chosen in one page is seen by another page and the passkey checks', async () => {
+  await seed();
+  const a = await page();
+  const b = await page();
+  await a.resume();
+  await b.resume();
+  const { until } = await a.extendUnlock(HOUR);
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal((await b.unlockState()).lockAt, until);
+  assert.equal(await b.touch(), 'touched');
+  assert.equal(await b.checkPassphrase(PASS), true);
+});
+
+// ---- passphrase change and removal (v0.4) ----
+
+// IndexedDB mock for lib/devicekey.js: one object store, values kept as given (CryptoKey objects).
+const idb = new Map();
+function idbRequest(tx, fn) {
+  const req = {};
+  tx.pending++;
+  setTimeout(() => {
+    try {
+      req.result = fn();
+      req.onsuccess?.();
+    } catch (error) {
+      req.error = error;
+      req.onerror?.();
+    }
+    if (--tx.pending === 0) setTimeout(() => tx.oncomplete?.(), 0);
+  }, 0);
+  return req;
+}
+globalThis.indexedDB = {
+  open() {
+    const req = {};
+    setTimeout(() => {
+      req.result = {
+        objectStoreNames: { contains: () => true },
+        createObjectStore() {},
+        close() {},
+        transaction() {
+          const tx = { pending: 0 };
+          tx.objectStore = () => ({
+            put: (value, key) => idbRequest(tx, () => { idb.set(key, value); return key; }),
+            get: (key) => idbRequest(tx, () => idb.get(key)),
+            delete: (key) => idbRequest(tx, () => { idb.delete(key); }),
+            getAllKeys: () => idbRequest(tx, () => [...idb.keys()]),
+          });
+          return tx;
+        },
+      };
+      req.onupgradeneeded?.();
+      req.onsuccess?.();
+    }, 0);
+    return req;
+  },
+};
+
+const NEW = 'a different passphrase';
+const FAST_KDF = { iterations: 1000 };
+
+test('change passphrase: wrong or weak input writes nothing; success re-keys and locks other pages', async () => {
+  const record = await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  const b = await page();
+  await a.resume();
+  await b.resume();
+  await assert.rejects(a.changePassphrase('incorrect', NEW, FAST_KDF), (e) => e.code === 'bad-passphrase');
+  await assert.rejects(a.changePassphrase(PASS, 'short', FAST_KDF), (e) => e.code === 'weak-passphrase');
+  assert.deepEqual(await store.getRecord(), record);
+  const result = await a.changePassphrase(PASS, NEW, FAST_KDF);
+  assert.deepEqual(result, { saved: true, locked: false, hadPasskey: false });
+  const stored = await store.getRecord();
+  assert.equal(stored.v, 2);
+  assert.deepEqual(vault.identity(stored), { v: 2, id: stored.id });
+  await assert.rejects(vault.unlock(stored, PASS), (e) => e.code === 'bad-passphrase');
+  assert.equal((await vault.unlock(stored, NEW)).data.accounts.length, 1);
+  assert.equal(a.isUnlocked(), true);
+  assert.equal(a.accounts().length, 1);
+  // Page b held the old key: it locks, and opening it again reads the new session.
+  assert.equal(await b.refresh(), 'locked');
+  assert.equal(await b.resume(), 'list');
+  await a.lock();
+  await assert.rejects(a.unlock(PASS), (e) => e.code === 'bad-passphrase');
+  await a.unlock(NEW);
+  assert.equal(a.accounts().length, 1);
+});
+
+test('change passphrase drops a registered passkey', async () => {
+  await seed();
+  const { record, rawKey } = await vault.addPasskeySlot(await store.getRecord(), PASS, PASSKEY);
+  await store.saveRecord(record);
+  await store.setSessionKey(rawKey, vault.identity(record));
+  const a = await page();
+  await a.resume();
+  const result = await a.changePassphrase(PASS, NEW, FAST_KDF);
+  assert.equal(result.hadPasskey, true);
+  assert.equal(vault.passkeySlot(await store.getRecord()), null);
+});
+
+test('remove passphrase: wrong passphrase stores nothing; success opens with the device key only', async () => {
+  idb.clear();
+  const record = await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  await a.resume();
+  await assert.rejects(a.removePassphrase('incorrect'), (e) => e.code === 'bad-passphrase');
+  assert.deepEqual(await store.getRecord(), record);
+  assert.equal(idb.size, 0);
+  const result = await a.removePassphrase(PASS);
+  assert.deepEqual(result, { saved: true, locked: false, hadPasskey: false });
+  const stored = await store.getRecord();
+  assert.equal(idb.size, 1);
+  assert.deepEqual(vault.deviceSlot(stored), { key: [...idb.keys()][0] });
+  await assert.rejects(vault.unlock(stored, PASS), (e) => e.code === 'no-passphrase');
+  assert.equal(a.hasPassphrase(), false);
+  assert.deepEqual(await a.unlockState(), { lockAt: null, until: null, device: true });
+  await assert.rejects(a.extendUnlock(60 * 60 * 1000), (e) => e.code === 'no-passphrase');
+  await assert.rejects(a.removePassphrase(PASS), (e) => e.code === 'no-passphrase');
+  assert.deepEqual(await a.vaultInfo(), { device: true, deviceKey: 'present' });
+  // No idle lock without a passphrase.
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), false);
+  assert.equal(await a.touch(), 'touched');
+  // A browser restart (session storage gone): pages and the worker open it with the device key.
+  areas.session.clear();
+  assert.equal((await (await page()).readUnlocked()).accounts.length, 1);
+  assert.ok(areas.session.has('vaultKey'));
+  areas.session.clear();
+  const c = await page();
+  assert.equal(await c.resume(), 'list');
+  assert.equal(c.accounts().length, 1);
+  // A manual lock: the next open opens it again.
+  await c.lock();
+  assert.equal(await (await page()).resume(), 'list');
+});
+
+test('a vault without a passphrase whose device key is gone stays locked', async () => {
+  idb.clear();
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.removePassphrase(PASS);
+  idb.clear();
+  areas.session.clear();
+  const b = await page();
+  assert.equal(await b.resume(), 'locked');
+  assert.equal(await b.readUnlocked(), null);
+  assert.deepEqual(await b.vaultInfo(), { device: true, deviceKey: 'missing' });
+});
+
+test('a device key that cannot be read right now is not reported as gone; the vault opens later', async () => {
+  idb.clear();
+  await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  await a.resume();
+  await a.removePassphrase(PASS);
+  areas.session.clear();
+  const realOpen = globalThis.indexedDB.open;
+  globalThis.indexedDB.open = () => {
+    const req = {};
+    setTimeout(() => { req.error = new Error('Internal error opening backing store'); req.onerror?.(); }, 0);
+    return req;
+  };
+  try {
+    const b = await page();
+    assert.equal(await b.resume(), 'locked');
+    assert.deepEqual(await b.vaultInfo(), { device: true, deviceKey: 'unavailable' });
+    assert.ok(await store.getRecord(), 'the record stays');
+  } finally {
+    globalThis.indexedDB.open = realOpen;
+  }
+  const c = await page();
+  assert.equal(await c.resume(), 'list');
+  assert.equal(c.accounts().length, 1);
+});
+
+test('a re-key drops a manual extension; a backup passphrase is only for a vault without one', async () => {
+  idb.clear();
+  await seed();
+  const a = await page();
+  await a.resume();
+  await a.extendUnlock(7 * 24 * 60 * 60 * 1000);
+  await assert.rejects(a.exportWithPassphrase('backup passphrase'), (e) => e.code === 'has-passphrase');
+  await a.removePassphrase(PASS);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  await a.changePassphrase(null, NEW, FAST_KDF);
+  assert.equal(areas.session.has('unlockedUntil'), false);
+  areas.session.set('lastActiveAt', STALE());
+  assert.equal(await a.lockIfIdle(), true);
+});
+
+test('set a passphrase again: the device key is deleted; backups without a passphrase use their own', async () => {
+  idb.clear();
+  await seed({ accounts: [{ id: 'x', ...ACC, createdAt: 1 }] });
+  const a = await page();
+  await a.resume();
+  await a.removePassphrase(PASS);
+  await assert.rejects(a.exportRecord(), (e) => e.code === 'no-passphrase');
+  const backup = await a.exportWithPassphrase('backup passphrase');
+  assert.equal(backup.v, 1);
+  assert.equal((await vault.unlock(backup, 'backup passphrase')).data.accounts[0].secret, ACC.secret);
+  await assert.rejects(a.exportWithPassphrase('short'), (e) => e.code === 'weak-passphrase');
+  const result = await a.changePassphrase(null, NEW, FAST_KDF);
+  assert.equal(result.saved, true);
+  assert.equal(idb.size, 0);
+  const stored = await store.getRecord();
+  assert.equal(vault.deviceSlot(stored), null);
+  assert.equal((await vault.unlock(stored, NEW)).data.accounts.length, 1);
+  assert.equal(a.hasPassphrase(), true);
+  assert.equal((await a.unlockState()).device, false);
+});

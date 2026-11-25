@@ -466,7 +466,7 @@
     "message": "Backup imported."
   },
   "autoLockHint": {
-    "message": "Locks after 15 minutes without use and when the browser quits."
+    "message": "Locks 15 minutes after you last use it (or when an extension you chose ends) and when the browser quits."
   },
   "openTabHint": {
     "message": "If the file picker closes this popup, open settings in a tab."
@@ -478,7 +478,7 @@
     "message": "About"
   },
   "securitySummary": {
-    "message": "No network access, no telemetry. Secrets are encrypted at rest with AES-256-GCM, under a key that only your passphrase (PBKDF2) or a registered passkey can unlock, and never leave this device."
+    "message": "No network access, no telemetry. Secrets are encrypted at rest with AES-256-GCM, under a key that only your passphrase (PBKDF2), a registered passkey or, without a passphrase, a key this browser keeps can unlock. Links and QR codes you export are the only way they leave this device."
   },
   "clockHint": {
     "message": "Codes rejected? They are computed from your computer's clock, so make sure the date and time are set automatically."
@@ -641,5 +641,452 @@
   },
   "passkeyOrphan": {
     "message": "A passkey may remain on your phone or security key. Delete it there if you do not need it."
+  },
+  "extendBtn": {
+    "message": "Extend"
+  },
+  "extendHint": {
+    "message": "Keep it unlocked longer, for example while an AI agent uses this browser. Lock or quitting the browser still ends it."
+  },
+  "extendChoicesLabel": {
+    "message": "Keep unlocked for"
+  },
+  "extend1h": {
+    "message": "1 hour"
+  },
+  "extend24h": {
+    "message": "24 hours"
+  },
+  "extend7d": {
+    "message": "7 days"
+  },
+  "extendReset": {
+    "message": "Back to 15 minutes"
+  },
+  "alarmCancel": {
+    "message": "Cancel"
+  },
+  "alarmContinue": {
+    "message": "Continue"
+  },
+  "alarmStep": {
+    "message": "Confirmation $STEP$ of $TOTAL$",
+    "placeholders": {
+      "step": {
+        "content": "$1",
+        "example": "1"
+      },
+      "total": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "extendWarnTitle": {
+    "message": "Keep it unlocked for $LENGTH$?",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      }
+    }
+  },
+  "extendWarnText": {
+    "message": "Until $TIME$, anyone using this browser, an AI agent included, can see, copy and fill your codes without the passphrase. Locking or quitting the browser ends it sooner.",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendFinalTitle": {
+    "message": "Last check"
+  },
+  "extendFinalText": {
+    "message": "Your codes stay open for $LENGTH$, until $TIME$. Do you really want this?",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      },
+      "time": {
+        "content": "$2",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendFinalOk": {
+    "message": "Keep unlocked $LENGTH$",
+    "placeholders": {
+      "length": {
+        "content": "$1",
+        "example": "24 hours"
+      }
+    }
+  },
+  "extendDone": {
+    "message": "Unlocked until $TIME$.",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "extendResetDone": {
+    "message": "Back to 15 minutes after the last use."
+  },
+  "extendFailed": {
+    "message": "Couldn't change the unlock time: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "unlockLeft": {
+    "message": "Locks in $LEFT$ · $TIME$",
+    "placeholders": {
+      "left": {
+        "content": "$1",
+        "example": "14:32"
+      },
+      "time": {
+        "content": "$2",
+        "example": "6:05 PM"
+      }
+    }
+  },
+  "unlockLeftExtended": {
+    "message": "Extended · locks in $LEFT$ · $TIME$",
+    "placeholders": {
+      "left": {
+        "content": "$1",
+        "example": "23 h 59 min"
+      },
+      "time": {
+        "content": "$2",
+        "example": "Wed, Nov 26, 6:05 PM"
+      }
+    }
+  },
+  "durationHM": {
+    "message": "$H$ h $M$ min",
+    "placeholders": {
+      "h": {
+        "content": "$1",
+        "example": "5"
+      },
+      "m": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "durationDH": {
+    "message": "$D$ d $H$ h",
+    "placeholders": {
+      "d": {
+        "content": "$1",
+        "example": "6"
+      },
+      "h": {
+        "content": "$2",
+        "example": "23"
+      }
+    }
+  },
+  "passphraseTitle": {
+    "message": "Passphrase"
+  },
+  "passChangeHint": {
+    "message": "Change the passphrase that opens this vault. A registered passkey is removed, and other open windows lock."
+  },
+  "passNoneHint": {
+    "message": "No passphrase: this vault opens with a key this browser keeps on this computer. Anyone who uses this browser can see your codes."
+  },
+  "passCurrent": {
+    "message": "Current passphrase"
+  },
+  "passNew": {
+    "message": "New passphrase (at least 8 characters)"
+  },
+  "passNew2": {
+    "message": "Confirm new passphrase"
+  },
+  "passChangeBtn": {
+    "message": "Change passphrase"
+  },
+  "passSetBtn": {
+    "message": "Set passphrase"
+  },
+  "passRemoveBtn": {
+    "message": "Remove passphrase"
+  },
+  "passRemoveNeedsCurrent": {
+    "message": "Enter the current passphrase to remove it."
+  },
+  "passRemoveWarnTitle": {
+    "message": "Remove the passphrase?"
+  },
+  "passRemoveWarnText": {
+    "message": "Anyone who can use this browser on this computer, a person or an AI agent, will see and fill your codes without a passphrase. Your accounts stay encrypted with a key this browser keeps in its profile files: the extension cannot read it, but anyone who copies the browser profile (malware, a full backup of your home folder) can decrypt them. If the profile or the extension's data is lost, only a backup brings them back. A passkey is removed too."
+  },
+  "passRemoveFinalTitle": {
+    "message": "Last check"
+  },
+  "passRemoveFinalText": {
+    "message": "Remove the passphrase from this vault now? You can set a new one later in Settings."
+  },
+  "passChanged": {
+    "message": "Passphrase changed."
+  },
+  "passChangedPasskey": {
+    "message": "Passphrase changed. The passkey was removed; add it again if you want it. Delete the old one on your phone or key too."
+  },
+  "passSet": {
+    "message": "Passphrase set. The key this browser kept was deleted."
+  },
+  "passRemoved": {
+    "message": "Passphrase removed. This vault now opens without one in this browser."
+  },
+  "passRemovedPasskey": {
+    "message": "Passphrase removed, and the passkey with it. Delete the passkey on your phone or key too."
+  },
+  "passFailed": {
+    "message": "Couldn't change the passphrase: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "exportHintNoPass": {
+    "message": "This vault has no passphrase, so the backup file gets its own. Keep the file and that passphrase somewhere safe."
+  },
+  "exportPassLabel": {
+    "message": "Passphrase for the backup file (at least 8 characters)"
+  },
+  "exportPass2Label": {
+    "message": "Confirm it"
+  },
+  "exporting": {
+    "message": "Encrypting…"
+  },
+  "errExportFailed": {
+    "message": "Couldn't export: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "QuotaExceededError"
+      }
+    }
+  },
+  "deviceKeyMissing": {
+    "message": "This vault has no passphrase, and this browser no longer has the key that opens it, so it cannot be opened here. Uninstalling the extension deletes the vault; do that only to start over, then import a backup."
+  },
+  "unlockDevice": {
+    "message": "No passphrase · stays unlocked in this browser"
+  },
+  "xpEntryHint": {
+    "message": "Move accounts to another app: copy otpauth:// links or show QR codes that Google Authenticator imports."
+  },
+  "xpOpen": {
+    "message": "Export accounts"
+  },
+  "xpTitle": {
+    "message": "Export accounts"
+  },
+  "xpWarning": {
+    "message": "Links and QR codes hold the secret keys. Anyone who sees or copies them can make your codes."
+  },
+  "xpGatePass": {
+    "message": "Re-enter your passphrase to show secret keys"
+  },
+  "xpGateSubmit": {
+    "message": "Continue"
+  },
+  "xpSelectAll": {
+    "message": "Select all"
+  },
+  "xpCount": {
+    "message": "$N$ of $TOTAL$ selected",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "2"
+      },
+      "total": {
+        "content": "$2",
+        "example": "5"
+      }
+    }
+  },
+  "xpCopy": {
+    "message": "Copy links"
+  },
+  "xpShow": {
+    "message": "Show QR"
+  },
+  "xpModeLabel": {
+    "message": "QR format"
+  },
+  "xpModeGoogle": {
+    "message": "Google Authenticator"
+  },
+  "xpModeEach": {
+    "message": "One QR per account"
+  },
+  "xpPrev": {
+    "message": "Previous"
+  },
+  "xpNext": {
+    "message": "Next"
+  },
+  "xpHide": {
+    "message": "Hide QR codes"
+  },
+  "xpPage": {
+    "message": "$I$ / $N$",
+    "placeholders": {
+      "i": {
+        "content": "$1",
+        "example": "1"
+      },
+      "n": {
+        "content": "$2",
+        "example": "3"
+      }
+    }
+  },
+  "xpCopied": {
+    "message": "Copied $N$ otpauth:// links, one per line. They hold the secret keys: paste them only where you mean to.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "xpSkippedInvalid": {
+    "message": "$N$ with an invalid key left out.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "xpNoneValid": {
+    "message": "None of the selected accounts has a valid key."
+  },
+  "xpGoogleTitle": {
+    "message": "Google Authenticator · QR $I$ of $N$",
+    "placeholders": {
+      "i": {
+        "content": "$1",
+        "example": "1"
+      },
+      "n": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "xpGoogleHow": {
+    "message": "On the phone: Google Authenticator → menu → Transfer accounts → Import accounts, then scan every QR in order."
+  },
+  "xpSingleTitle": {
+    "message": "otpauth:// QR"
+  },
+  "xpSingleHow": {
+    "message": "Any authenticator app scans it. Google Authenticator: + → Scan a QR code."
+  },
+  "xpNotGooglePeriod": {
+    "message": "Not in the Google Authenticator transfer QR: its codes do not change every 30 seconds."
+  },
+  "xpNotGoogleDigits": {
+    "message": "Not in the Google Authenticator transfer QR: it has 7-digit codes."
+  },
+  "xpQrLabel": {
+    "message": "QR code for $NAMES$",
+    "placeholders": {
+      "names": {
+        "content": "$1",
+        "example": "Example · alice"
+      }
+    }
+  },
+  "xpQrFailed": {
+    "message": "Couldn't draw the QR code: $REASON$",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "too-long"
+      }
+    }
+  },
+  "keySource": {
+    "message": "Input source: $SOURCE$",
+    "placeholders": {
+      "source": {
+        "content": "$1",
+        "example": "Latin letters"
+      }
+    }
+  },
+  "keySourceUnknown": {
+    "message": "shown once you type"
+  },
+  "keySource_latin": {
+    "message": "Latin letters (English)"
+  },
+  "keySource_hangul": {
+    "message": "Korean (Hangul)"
+  },
+  "keySource_kana": {
+    "message": "Japanese kana"
+  },
+  "keySource_han": {
+    "message": "Chinese characters"
+  },
+  "keySource_cyrillic": {
+    "message": "Cyrillic"
+  },
+  "keySource_greek": {
+    "message": "Greek"
+  },
+  "keySource_arabic": {
+    "message": "Arabic"
+  },
+  "keySource_hebrew": {
+    "message": "Hebrew"
+  },
+  "keySource_thai": {
+    "message": "Thai"
+  },
+  "keySource_other": {
+    "message": "another script"
+  },
+  "keySource_ime": {
+    "message": "input method (IME) composing"
+  },
+  "capsOn": {
+    "message": "⇪ Caps Lock on"
+  },
+  "capsOff": {
+    "message": "Caps Lock off"
+  },
+  "capsUnknown": {
+    "message": "Caps Lock: shown at the first key"
+  },
+  "deviceKeyUnavailable": {
+    "message": "Couldn't read the key this browser keeps for this vault. Your vault is intact. Try again, or restart the browser first. Do not uninstall the extension: that deletes the vault."
+  },
+  "deviceKeyRetry": {
+    "message": "Try again"
   }
 }

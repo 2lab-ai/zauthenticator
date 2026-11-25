@@ -55,7 +55,7 @@ const WRONG_PASSPHRASE = 'e2e wrong passphrase';
 const IDLE_LOCK_MS = 15 * 60 * 1000;
 // .prd/02-architecture.md, Round 2, amended by .prd/03-autofill.md ("Cross-unit contract"):
 // session storage holds at most these keys; after a lock only lockGen remains.
-const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'pendingBind', 'lockGen'];
+const SESSION_KEYS_ALLOWED = ['vaultKey', 'lastActiveAt', 'unlockedUntil', 'pendingBind', 'lockGen'];
 
 const ACCOUNTS = [
   {
@@ -812,6 +812,37 @@ const livePages = new Set(); // pages to describe when a step fails
 const consoles = [];
 
 // Runs one step; an exception becomes a FAIL line for that step with every open page's state.
+// A Google Authenticator MigrationPayload (protobuf), read independently of extension/lib.
+function decodeMigration(buf) {
+  let pos = 0;
+  const varint = (b) => { let n = 0; let shift = 0; for (;;) { const byte = b[pos++]; n += (byte & 0x7f) * 2 ** shift; if (byte < 0x80) return n; shift += 7; } };
+  const fields = (b, end) => {
+    const out = [];
+    while (pos < end) {
+      const key = varint(b);
+      if ((key & 7) === 0) out.push([key >> 3, varint(b)]);
+      else if ((key & 7) === 2) { const len = varint(b); out.push([key >> 3, b.subarray(pos, pos + len)]); pos += len; } else throw new Error(`wire type ${key & 7}`);
+    }
+    return out;
+  };
+  const top = fields(buf, buf.length);
+  const result = { otp: [], version: 0, batchSize: 0, batchIndex: 0, batchId: 0 };
+  for (const [field, value] of top) {
+    if (field === 1) {
+      const saved = pos;
+      pos = 0;
+      const inner = fields(value, value.length);
+      pos = saved;
+      const get = (n) => inner.find(([f]) => f === n)?.[1];
+      result.otp.push({ secret: Buffer.from(get(1)), name: get(2) ? Buffer.from(get(2)).toString('utf8') : '', issuer: get(3) ? Buffer.from(get(3)).toString('utf8') : '', algorithm: get(4), digits: get(5), type: get(6) });
+    } else if (field === 2) result.version = value;
+    else if (field === 3) result.batchSize = value;
+    else if (field === 4) result.batchIndex = value;
+    else if (field === 5) result.batchId = value;
+  }
+  return result;
+}
+
 async function stepRun(name, fn) {
   try {
     await fn();
@@ -982,6 +1013,301 @@ try {
     const sessionNow = (await readStorage(pageA)).session;
     rep.check('lock-if-idle', state === 'locked', `open page, lastActiveAt 16 min ago, visibilitychange (visibilityState ${visible}) -> state ${state}`);
     checkLockedEmpty(rep, 'lock-session-empty:lock-if-idle', 'idle session found by an open page', seeded, sessionNow);
+  });
+
+  // Unlock time (v0.4): the list view shows the lock time; Extend needs two red confirmations,
+  // keeps the vault unlocked past the idle limit, and every lock removes it.
+  await stepRun('unlock-time', async () => {
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    await pageA.waitForFunction(() => !document.querySelector('#unlock-bar').hidden && document.querySelector('#unlock-left').textContent !== '', null, { timeout: 15000 });
+    const shown = await pageA.evaluate(() => document.querySelector('#unlock-left').textContent);
+    rep.check('unlock-time-shown', /(14|15):\d\d/.test(shown), `list view shows "${shown}" (15 minutes from the open)`);
+    const alarmState = () => pageA.evaluate(() => {
+      const alarm = document.querySelector('#extend-alarm');
+      return {
+        open: !alarm.hidden,
+        step: alarm.dataset.step ?? '',
+        role: alarm.getAttribute('role'),
+        titleColor: getComputedStyle(alarm.querySelector('.alarm-title')).color,
+        okColor: getComputedStyle(alarm.querySelector('.alarm-ok')).backgroundColor,
+      };
+    });
+    const until = async () => (await readStorage(pageA)).session.unlockedUntil;
+    await pageA.click('#extend-btn');
+    await pageA.click('.extend-choice[data-ms="86400000"]');
+    const first = await alarmState();
+    await pageA.click('#extend-alarm .alarm-cancel');
+    const afterCancel = { alarm: await alarmState(), until: await until() };
+    rep.check(
+      'extend-cancel-first',
+      first.open && first.step === '1' && first.role === 'alertdialog' && !afterCancel.alarm.open && afterCancel.until === undefined,
+      `step 1 shown (${JSON.stringify(first)}), Cancel -> alarm open ${afterCancel.alarm.open}, unlockedUntil ${afterCancel.until}`,
+    );
+    rep.check('extend-alarm-red', first.titleColor === 'rgb(194, 0, 27)' && first.okColor === 'rgb(194, 0, 27)', `title ${first.titleColor}, button ${first.okColor} (red #c2001b)`);
+    await pageA.click('.extend-choice[data-ms="86400000"]');
+    // A double click on the red button cannot pass both steps: the second step's button is armed late.
+    await pageA.dblclick('#extend-alarm .alarm-ok');
+    const second = { alarm: await alarmState(), until: await until() };
+    await pageA.click('#extend-alarm .alarm-cancel');
+    const afterSecondCancel = { alarm: await alarmState(), until: await until() };
+    rep.check(
+      'extend-cancel-second',
+      second.alarm.open && second.alarm.step === '2' && second.until === undefined && !afterSecondCancel.alarm.open && afterSecondCancel.until === undefined,
+      `double click on step 1 -> step ${second.alarm.step}, unlockedUntil ${second.until}; Cancel -> unlockedUntil ${afterSecondCancel.until}`,
+    );
+    await pageA.click('.extend-choice[data-ms="86400000"]');
+    await pageA.waitForTimeout(700);
+    await pageA.click('#extend-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#extend-alarm').dataset.step === '2');
+    await pageA.waitForTimeout(700);
+    const t0 = Date.now();
+    await pageA.click('#extend-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#unlock-bar').classList.contains('extended'), null, { timeout: 5000 });
+    const stored = await until();
+    rep.check(
+      'extend-24h',
+      Number.isFinite(stored) && Math.abs(stored - (t0 + 24 * 60 * 60 * 1000)) < 10000,
+      `two confirmations -> unlockedUntil ${stored ? new Date(stored).toISOString() : stored} (24 h from the click); bar "${await pageA.evaluate(() => document.querySelector('#unlock-left').textContent)}"`,
+    );
+    // Past the idle limit, inside the extension: an open page's idle check and a reload keep it.
+    await pageA.evaluate((t) => chrome.storage.session.set({ lastActiveAt: t }), Date.now() - (IDLE_LOCK_MS + 60 * 1000));
+    await pageA.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await pageA.waitForTimeout(1500);
+    const kept = await stateOf(pageA);
+    await pageA.reload();
+    const reloaded = await waitState(pageA, 'list', 10000).then(() => 'list', async () => stateOf(pageA));
+    rep.check('extend-outlasts-idle', kept === 'list' && reloaded === 'list', `lastActiveAt 16 min ago with the extension: idle check -> ${kept}, reload -> ${reloaded}`);
+    checkStorageKeys(rep, 'storage-keys:extended', await readStorage(pageA));
+    const seeded = await seedPendingBind(pageA);
+    await pageA.click('#lock-btn');
+    await waitState(pageA, 'locked', 10000);
+    checkLockedEmpty(rep, 'lock-session-empty:extended', 'manual lock during a 24 h extension', seeded, (await readStorage(pageA)).session);
+  });
+
+  // Passphrase (v0.4, issue #4): a wrong current passphrase changes nothing; change re-keys; remove
+  // needs two red confirmations and then opens with a non-extractable key this browser keeps; a
+  // new passphrase brings it back. The step ends with PASSPHRASE set again for the later steps.
+  await stepRun('passphrase-change-remove', async () => {
+    const NEW_PASS = 'e2e a second passphrase';
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    const record = async () => (await readStorage(pageA)).local.vault;
+    const before = await record();
+    await pageA.click('#settings-btn');
+    await waitState(pageA, 'settings', 10000);
+    await pageA.fill('#pass-current', WRONG_PASSPHRASE);
+    await pageA.fill('#pass-new', NEW_PASS);
+    await pageA.fill('#pass-new2', NEW_PASS);
+    await pageA.click('#pass-change');
+    await pageA.waitForFunction(() => document.querySelector('#pass-error').textContent !== '', null, { timeout: 15000 });
+    const wrong = { error: await pageA.textContent('#pass-error'), same: JSON.stringify(await record()) === JSON.stringify(before) };
+    rep.check('passphrase-change-wrong', wrong.same && wrong.error.length > 0, `wrong current passphrase -> "${wrong.error}", record unchanged ${wrong.same}`);
+
+    await pageA.fill('#pass-current', PASSPHRASE);
+    await pageA.click('#pass-change');
+    await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '', null, { timeout: 30000 });
+    const changed = await record();
+    let opensNew = false;
+    let opensOld = true;
+    try { opensNew = Array.isArray((await decryptRecord(changed, NEW_PASS)).accounts); } catch { opensNew = false; }
+    try { await decryptRecord(changed, PASSPHRASE); } catch { opensOld = false; }
+    rep.check(
+      'passphrase-change',
+      changed.v === 2 && changed.id !== before.id && changed.slots.length === 1 && opensNew && !opensOld && (await stateOf(pageA)) === 'settings',
+      `record v${changed.v}, new id ${changed.id !== before.id}, slots [${changed.slots.map((x) => x.type)}], opens with the new passphrase ${opensNew}, with the old ${opensOld}; status "${await pageA.textContent('#pass-status')}"`,
+    );
+    checkStorage(rep, 'storage-ciphertext-only:passphrase-change', await readStorage(pageA));
+
+    // Remove: the current passphrase first, then two red confirmations; Cancel at step 1 keeps it.
+    await pageA.fill('#pass-current', NEW_PASS);
+    await pageA.click('#pass-remove');
+    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
+    const red = await pageA.evaluate(() => getComputedStyle(document.querySelector('#pass-alarm .alarm-ok')).backgroundColor);
+    await pageA.click('#pass-alarm .alarm-cancel');
+    const keptAfterCancel = JSON.stringify(await record()) === JSON.stringify(changed);
+    await pageA.click('#pass-remove');
+    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '1', null, { timeout: 30000 });
+    await pageA.waitForTimeout(700);
+    await pageA.click('#pass-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#pass-alarm').dataset.step === '2');
+    const keptAtStep2 = JSON.stringify(await record()) === JSON.stringify(changed);
+    await pageA.waitForTimeout(700);
+    await pageA.click('#pass-alarm .alarm-ok');
+    await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '' && document.querySelector('#pass-alarm').hidden, null, { timeout: 30000 });
+    const removed = await record();
+    const idb = await pageA.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('zauthenticator-device');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const tx = db.transaction('keys', 'readonly');
+      const store = tx.objectStore('keys');
+      const keys = await new Promise((resolve) => { const r = store.getAllKeys(); r.onsuccess = () => resolve(r.result); });
+      const key = await new Promise((resolve) => { const r = store.get(keys[0]); r.onsuccess = () => resolve(r.result); });
+      db.close();
+      let exported = 'refused';
+      try { await crypto.subtle.exportKey('raw', key); exported = 'EXPORTED'; } catch { /* non-extractable */ }
+      return { ids: keys, extractable: key?.extractable, algorithm: key?.algorithm?.name, exported };
+    });
+    rep.check(
+      'passphrase-remove-confirm',
+      red === 'rgb(194, 0, 27)' && keptAfterCancel && keptAtStep2,
+      `red button ${red}; record unchanged after Cancel ${keptAfterCancel} and at step 2 ${keptAtStep2}`,
+    );
+    rep.check(
+      'passphrase-remove',
+      removed.v === 2 && removed.slots.length === 1 && removed.slots[0].type === 'device' && idb.ids.length === 1 && idb.ids[0] === removed.slots[0].key &&
+        idb.extractable === false && idb.algorithm === 'AES-GCM' && idb.exported === 'refused',
+      `slots [${removed.slots.map((x) => x.type)}]; IndexedDB keys ${idb.ids.length} (named by the slot ${idb.ids[0] === removed.slots[0]?.key}), extractable ${idb.extractable}, exportKey ${idb.exported}`,
+    );
+    checkStorage(rep, 'storage-ciphertext-only:no-passphrase', await readStorage(pageA));
+
+    // Without a passphrase: no Lock button, no idle lock, and a fresh session opens by itself.
+    await pageA.click('#settings-back');
+    await waitState(pageA, 'list', 10000);
+    const noLock = await pageA.evaluate(() => getComputedStyle(document.querySelector('#lock-btn')).display === 'none');
+    await pageA.waitForFunction(() => document.querySelector('#unlock-left').textContent !== '' && document.querySelector('#extend-btn').hidden, null, { timeout: 15000 });
+    const bar = await pageA.textContent('#unlock-left');
+    await pageA.evaluate((t) => chrome.storage.session.set({ lastActiveAt: t }), Date.now() - (IDLE_LOCK_MS + 60 * 1000));
+    await pageA.reload();
+    const afterIdle = await waitState(pageA, 'list', 10000).then(() => 'list', async () => stateOf(pageA));
+    await pageA.evaluate(() => chrome.storage.session.clear());
+    await pageA.reload();
+    const afterRestart = await waitState(pageA, 'list', 10000).then(() => 'list', async () => stateOf(pageA));
+    rep.check(
+      'no-passphrase-opens',
+      noLock && afterIdle === 'list' && afterRestart === 'list' && (await labels(pageA)).length > 0,
+      `Lock button hidden ${noLock}; bar "${bar}"; 16 min idle + reload -> ${afterIdle}; session storage cleared + reload -> ${afterRestart}`,
+    );
+
+    // Set a passphrase again: the device key is deleted and the passphrase opens it.
+    await pageA.click('#settings-btn');
+    await waitState(pageA, 'settings', 10000);
+    const setLabel = await pageA.textContent('#pass-change');
+    await pageA.fill('#pass-new', PASSPHRASE);
+    await pageA.fill('#pass-new2', PASSPHRASE);
+    await pageA.click('#pass-change');
+    await pageA.waitForFunction(() => document.querySelector('#pass-status').textContent !== '', null, { timeout: 30000 });
+    const restored = await record();
+    const idbAfter = await pageA.evaluate(async () => {
+      const db = await new Promise((resolve) => { const req = indexedDB.open('zauthenticator-device'); req.onsuccess = () => resolve(req.result); });
+      const ids = await new Promise((resolve) => { const r = db.transaction('keys').objectStore('keys').getAllKeys(); r.onsuccess = () => resolve(r.result); });
+      db.close();
+      return ids.length;
+    });
+    await pageA.click('#settings-back');
+    await waitState(pageA, 'list', 10000);
+    await pageA.click('#lock-btn');
+    await waitState(pageA, 'locked', 10000);
+    await unlock(pageA);
+    rep.check(
+      'passphrase-set-again',
+      restored.slots[0].type === 'passphrase' && idbAfter === 0 && (await stateOf(pageA)) === 'list',
+      `button "${setLabel}"; slots [${restored.slots.map((x) => x.type)}]; IndexedDB keys after ${idbAfter}; lock + unlock with the passphrase -> ${await stateOf(pageA)}`,
+    );
+  });
+
+  // Export accounts (v0.4, issue #5): the passphrase again, then links to the clipboard and QR
+  // codes drawn in the page, read back with the page's own jsQR decoder. Several accounts give a
+  // Google Authenticator transfer QR; the 7-digit account follows as its own otpauth QR.
+  await stepRun('export-accounts', async () => {
+    if ((await stateOf(pageA)) === 'locked') await unlock(pageA);
+    await waitState(pageA, 'list', 10000);
+    const stored = (await labels(pageA)).length;
+    await pageA.click('#settings-btn');
+    await waitState(pageA, 'settings', 10000);
+    await pageA.click('#xp-open');
+    await waitState(pageA, 'export', 10000);
+    await pageA.fill('#xp-gate-pass', WRONG_PASSPHRASE);
+    await pageA.click('#xp-gate-submit');
+    await pageA.waitForFunction(() => document.querySelector('#xp-gate-error').textContent !== '', null, { timeout: 30000 });
+    const gated = await pageA.evaluate(() => ({ body: document.querySelector('#xp-body').hidden, rows: document.querySelectorAll('#xp-list li').length }));
+    await pageA.fill('#xp-gate-pass', PASSPHRASE);
+    await pageA.click('#xp-gate-submit');
+    await pageA.waitForFunction(() => !document.querySelector('#xp-body').hidden, null, { timeout: 30000 });
+    const rowCount = await pageA.evaluate(() => document.querySelectorAll('#xp-list li').length);
+    rep.check('export-gate', gated.body && gated.rows === 0 && rowCount === stored, `wrong passphrase -> list hidden ${gated.body}, ${gated.rows} rows; right one -> ${rowCount} rows (vault has ${stored})`);
+
+    await pageA.check('#xp-all');
+    await pageA.click('#xp-copy');
+    await pageA.waitForFunction(() => document.querySelector('#xp-status').textContent !== '' || document.querySelector('#xp-error').textContent !== '', null, { timeout: 10000 });
+    const clip = (await pageA.evaluate(() => navigator.clipboard.readText())).split('\n');
+    const secrets = [ACCOUNTS[0].secret, ...CONCURRENT_ACCOUNTS.map((a) => a.secret)];
+    const linked = secrets.filter((secret) => clip.some((line) => line.startsWith('otpauth://totp/') && line.includes(`secret=${secret}&`)));
+    rep.check('export-copy-links', clip.length === stored && linked.length === secrets.length, `clipboard holds ${clip.length} lines, all otpauth://totp/; the secrets of ${linked.length}/${secrets.length} known accounts found`);
+
+    const readQr = () => pageA.evaluate(() => {
+      const canvas = document.querySelector('#xp-canvas');
+      const image = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      const found = window.jsQR(image.data, image.width, image.height);
+      return { text: found ? found.data : null, title: document.querySelector('#xp-qr-title').textContent, names: document.querySelector('#xp-qr-names').textContent, page: document.querySelector('#xp-page').textContent };
+    });
+    await pageA.click('#xp-show');
+    await pageA.waitForFunction(() => !document.querySelector('#xp-qr').hidden, null, { timeout: 10000 });
+    const first = await readQr();
+    const payload = first.text?.startsWith('otpauth-migration://offline?data=')
+      ? decodeMigration(Buffer.from(decodeURIComponent(first.text.slice('otpauth-migration://offline?data='.length)), 'base64'))
+      : null;
+    await pageA.click('#xp-next');
+    const second = await readQr();
+    const sixDigit = [ACCOUNTS[0], CONCURRENT_ACCOUNTS[0]];
+    const inPayload = payload ? sixDigit.filter((a) => payload.otp.some((o) => o.secret.equals(Buffer.from(base32ToBytes(a.secret))) && o.name === a.label)) : [];
+    rep.check(
+      'export-qr-google',
+      payload !== null && payload.version === 1 && payload.batchSize === 1 && payload.otp.length === 2 && inPayload.length === 2 &&
+        second.text?.startsWith('otpauth://totp/') && second.text.includes(`secret=${CONCURRENT_ACCOUNTS[1].secret}&`) && second.text.includes('digits=7'),
+      `QR 1 "${first.title}" [${first.names}] -> migration payload ${payload ? `v${payload.version}, batch ${payload.batchIndex + 1}/${payload.batchSize}, ${payload.otp.length} accounts, ${inPayload.length} matched by secret and name` : `not read (${first.text?.slice(0, 40)})`}; QR 2 "${second.title}" [${second.names}] ${second.page} -> ${second.text?.slice(0, 60)}…`,
+    );
+    await pageA.check('#xp-mode input[value="each"]');
+    const each = await readQr();
+    rep.check('export-qr-each', each.text?.startsWith('otpauth://totp/') && each.page === `1 / ${stored}`, `one QR per account: ${each.page}, first -> ${each.text?.slice(0, 50)}…`);
+    await pageA.click('#xp-back');
+    await waitState(pageA, 'settings', 10000);
+    const cleared = await pageA.evaluate(() => ({ rows: document.querySelectorAll('#xp-list li').length, width: document.querySelector('#xp-canvas').width, qr: document.querySelector('#xp-qr').hidden }));
+    rep.check('export-cleared', cleared.rows === 0 && cleared.width === 8 && cleared.qr, `after Back: ${cleared.rows} rows, canvas width ${cleared.width}, QR area hidden ${cleared.qr}`);
+    await pageA.click('#settings-back');
+    await waitState(pageA, 'list', 10000);
+  });
+
+  // Passphrase fields (v0.4, issue #6): the input source the keys produce and Caps Lock, read from
+  // key and input events; the typed characters themselves are never shown.
+  await stepRun('key-hints', async () => {
+    if ((await stateOf(pageA)) !== 'locked') {
+      await pageA.click('#lock-btn');
+      await waitState(pageA, 'locked', 10000);
+    }
+    await pageA.click('#unlock-pass');
+    const hint = () => pageA.evaluate(() => {
+      const line = document.querySelector('#unlock-pass-keyhint');
+      return { shown: Boolean(line) && !line.classList.contains('off') && getComputedStyle(line).visibility === 'visible', text: line?.textContent ?? '', source: line?.dataset.source ?? '', caps: line?.dataset.caps ?? '', capsOn: line?.classList.contains('caps-on') ?? false, describedBy: document.querySelector('#unlock-pass').getAttribute('aria-describedby') };
+    });
+    const before = await hint();
+    await pageA.keyboard.type('a');
+    const latin = await hint();
+    // Caps Lock as the browser reports it on a key event.
+    await pageA.evaluate(() => document.querySelector('#unlock-pass').dispatchEvent(new KeyboardEvent('keydown', { key: 'A', code: 'KeyA', bubbles: true, modifierCapsLock: true })));
+    const capsOn = await hint();
+    await pageA.evaluate(() => document.querySelector('#unlock-pass').dispatchEvent(new KeyboardEvent('keyup', { key: 'CapsLock', code: 'CapsLock', bubbles: true, modifierCapsLock: false })));
+    const capsOff = await hint();
+    // What an input method inserts (no key event of its own).
+    await pageA.keyboard.insertText('한');
+    const hangul = await hint();
+    await pageA.evaluate(() => document.querySelector('#unlock-pass').dispatchEvent(new KeyboardEvent('keydown', { key: 'Process', keyCode: 229, bubbles: true })));
+    const ime = await hint();
+    const leaks = [latin, capsOn, hangul].some((h) => h.text.includes('한') || /\ba\b/.test(h.text.replace('Caps Lock', '')));
+    await pageA.click('#unlock-submit');
+    await pageA.fill('#unlock-pass', '');
+    rep.check(
+      'key-hints',
+      // The source belongs to the keyboard, not the field: earlier steps typed in this page, so the
+      // line may already name one on focus.
+      before.shown && before.describedBy?.includes('unlock-pass-keyhint') && latin.source === 'latin' && capsOn.caps === 'true' && capsOn.capsOn &&
+        capsOff.caps === 'false' && !capsOff.capsOn && hangul.source === 'hangul' && ime.source === 'ime' && !leaks,
+      `focus "${before.text}"; 'a' "${latin.text}"; Caps Lock key event "${capsOn.text}" (caps-on ${capsOn.capsOn}); off "${capsOff.text}"; inserted Hangul "${hangul.text}"; IME key "${ime.text}"; typed characters shown ${leaks}`,
+    );
+    await unlock(pageA);
   });
 
   // A stored key that does not open the vault is dropped when a page finds it, with everything

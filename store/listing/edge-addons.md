@@ -1,4 +1,4 @@
-# Microsoft Edge Add-ons listing: zauthenticator 0.3.0
+# Microsoft Edge Add-ons listing: zauthenticator 0.4.0
 
 Everything to enter in Microsoft Partner Center (Edge program), page by page. Requirements were
 checked against the official documentation on 2026-11-16; each one names its source. A value the
@@ -12,6 +12,15 @@ Edge-specific rule for every text below: the extension and its listing "must not
 browsers" (developer policies 1.1.2). The descriptions, search terms, notes and both
 `extDescription` values are written without browser names; keep them that way.
 
+## What changed in 0.4.0
+
+0.4.0 adds no permission. It adds: changing the passphrase, or removing it after two red
+confirmations (the vault then opens with a non-extractable key the browser keeps); exporting
+accounts as otpauth:// links or QR codes Google Authenticator imports; the lock time in the account
+list with Extend (1 hour, 24 hours, 7 days, after two red confirmations); and input source and Caps
+Lock hints under passphrase fields. The descriptions and certification notes below cover them; the
+0.3.0 texts are in the git history (tag `v0.3.0`).
+
 ## What changed in 0.3.0
 
 0.3.0 adds optional passkey unlock (WebAuthn PRF) beside the passphrase and no new permission.
@@ -22,8 +31,8 @@ window, and the passphrase as the way back in. The 0.2.0 texts are in the git hi
 
 ## Packages
 
-- **File to upload:** the same `zauthenticator-0.3.0.zip` as for the other store (GitHub release
-  `v0.3.0`, or `npm run zip` → `dist/zauthenticator-0.3.0.zip`). For this update, open the
+- **File to upload:** the same `zauthenticator-0.4.0.zip` as for the other store (GitHub release
+  `v0.4.0`, or `npm run zip` → `dist/zauthenticator-0.4.0.zip`). For this update, open the
   extension in Partner Center and drop it on the **Packages** page; a first submission uses
   "Drag your package here (.zip)".
 - The **Extension name** and the **Short description** come from the manifest (`extName`,
@@ -178,10 +187,11 @@ Required in Partner Center (at most 2,000 characters; the box opens when you cho
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 source: https://learn.microsoft.com/en-us/legal/microsoft-edge/extensions/developer-policies, checked 2026-11-16
 
-Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-20 (0.3.0): "Add
-account", "Add from links", "Allow", "Not now", "Remove", "Unlock zauthenticator…", "Open in a
-tab", "Add passkey", "Unlock with passkey"; the menu is named "zauthenticator" and lists accounts
-as "issuer · label".
+Quoted labels checked against `extension/_locales/en/messages.json` on 2026-11-25 (0.4.0): "Add
+account", "Add from links", "Extend", "Export accounts", "Copy links", "Show QR", "Change
+passphrase", "Remove passphrase", "Set passphrase", "Unlock zauthenticator…", "Open in a tab",
+"Add passkey", "Allow", "Not now"; the menu is named "zauthenticator" and lists accounts as
+"issuer · label".
 
 For an update, the first line says what changed in that version (Partner Center asks for this for
 updates). A tag release sends [`edge-certification-notes.txt`](edge-certification-notes.txt) through
@@ -189,25 +199,24 @@ the Update REST API and rewrites that file's first line to the git tag; edit the
 when the tester steps change. The API does not upload this file's text into the store listing.
 source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension, checked 2026-11-16
 
-Length: 1,964 characters (limit 2,000; see [Text lengths](chrome-web-store.md#text-lengths)).
-Passkey unlock is optional in the test: it needs an authenticator with the WebAuthn PRF extension,
-and every other step works without one.
+Length: 1,768 characters (limit 2,000). Passkey unlock is optional in the test: it needs
+an authenticator with the WebAuthn PRF extension, and every other step works without one.
 
 ```text
-Changed in 0.3.0: optional passkey unlock (WebAuthn PRF) next to the passphrase. No new permissions.
+Changed in 0.4.0: change or remove the passphrase (two red confirmations; then a non-extractable browser key), export accounts as otpauth links or QR codes, an unlock-time display with Extend, input source and Caps Lock hints. No new permissions.
 
-zauthenticator generates two-factor (TOTP) codes on the device. No account or test credentials are needed. Its own pages and worker make no network requests; passkey requests are made by the browser.
+zauthenticator generates two-factor (TOTP) codes on the device. No account or test credentials are needed. Its pages and worker make no network requests.
 
 How to test:
-1. Click the toolbar icon and create a passphrase of 8 or more characters (for example: certification-test-1).
-2. Click "Add account", paste this link into the otpauth:// links box and click "Add from links":
+1. Click the toolbar icon and create a passphrase (for example: certification-test-1).
+2. Click "Add account", paste into the otpauth:// links box and click "Add from links":
    otpauth://totp/Example:test@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
-   The account "Example" appears with a 6-digit code (RFC 6238) and a countdown; clicking the code copies it.
-3. On any https page, right-click a text field, open the "zauthenticator" menu and choose "Example · test@example.com". The code is typed in; nothing is submitted.
-4. A small window then offers auto-fill on that exact site. Click "Allow" and accept the browser's prompt for that one site ("Not now" stores nothing). Later visits fill the code automatically, but only into a field marked as a code field (autocomplete="one-time-code", or a name, label or placeholder such as "otp" or "2fa"); a plain text field is not filled, by design.
-5. Settings lists the site under auto-fill sites; "Remove" deletes it and gives up the access.
-6. Click the lock button: the right-click menu then shows "Unlock zauthenticator…" and nothing is filled.
-7. Optional: passkey unlock needs a PRF-capable authenticator (a phone over the QR code flow, or a security key with a PIN); everything else can be tested without one. In Settings click "Open in a tab", re-enter the passphrase, click "Add passkey" and approve both prompts. Then lock; in the toolbar popup click "Unlock with passkey" and click it again in the window that opens.
+   "Example" shows a 6-digit code; clicking it copies it. The list shows when it locks; "Extend" asks twice before 1 hour, 24 hours or 7 days.
+3. On an https page, right-click a text field, open "zauthenticator", choose "Example · test@example.com". The code is typed; nothing is submitted. The window that follows offers auto-fill for that site ("Allow" + the browser's prompt; "Not now" stores nothing).
+4. Settings > Backup > "Export accounts": re-enter the passphrase, tick accounts, "Copy links" or "Show QR".
+5. Settings > Passphrase: "Change passphrase", or "Remove passphrase" (current passphrase, then two red confirmations); "Set passphrase" restores one. Typing in passphrase fields shows the input source and Caps Lock.
+6. Lock: the right-click menu shows "Unlock zauthenticator…" and nothing is filled.
+7. Optional: passkey unlock needs a PRF-capable authenticator. Settings > "Open in a tab", re-enter the passphrase, "Add passkey", approve both prompts.
 
-Permission justifications are in the Privacy section. No remote code. Source code (MIT): https://github.com/2lab-ai/zauthenticator
+Permission justifications are in the Privacy section. No remote code. Source (MIT): https://github.com/2lab-ai/zauthenticator
 ```
