@@ -1,6 +1,6 @@
 # zauthenticator
 
-[![Microsoft Edge Add-ons](https://img.shields.io/badge/dynamic/json?label=Edge%20Add-ons&query=%24.version&prefix=v&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Fdliacchcdohpbldddfmhmcpcdhdnakdp&logo=microsoftedge&logoColor=white&color=0078D7)](https://microsoftedge.microsoft.com/addons/detail/dliacchcdohpbldddfmhmcpcdhdnakdp)
+[![Microsoft Edge Add-ons](https://img.shields.io/badge/dynamic/json?label=Edge%20Add-ons&query=%24.version&prefix=v&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Fdliacchcdohpbldddfmhmcpcdhdnakdp&color=0078D7)](https://microsoftedge.microsoft.com/addons/detail/dliacchcdohpbldddfmhmcpcdhdnakdp)
 [![Chrome Web Store: planned](https://img.shields.io/badge/Chrome%20Web%20Store-planned-lightgrey?logo=googlechrome&logoColor=white)](#install)
 [![Latest release](https://img.shields.io/github/v/release/2lab-ai/zauthenticator?label=release)](https://github.com/2lab-ai/zauthenticator/releases/latest)
 [![CI](https://github.com/2lab-ai/zauthenticator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/2lab-ai/zauthenticator/actions/workflows/ci.yml)
