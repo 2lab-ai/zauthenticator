@@ -61,10 +61,11 @@ Before you move or remove it:
 ### Set a passphrase
 
 The first time you open the popup, you choose a passphrase of 8 characters or more. It encrypts
-your accounts. **It cannot be recovered**: if you forget it, the saved accounts cannot be opened
-unless a passkey you enrolled still works, and your backups cannot be imported either, because
-import asks for the passphrase the backup was made with. You can change or remove it later in
-**Settings** (see [Change or remove the passphrase](#change-or-remove-the-passphrase)).
+your accounts and is never stored. **It cannot be recovered**: if you forget it, the saved
+accounts cannot be opened unless a passkey you enrolled still works, and your backups cannot be
+imported either, because import asks for the passphrase the backup was made with. You can change
+or remove it later in **Settings** (see
+[Change or remove the passphrase](#change-or-remove-the-passphrase)).
 
 While you type in any passphrase field, a line under it shows the input source your keys produce
 (for example Latin letters or Korean Hangul, or an input method composing) and whether Caps Lock
@@ -236,7 +237,8 @@ time and a short auto-fill record: for each tab and allowed site that got a code
 the site's address, the account's internal id, which code period it was and when, never a code.
 That record exists only so that a site gets at most 3 codes per tab in 5 minutes and never the
 same code twice; locking removes all of it. Nothing is sent to the developer or anyone else; there
-is no server. The [privacy policy](PRIVACY.md) lists every stored value.
+is no server. The [privacy policy](PRIVACY.md) describes the stored data, and
+[docs/trust.md](docs/trust.md#verifying-the-trust-claims) names every storage key the tests allow.
 
 **What leaves the extension.** A site receives only the 6–8 digit code, typed into its page: on a
 site you allowed, or in the field you right-clicked. The site's scripts can read it, just as if
@@ -427,7 +429,8 @@ Chrome 웹 스토어에 올라가기 전까지 Chrome에서는 직접 설치해�
     제출하지는 않아요.
   - 허용한 바로 그 사이트(같은 주소·포트)에서만 입력해요. 하위 도메인이나 비슷한 도메인에는 입력하지 않아요.
     코드 입력란이라는 표시가 있는 칸만 채우고, PIN이나 우편번호처럼 모양만 비슷한 칸은 건드리지 않으니 그런
-    칸에는 오른쪽 클릭 메뉴로 넣어 주세요.
+    칸에는 오른쪽 클릭 메뉴로 넣어 주세요. 입력란은 추정해서 찾기 때문에, 특이한 페이지에서는 아무 칸도 못
+    찾거나 엉뚱한 칸을 고를 수 있어요.
   - 그만하려면 **설정**의 **자동 입력 사이트**에서 **삭제**를 눌러요. 그 사이트에 대한 접근 권한도 함께
     반납해요.
 - **잠금**: 잠그기 버튼을 누르거나, 마지막으로 쓰고 15분이 지나거나, 브라우저를 완전히 종료하면(macOS는
