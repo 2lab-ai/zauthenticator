@@ -154,9 +154,12 @@ source: https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publ
 
 ## 4. After both are live
 
-- [ ] Replace the two "coming soon" lines in `README.md` (English and Korean sections) with the
-      listing URLs: the Chrome Web Store item URL from the dashboard, and the Edge listing URL
-      shown on the extension's **Overview** page in Partner Center.
+- [x] Edge Add-ons: `README.md` links the listing from its badge and from the install tables
+      (English and Korean); the badge reads the live version from the store.
+- [ ] Chrome Web Store: in `README.md`, replace the static "planned" badge with a version badge
+      linked to the item URL from the dashboard, and fill in the Chrome Web Store rows of both
+      install tables (English and Korean) and the sentences that send Chrome users to a manual
+      install.
 - [ ] Install each store version once in a clean profile: create a passphrase, add the test
       account, fill a code from the right-click menu, allow a site and see it filled on reload.
 
